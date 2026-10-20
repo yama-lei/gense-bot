@@ -1,0 +1,41 @@
+{
+  "name": "@narumitw/pi-fleet",
+  "version": "0.3.7",
+  "description": "Pi extension for spawning and connecting local Pi sessions.",
+  "type": "module",
+  "license": "MIT",
+  "private": true,
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi",
+    "fleet",
+    "session",
+    "tmux",
+    "ghostty",
+    "zellij"
+  ],
+  "files": [
+    "src",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "dependencies": {
+    "@narumitw/pi-tui-kit": "^0.59.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/narumiruna/pi-extensions",
+    "directory": "packages/pi-fleet"
+  }
+}

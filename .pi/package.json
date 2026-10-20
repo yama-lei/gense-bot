@@ -1,0 +1,8 @@
+{
+  "name": "gense-personal-agent-pi-local",
+  "private": true,
+  "description": "Runtime dependencies for project-local Pi extensions loaded from source.",
+  "dependencies": {
+    "@narumitw/pi-tui-kit": "^0.59.0"
+  }
+}

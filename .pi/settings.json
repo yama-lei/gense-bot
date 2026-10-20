@@ -1,0 +1,6 @@
+{
+  "extensions": [
+    "./vendor/pi-extensions/packages/pi-github-pr/src/index.ts",
+    "./vendor/pi-extensions/packages/pi-fleet/src/index.ts"
+  ]
+}

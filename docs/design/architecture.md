@@ -16,6 +16,7 @@
 | 登录 | Cloudflare Access，Google 身份提供方 | Worker 自己再校验 Access JWT |
 | 用户文件 | Google Drive API v3 | OAuth scope `drive`（完整访问，2026-10-21 确认）；写入限制在 `GenseBot/` 内，由代码保证 |
 | 部署 | `cf deploy --secrets-file .env` | 密钥不进 Git，不经过对话 |
+| 地址 | `https://bot.rayama.site`，Worker 名 `gensebot` | 2026-10-21 确认。Mock 仍以 `gensebot-mock` 单独部署，前端保留 Mock 模式 |
 
 不使用 Dynamic Workers、Containers、Workers AI、R2 或向量库。
 
@@ -43,7 +44,7 @@ Worker 入口
 
 ## 登录与授权
 
-1. Access 应用覆盖整个域名（包括 `workers.dev`），策略：只允许指定的 Google 邮箱。
+1. Access 应用覆盖 `bot.rayama.site`，策略：只允许指定的 Google 邮箱。`gensebot` 的 `workers.dev` 地址和预览地址关闭，避免绕过 Access。
 2. Worker 对每个非静态请求都校验 `Cf-Access-Jwt-Assertion`：签名用团队域名的 certs，`aud` 要匹配应用的 AUD tag。不能只信任“请求经过了 Access”，这样可以防止有人绕过 Access 直接访问 Worker。
 3. 首次使用时，界面提示“连接 Google Drive”，走 OAuth 授权码流程（`access_type=offline`），拿到 refresh token 后加密保存在 UserHub。加密用 AES-GCM，密钥来自 secret `TOKEN_ENCRYPTION_KEY`。
 4. Google OAuth 应用发布为 Production（未验证）。如果停留在 Testing，refresh token 约 7 天过期。`drive` 是受限 scope：未验证的应用最多 100 个用户，授权页会显示“Google 尚未验证此应用”，个人使用可以接受。以后加日历、Tasks 时增量申请对应 scope。

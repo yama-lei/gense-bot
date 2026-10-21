@@ -12,7 +12,7 @@
 | 前端 | React + Vite（沿用 `web/`） | 聊天用 `@cloudflare/ai-chat/react` 的 `useAgentChat` |
 | 宿主 | Workers + SQLite-backed Durable Objects，Free 计划 | `nodejs_compat`；静态资源与 Agent 同一个 Worker |
 | Agent 运行时 | `@cloudflare/think` | 依赖锁定精确版本；`@cloudflare/computer` 只作为 peer dependency 安装 |
-| 模型 | AI SDK `@ai-sdk/anthropic` | 端点和 token 来自 `.env`，模型列表从端点获取 |
+| 模型 | AI SDK `@ai-sdk/anthropic`、`@ai-sdk/openai` | 两个兼容端点，配置来自 `.env`，模型列表从端点获取 |
 | 登录 | Cloudflare Access，Google 身份提供方 | Worker 自己再校验 Access JWT |
 | 用户文件 | Google Drive API v3 | OAuth scope 先只申请 `drive.file` |
 | 部署 | `cf deploy --secrets-file .env` | 密钥不进 Git，不经过对话 |
@@ -52,20 +52,28 @@ Access 登录和 Google OAuth 是两次授权：前者证明“你是谁”，�
 
 ## 模型
 
+`.env` 中配置两个供应商，各自都是可选的，至少要有一个：
+
+| 供应商 | 变量 | AI SDK |
+| --- | --- | --- |
+| Anthropic 兼容 | `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`、`DEFAULT_ANTHROPIC_MODEL` | `createAnthropic({ baseURL, authToken })`，以 `Authorization: Bearer` 发送 |
+| OpenAI 兼容 | `OPENAI_BASE_URL`、`OPENAI_AUTH_TOKEN`、`DEFAULT_OPENAI_MODEL` | `createOpenAI({ baseURL, apiKey })`，默认使用 Responses API |
+
 ```ts
 getModel() {
-  const base = this.env.ANTHROPIC_BASE_URL.replace(/\/+$/, '')
-  return createAnthropic({
-    baseURL: base.endsWith('/v1') ? base : `${base}/v1`,
-    authToken: this.env.ANTHROPIC_AUTH_TOKEN, // 以 Authorization: Bearer 发送
-  })(this.getConfig().model) // 会话创建时选定的模型
+  const { provider, model } = this.getConfig() // 会话选定的模型
+  return provider === 'openai'
+    ? createOpenAI({ baseURL: v1(this.env.OPENAI_BASE_URL), apiKey: this.env.OPENAI_AUTH_TOKEN })(model)
+    : createAnthropic({ baseURL: v1(this.env.ANTHROPIC_BASE_URL), authToken: this.env.ANTHROPIC_AUTH_TOKEN })(model)
 }
+// v1()：去掉末尾斜杠，没有 /v1 时补上
 ```
 
-- `.env` 只需要 `ANTHROPIC_BASE_URL` 和 `ANTHROPIC_AUTH_TOKEN`。
-- UserHub 调用 `GET {base}/v1/models` 获取模型列表（处理 `has_more` 分页），缓存 1 小时，界面的模型选择器显示这个列表。用户上次选的模型存在偏好里，作为新会话的默认值。
-- 端点不支持 `/v1/models`，或者返回空列表时，界面提示“无法获取模型列表”，不发送消息。不内置后备模型名，因为写死的名字很可能在这个端点上不存在。
-- 每个会话在创建时记录所选模型，之后可以在会话中切换；轮次记录实际使用的模型。
+- **模型列表**：UserHub 分别调用两个端点的 `GET /v1/models`（处理分页），缓存 1 小时，按供应商分组显示在选择器中。某个端点获取失败时，只显示这个供应商的 `DEFAULT_*_MODEL`，并标注“列表获取失败”。
+- **默认模型**：新会话使用用户上次选择的模型；从未选过时，使用 `DEFAULT_ANTHROPIC_MODEL`，没有配置就用 `DEFAULT_OPENAI_MODEL`。
+- **切换模型**：每个会话记录所选的供应商和模型，可以在会话中切换；每一轮记录实际使用的模型。
+- **effort**：映射到各供应商自己的推理强度参数（Anthropic 的 effort / thinking，OpenAI 的 `reasoningEffort`）。具体映射在 V1 中按实际端点确定。
+- **待验证**：根据 AI SDK 文档，GPT-6 系列的工具调用要通过 Responses API。如果 OpenAI 兼容端点只支持 Chat Completions，这个供应商就不能用于需要工具的会话，界面要标注出来。
 
 ## Drive 存储
 
@@ -109,6 +117,57 @@ getModel() {
 - 错误分类：模型 4xx/5xx、Drive 错误、平台额度错误分别映射到界面文案（Spec S2、S9）。
 - 不做按天计数。如果以后发现需要，再在 UserHub 中加计数器。
 
+## 插件与界面
+
+工具按插件组织。插件可以自带界面，接口按 [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) 的概念设计，这样以后接入的 MCP 工具及其界面，也能和我们自己的工具走同一条渲染路径。（2026-10-21 确认：首版用 React 渲染，只对齐接口。）
+
+```text
+plugins/<id>/
+  tools.ts   工具定义（服务端）
+  views.tsx  界面组件（前端，可选）
+```
+
+### 工具（服务端）
+
+- 每个工具有名称、说明、参数 schema，以及 `execute()`。
+- 返回值与 MCP 的 `CallToolResult` 一致：`content` 给模型看，`structuredContent` 给界面用。
+- 需要界面的工具在元数据中声明 `_meta.ui.resourceUri = 'ui://<插件>/<视图>'`。
+- 声明副作用和重放策略（见“兜底限制的实现”）。
+- 按 MCP Apps 的建议，**取数据**和**显示**分开：数据工具不带界面，显示工具接收模型整理好的数据，再交给界面渲染。
+
+### 界面（前端）
+
+前端维护一张表，把 `resourceUri` 映射到 React 组件。组件收到的参数和 MCP Apps 的消息一一对应：
+
+| 组件参数 | 对应的 MCP Apps 消息 | 用途 |
+| --- | --- | --- |
+| `toolInput` | `ui/notifications/tool-input` | 工具调用的参数 |
+| `toolResult` | `ui/notifications/tool-result` | `structuredContent` 与 `content` |
+| `host.callTool(name, args)` | `tools/call` | 界面直接调用本插件的工具，例如“重新生成” |
+| `host.sendMessage(text)` | `ui/message` | 以用户身份发一条后续消息 |
+| `displayMode` | `inline` / `fullscreen` | 另加 `panel`（右侧面板，手机上全屏），给 Artifact 使用 |
+
+渲染一个工具调用时，按以下顺序选择：
+
+1. `resourceUri` 在表中 → 用内置 React 组件渲染。
+2. 来自 MCP 服务器、资源类型为 `text/html;profile=mcp-app` → 在沙箱 iframe 中渲染（**预留，首版不实现**）。
+3. 其他情况 → 通用的工具调用卡片（名称、状态、参数、结果摘要）。
+
+### 安全
+
+- 界面发起的 `callTool` 发到服务端的 Chat，和模型发起的调用走同一套工具开关和权限检查。界面只能调用本插件的工具。
+- 有副作用的工具无论由谁发起，都要经过确认（Think Actions 审批），界面不能绕过。
+- 以后渲染 MCP 界面时，iframe 必须放在独立域名上（例如单独部署一个 sandbox Worker），使用 `@mcp-ui/client` 或官方 AppBridge，并按 `_meta.ui.csp` 限制它能加载的外部资源。第三方界面不能访问主站的 cookie 或接口。
+
+### 首批插件
+
+| 插件 | 工具 | 界面 |
+| --- | --- | --- |
+| files | `files.list`、`files.search`、`files.read` | 无（通用卡片）；引用卡片属于消息本身，不归插件 |
+| artifact | `artifact.create`（显示工具）、`artifact.save` | `ui://artifact/card`（消息中的卡片）、`ui://artifact/panel`（面板预览，提供保存到 Drive） |
+| email（后续） | `email.search`、`email.read`、`email.draft`（显示工具）、`email.saveDraft` | `ui://email/draft`：草稿预览，可修改，点“存入草稿箱”时调用 `email.saveDraft` |
+| mcp（后续） | 远程 MCP 服务器的工具 | 按上面第 2 条处理 |
+
 ## 后续能力
 
 ### smail（腾讯企业邮）
@@ -131,7 +190,7 @@ getModel() {
 
 | 阶段 | 验证内容 | 通过证据 |
 | --- | --- | --- |
-| V1 | Think 部署到 Free 计划，并接入用户模型 | 锁定的依赖版本；`/v1/models` 返回列表；用其中一个模型完成一轮对话；记录 compatibility date |
+| V1 | Think 部署到 Free 计划，并接入用户模型 | 锁定的依赖版本；两个端点的 `/v1/models` 是否可用；两个供应商各完成一轮带工具调用的对话；记录 compatibility date |
 | V2 | Access 与 JWT 校验 | Spec S1 的三个操作全部符合预期 |
 | V3 | Google OAuth 与 Drive | 授权后上传、读取、保存 Artifact；8 天后 refresh token 仍有效（Production 状态） |
 | V4 | 去重、断线、恢复 | Spec S3、S4、S7 的操作 |
@@ -146,9 +205,11 @@ getModel() {
 - 用 `drive.file` + Picker，还是申请完整的 `drive` scope（见“Drive 存储”）。
 - Google 文档的导出格式选 Markdown 还是纯文本，取决于 Drive API 的实际导出质量。
 - 是否需要会话全文搜索；Think 的 session search 能否跨会话使用。
+- MCP 界面 iframe 的 sandbox 域名，以及 `@mcp-ui/client` 和官方 AppBridge 选哪个（接入 MCP 时再定）。
 
 ## 上游依据
 
+- [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps)、[OpenAI：给 MCP 服务器加 UI](https://developers.openai.com/plugins/build/chatgpt-ui)
 - [Think 文档](https://developers.cloudflare.com/agents/harnesses/think/)
 - [Think 配置](https://developers.cloudflare.com/agents/harnesses/think/configuration/)、[恢复](https://developers.cloudflare.com/agents/harnesses/think/recovery/)、[Actions](https://developers.cloudflare.com/agents/harnesses/think/actions/)
 - [AI SDK Anthropic provider](https://ai-sdk.dev/providers/ai-sdk-providers/anthropic)

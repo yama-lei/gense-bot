@@ -23,6 +23,11 @@ export interface ToolHost {
   textCache: TextCache
   /** Whether this turn's model accepts images; unknown models are assumed to. */
   seesImages: boolean
+  /** Transcript of another of the user's chats; throws for an unknown id. */
+  readChat(id: string): Promise<{ title: string; text: string }>
+  /** Instructions of an enabled skill and the paths of the files beside its SKILL.md. */
+  loadSkill(name: string): Promise<{ body: string; resources: string[] }>
+  readSkillResource(name: string, path: string): Promise<string>
 }
 
 /** Characters per `files_read` call; longer files are read in parts. */
@@ -92,7 +97,47 @@ export function createTools(host: ToolHost) {
     return { mediaType, data }
   }
 
+  /** One `READ_CHUNK` of a long text, with how to read on. */
+  const chunk = (text: string, offset: number) => {
+    const part = text.slice(offset, offset + READ_CHUNK)
+    const end = offset + part.length
+    return { part, end, more: end < text.length ? `\n\n[第 ${offset}–${end} 字，共 ${text.length} 字；用 offset=${end} 继续读]` : '' }
+  }
+  const offsetInput = z.number().int().min(0).optional().describe('从第几个字符开始，默认 0')
+
   return {
+    // Always on (roadmap-2 L2): skills and @-mentioned chats are not plugins the user switches off.
+    core: {
+      skill_activate: tool({
+        description: '激活一个 Skill，取得它的完整说明。任务符合系统提示里列出的某个 Skill，或用户用命令指定了 Skill 时，先调用它，再按说明完成任务。',
+        inputSchema: z.object({ name: z.string().min(1).max(64).describe('Skill 名称，与列表中一致') }),
+        execute: guarded(async ({ name }) => {
+          const { body, resources } = await host.loadSkill(name)
+          const files = resources.length ? `\n\n这个 Skill 附带的文件（需要时用 skill_read 读取）：\n${resources.map((p) => `- ${p}`).join('\n')}` : ''
+          return { content: `Skill「${name}」的说明：\n\n${body}${files}`, structuredContent: { name, resources } }
+        }),
+        toModelOutput,
+      }),
+      skill_read: tool({
+        description: `读取已激活的 Skill 附带的文件。path 是 skill_activate 列出的路径。每次最多 ${READ_CHUNK} 字。`,
+        inputSchema: z.object({ name: z.string().min(1).max(64), path: z.string().min(1).max(300), offset: offsetInput }),
+        execute: guarded(async ({ name, path, offset = 0 }) => {
+          const { part, more } = chunk(await host.readSkillResource(name, path), offset)
+          return { content: `Skill「${name}」的文件 ${path}：\n\n${part}${more}` }
+        }),
+        toModelOutput,
+      }),
+      chats_read: tool({
+        description: `读取用户的另一个会话（用户用 @ 提到的会话），作为本轮的上下文。每次最多 ${READ_CHUNK} 字。`,
+        inputSchema: z.object({ id: z.string().min(1).max(100).describe('会话 id'), offset: offsetInput }),
+        execute: guarded(async ({ id, offset = 0 }) => {
+          const { title, text } = await host.readChat(id)
+          const { part, more } = chunk(text, offset)
+          return { content: `会话「${title}」：\n\n${part || '（还没有内容）'}${more}`, structuredContent: { id, title } }
+        }),
+        toModelOutput,
+      }),
+    },
     files: {
       files_list: tool({
         description: '列出 GenseBot/资料/（用户上传的资料）和 GenseBot/Artifacts/（已保存的产物）中的文件。',
@@ -121,16 +166,14 @@ export function createTools(host: ToolHost) {
       }),
       files_read: tool({
         description: `按文件 ID 读取内容。文本、Google 文档、PDF（含扫描件 OCR）、Word、Excel、PowerPoint 读成文字，每次最多 ${READ_CHUNK} 字，较长的文件用 offset 继续读；图片会直接给你看。`,
-        inputSchema: z.object({ fileId: z.string().min(1), offset: z.number().int().min(0).optional().describe('从第几个字符开始，默认 0') }),
+        inputSchema: z.object({ fileId: z.string().min(1), offset: offsetInput }),
         execute: guarded(async ({ fileId, offset = 0 }) => {
           const { drive } = await host.drive()
           const meta = await drive.get(fileId)
           // Only the id is stored; the pixels are fetched when the model reads the result.
           if (isImage(meta.mimeType)) return { content: `图片：${meta.name}（id: ${meta.id}）`, structuredContent: { file: toFile(meta, 'drive'), image: true } }
           const { file, text } = await read(fileId)
-          const part = text.slice(offset, offset + READ_CHUNK)
-          const end = offset + part.length
-          const more = end < text.length ? `\n\n[第 ${offset}–${end} 字，共 ${text.length} 字；用 offset=${end} 继续读]` : ''
+          const { part, end, more } = chunk(text, offset)
           return {
             content: `文件：${file.name}（id: ${file.id}）\n\n${part}${more}`,
             structuredContent: { file, offset, end, total: text.length },
@@ -244,7 +287,7 @@ function webTools(env: WorkerEnv): ToolSet {
   return out
 }
 
-export type PluginId = keyof ReturnType<typeof createTools>
+export type PluginId = Exclude<keyof ReturnType<typeof createTools>, 'core'>
 /** Plugins this server implements; the hub offers only these. */
 export const pluginIds: PluginId[] = ['files', 'artifact', 'web']
 /** Plugins this deployment can offer, given which backends `.env` configures. */
@@ -253,11 +296,11 @@ export function availablePlugins(env: WorkerEnv): PluginId[] {
   return pluginIds.filter((id) => id !== 'web' || web.search || web.research)
 }
 /** Plugin of each tool, for checking calls made by views. */
-export const toolPlugin = (all: ReturnType<typeof createTools>, name: string) => (Object.entries(all) as [PluginId, ToolSet][]).find(([, set]) => name in set)?.[0]
+export const toolPlugin = (all: ReturnType<typeof createTools>, name: string) => (Object.entries(all) as [PluginId | 'core', ToolSet][]).find(([, set]) => name in set)?.[0]
 
-/** Tools of the enabled plugins (Spec S8: a disabled plugin's tools are never offered). */
+/** The core tools and those of the enabled plugins (Spec S8: a disabled plugin's tools are never offered). */
 export function enabledTools(all: ReturnType<typeof createTools>, enabled: string[]): ToolSet {
   const out: ToolSet = {}
-  for (const [id, set] of Object.entries(all)) if (enabled.includes(id)) Object.assign(out, set)
+  for (const [id, set] of Object.entries(all)) if (id === 'core' || enabled.includes(id)) Object.assign(out, set)
   return out
 }

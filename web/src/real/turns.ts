@@ -1,7 +1,7 @@
 import type { UIMessage } from 'ai'
 import { tools } from '../plugins'
 import type { BranchNote, Citation, Effort, ToolCall, ToolResult, Turn, TurnMetadata, UserMetadata, Versions, WebSource } from '../types'
-import { ATTACHMENT_NOTE } from '../util'
+import { isHiddenNote } from '../message'
 
 export type ChatStatus = 'submitted' | 'streaming' | 'ready' | 'error'
 
@@ -32,9 +32,18 @@ const dedupe = (sources: WebSource[]) => [...new Map(sources.map((s) => [s.url, 
 
 const text = (m: UIMessage) =>
   m.parts
-    .filter((p): p is { type: 'text'; text: string } => p.type === 'text' && !p.text.startsWith(ATTACHMENT_NOTE))
+    .filter((p): p is { type: 'text'; text: string } => p.type === 'text' && !isHiddenNote(p.text))
     .map((p) => p.text)
     .join('')
+
+const userExtras = (meta: UserMetadata | undefined) => ({ attachments: meta?.attachments, command: meta?.command, mentions: meta?.mentions })
+
+/** Process line naming the skills and chats a turn drew on (R19: activation shows in the process summary). */
+function processSummary(calls: ToolCall[]) {
+  const skills = [...new Set(calls.filter((c) => c.name === 'skill_activate').map((c) => (c.input as { name?: string }).name).filter(Boolean))]
+  const chats = new Set(calls.filter((c) => c.name === 'chats_read').map((c) => (c.input as { id?: string }).id)).size
+  return [skills.length && `使用 Skill：${skills.join('、')}`, chats && `读取 ${chats} 个会话`].filter(Boolean).join(' · ') || undefined
+}
 
 /**
  * Projects the chat transcript onto the UI's turns: a user message opens a turn and the
@@ -72,7 +81,7 @@ export function toTurns(
         requestId: m.id,
         status: 'succeeded',
         userMessage: m.role === 'user' ? text(m) : '',
-        attachments: m.role === 'user' ? (m.metadata as UserMetadata | undefined)?.attachments : undefined,
+        ...(m.role === 'user' ? userExtras(m.metadata as UserMetadata | undefined) : {}),
         assistantMessage: '',
         toolCalls: [],
         citations: [],
@@ -103,6 +112,8 @@ export function toTurns(
     if (meta?.effort) t.effort = meta.effort
     if (meta?.createdAt) t.createdAt = meta.createdAt
   }
+
+  for (const t of turns) t.summary = processSummary(t.toolCalls)
 
   const last = turns.at(-1)
   if (last) {

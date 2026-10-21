@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { pluginCatalog } from '../plugins/catalog'
 import { useRoute } from '../router'
 import type { Store } from '../store'
-import type { AppState, Attachment, Conversation, DriveFile, Effort, HubState, Turn } from '../types'
+import type { AppState, Conversation, DriveFile, Effort, HubState, Outgoing, Turn } from '../types'
 import { MAX_UPLOAD_BYTES } from '../util'
 import { ChatBridge, type ChatControls } from './ChatBridge'
 import { pending } from './pending'
@@ -15,6 +15,9 @@ const emptyHub: HubState = {
   prefs: { language: 'zh-CN', defaultEffort: 'medium', model: '' },
   enabledPlugins: [],
   availablePlugins: [],
+  skills: [],
+  disabledSkills: [],
+  skillsError: null,
   account: { name: '', email: '', driveConnected: false, driveError: null },
   models: [],
   modelsError: null,
@@ -42,11 +45,14 @@ export function useRealStore(): Store {
       files: hub.files,
       schedules: [],
       plugins: pluginCatalog.map((p) => ({ ...p, enabled: hub.enabledPlugins.includes(p.id), available: hub.availablePlugins.includes(p.id) })),
+      // State from an older hub deployment may lack skills.
+      skills: (hub.skills ?? []).map((s) => ({ ...s, enabled: !hub.disabledSkills?.includes(s.name) })),
       memories: hub.memories,
       prefs: hub.prefs,
       account: hub.account,
       models: hub.models,
       modelsError: hub.modelsError,
+      skillsError: hub.skillsError ?? null,
     }),
     [hub, turns],
   )
@@ -75,6 +81,7 @@ export function useRealStore(): Store {
     if (next.memories !== cur.memories) patch.memories = next.memories
     if (next.prefs !== cur.prefs) patch.prefs = next.prefs
     if (next.plugins !== cur.plugins) patch.enabledPlugins = next.plugins.filter((p) => p.enabled).map((p) => p.id)
+    if (next.skills !== cur.skills) patch.disabledSkills = next.skills.filter((s) => !s.enabled).map((s) => s.name)
     if (Object.keys(patch).length) void call('update', [patch])
     if (next.conversations !== cur.conversations) {
       const byId = new Map(next.conversations.map((c) => [c.id, c]))
@@ -91,16 +98,16 @@ export function useRealStore(): Store {
 
   const patchConv = (convId: string, fn: (c: Conversation) => Conversation) => setState((s) => ({ ...s, conversations: s.conversations.map((c) => (c.id === convId ? fn(c) : c)) }))
 
-  const startConversation = async (message: string, projectId: string | null, model: string, effort: Effort, attachments?: Attachment[]) => {
-    const id = await hubAgent.call<string>('createChat', [message, projectId])
-    pending.set(id, { text: message, model, effort, attachments })
+  const startConversation = async (message: Outgoing, projectId: string | null, model: string, effort: Effort) => {
+    const id = await hubAgent.call<string>('createChat', [message.text, projectId])
+    pending.set(id, { message, model, effort })
     return id
   }
 
-  const reply = (convId: string, message: string, model: string, effort: Effort, attachments?: Attachment[]) => {
+  const reply = (convId: string, message: Outgoing, model: string, effort: Effort) => {
     const c = controls.current.get(convId)
-    if (c) c.send(message, model, effort, attachments)
-    else pending.set(convId, { text: message, model, effort, attachments })
+    if (c) c.send(message, model, effort)
+    else pending.set(convId, { message, model, effort })
   }
 
   const chatId = route.name === 'chat' ? route.id : null
@@ -149,6 +156,7 @@ export function useRealStore(): Store {
       else void call('disconnectDrive', [])
     },
     refreshFiles: () => void call('refreshFiles', []),
+    refreshSkills: () => void call('refreshSkills', []),
     readFile: (id) => hubAgent.call<{ file: DriveFile; text: string }>('readFile', [id]),
     searchDrive: (query) => hubAgent.call<DriveFile[]>('searchDrive', [query]),
     bridge: [...new Set([chatId, attached])]

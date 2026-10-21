@@ -1,5 +1,3 @@
-import type { Attachment } from './types'
-
 /** Any uploaded file, and any file converted to text (roadmap-2 R7). */
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
@@ -22,14 +20,6 @@ export function findQuote(text: string, quote: string): [number, number] | null 
   const q = quote.replace(/\s+/g, '')
   const j = q ? flat.indexOf(q) : -1
   return j < 0 ? null : [map[j], map[j + q.length - 1] + 1]
-}
-
-/** Prefix of the text part that tells the model about a message's attachments; the UI hides it. */
-export const ATTACHMENT_NOTE = '[附件]'
-
-/** The hidden text part listing attachments, so any model can read them later with files_read. */
-export function attachmentNote(files: Attachment[]): string {
-  return `${ATTACHMENT_NOTE} 用户随这条消息附上了以下文件，需要时用 files_read 读取：\n${files.map((f) => `- ${f.name}（id: ${f.id}，${f.mimeType}）`).join('\n')}`
 }
 
 export function formatSize(n: number) {

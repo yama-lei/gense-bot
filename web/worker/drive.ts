@@ -18,6 +18,7 @@ const SLIDES = 'application/vnd.google-apps.presentation'
 export const ROOT_NAME = 'GenseBot'
 export const SOURCES_NAME = '资料'
 export const ARTIFACTS_NAME = 'Artifacts'
+export const SKILLS_NAME = 'Skills'
 /** Converted copies live here only while they are read (roadmap-2 "L0-2 附件管线"). */
 export const CACHE_NAME = '.cache'
 /** Text written by the assistant and plain text files read as-is. */
@@ -140,6 +141,25 @@ export class Drive {
     const root = await this.folder(ROOT_NAME, 'root')
     const [sources, artifacts] = await Promise.all([this.folder(SOURCES_NAME, root), this.folder(ARTIFACTS_NAME, root)])
     return { root, sources, artifacts }
+  }
+
+  /** Finds or creates GenseBot/Skills; each skill is a folder in it holding a SKILL.md. */
+  skillsFolder(folders: Folders): Promise<string> {
+    return this.folder(SKILLS_NAME, folders.root)
+  }
+
+  /** Folders directly inside one folder, by name. */
+  async folders(parentId: string): Promise<{ id: string; name: string }[]> {
+    const found = await this.query(`${lit(parentId)} in parents and mimeType = '${FOLDER}' and trashed = false`, { orderBy: 'name', pageSize: 200 })
+    return found.map(({ id, name }) => ({ id, name }))
+  }
+
+  /** Files named `name` directly inside any of `parentIds`. */
+  async named(name: string, parentIds: string[]): Promise<(DriveFile & { parent: string })[]> {
+    if (!parentIds.length) return []
+    const parents = parentIds.map((p) => `${lit(p)} in parents`).join(' or ')
+    const found = await this.query(`name = ${lit(name)} and (${parents}) and trashed = false`, { pageSize: 200 })
+    return found.map((f) => ({ ...toFile(f, 'drive'), parent: f.parents?.find((p) => parentIds.includes(p)) ?? '' }))
   }
 
   /** Files (not folders) directly inside one folder, newest first. */

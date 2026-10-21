@@ -1,6 +1,6 @@
 // Scripted stand-in for the backend: turns a user message into status changes,
 // tool calls (executed by the real plugin tools) and streamed text. No model is called.
-import type { AppState, Attachment, Citation, DriveFile } from '../types'
+import type { AppState, Citation, DriveFile, Turn } from '../types'
 
 export interface Step {
   name: string
@@ -37,8 +37,38 @@ const unavailable = (what: string): Script => ({
   citations: [],
 })
 
-export function planReply(message: string, state: AppState, attachments: Attachment[] = []): Script {
+export function planReply(turn: Turn, state: AppState): Script {
+  const { userMessage: message, attachments = [], command, mentions = [] } = turn
   const enabled = (id: string) => state.plugins.some((p) => p.id === id && p.enabled && p.available)
+
+  const skill = command?.id.startsWith('skill:') ? command.label : null
+  if (skill) {
+    return {
+      summary: `使用 Skill：${skill}`,
+      steps: [{ name: 'skill_activate', input: { name: skill }, durationMs: 120 }],
+      text: `我按 Skill **${skill}** 的说明处理了你的请求：\n\n> ${message}\n\n（Mock 演示：真实环境中助手会先读取 Skill 的完整说明，再按步骤完成任务。）`,
+      citations: [],
+    }
+  }
+  if (command?.id === 'summarize') {
+    const conv = state.conversations.find((c) => c.turns.some((t) => t.id === turn.id))
+    const earlier = conv?.turns.filter((t) => t.id !== turn.id && t.userMessage) ?? []
+    return {
+      summary: '总结会话，没有调用工具',
+      steps: [],
+      text: earlier.length ? `本会话要点：\n\n${earlier.map((t) => `- ${t.userMessage.replace(/\s+/g, ' ').slice(0, 40)}`).join('\n')}\n\n（Mock 演示）` : '这个会话还没有可以总结的内容。（Mock 演示）',
+      citations: [],
+    }
+  }
+  const chats = mentions.filter((m) => m.kind === 'chat')
+  if (chats.length) {
+    return {
+      summary: `读取 ${chats.length} 个会话`,
+      steps: chats.map((c) => ({ name: 'chats_read', input: { id: c.id }, durationMs: 150 })),
+      text: `我读了你提到的会话：${chats.map((c) => `「${c.label}」`).join('、')}，会结合其中的内容回答。（Mock 演示）`,
+      citations: [],
+    }
+  }
 
   if (attachments.length) {
     return {
@@ -92,7 +122,7 @@ export function planReply(message: string, state: AppState, attachments: Attachm
     }
   }
 
-  if (/搜索|最新|网页|网上|https?:\/\//.test(message)) {
+  if (command?.id === 'research' || command?.id === 'fetch' || mentions.some((m) => m.id === 'web') || /搜索|最新|网页|网上|https?:\/\//.test(message)) {
     if (!enabled('web')) return unavailable('网页')
     return {
       summary: '搜索网页，读取 1 个页面',

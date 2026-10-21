@@ -1,4 +1,5 @@
 import { pluginCatalog } from '../plugins/catalog'
+import { builtinSkills } from '../skills'
 import type { AppState, ToolCall } from '../types'
 
 const mockPlugins = ['files', 'artifact', 'email', 'web']
@@ -324,6 +325,7 @@ torch.cat([half_cos, half_cos], dim=-1)   # shape (5, 4)
     { id: 's3', name: '周报草稿', rule: '每周五 18:00', nextRunAt: now + 3 * day, enabled: false, lastResult: '上周五 · 失败：免费额度耗尽' },
   ],
   plugins: pluginCatalog.map((p) => ({ ...p, enabled: mockPlugins.includes(p.id), available: mockPlugins.includes(p.id) })),
+  skills: builtinSkills.map((s) => ({ name: s.name, description: s.description, source: 'builtin' as const, enabled: true })),
   memories: [
     { id: 'm1', text: '不要把报名截止时间当成活动开始时间。' },
     { id: 'm2', text: '邮件署名使用中文全名。' },
@@ -340,4 +342,5 @@ torch.cat([half_cos, half_cos], dim=-1)   # shape (5, 4)
     { provider: 'openai', id: 'my-proxy-model', name: 'my-proxy-model', capabilities: null },
   ],
   modelsError: null,
+  skillsError: null,
 }

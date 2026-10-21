@@ -74,14 +74,42 @@ export interface Turn {
   note?: BranchNote
   /** Files sent with the user message (roadmap-2 R8). */
   attachments?: Attachment[]
+  /** The `/` command the message was sent with (roadmap-2 R17). */
+  command?: CommandRef
+  /** Plugins and chats `@`-mentioned in the message (R18); mentioned files are attachments. */
+  mentions?: Mention[]
 }
 
 /** A Drive file attached to a user message. */
 export type Attachment = Pick<DriveFile, 'id' | 'name' | 'mimeType' | 'size'>
 
-/** Metadata of a user message. */
+/** A `/` command as recorded on a message. */
+export interface CommandRef {
+  id: string
+  label: string
+}
+
+/** An `@`-mentioned plugin or chat. */
+export interface Mention {
+  kind: 'plugin' | 'chat'
+  id: string
+  label: string
+}
+
+/** Metadata of a user message; each field also has a hidden text part for the model (src/message.ts). */
 export interface UserMetadata {
   attachments?: Attachment[]
+  command?: CommandRef
+  mentions?: Mention[]
+}
+
+/** A message as the composer sends it. */
+export interface Outgoing {
+  text: string
+  attachments?: Attachment[]
+  /** `prompt` is the instruction the model gets; only `id` and `label` are shown. */
+  command?: CommandRef & { prompt: string }
+  mentions?: Mention[]
 }
 
 export interface Versions {
@@ -153,6 +181,14 @@ export interface PluginInfo {
   available: boolean
 }
 
+/** An Agent Skill (roadmap-2 R19): built in, or `GenseBot/Skills/<名称>/SKILL.md` in Drive. */
+export interface SkillInfo {
+  name: string
+  description: string
+  source: 'builtin' | 'drive'
+  enabled: boolean
+}
+
 export interface Memory {
   id: string
   text: string
@@ -193,6 +229,9 @@ export interface AppState {
   files: DriveFile[]
   schedules: Schedule[]
   plugins: PluginInfo[]
+  skills: SkillInfo[]
+  /** Why GenseBot/Skills could not be read; null when fine. */
+  skillsError: string | null
   memories: Memory[]
   prefs: Preferences
   account: Account
@@ -220,6 +259,11 @@ export interface HubState {
   enabledPlugins: string[]
   /** Plugins whose tools the server implements. */
   availablePlugins: string[]
+  /** Built-in skills and the ones last read from GenseBot/Skills. */
+  skills: Omit<SkillInfo, 'enabled'>[]
+  disabledSkills: string[]
+  /** Why GenseBot/Skills could not be read; null when fine. */
+  skillsError: string | null
   account: Account
   models: ModelOption[]
   modelsError: string | null
@@ -236,6 +280,8 @@ export interface TurnSettings {
   driveConnected: boolean
   /** Name and description of the chat's project, empty when it has none. */
   projectContext: string
+  /** Enabled skills, listed in the system prompt. */
+  skills: { name: string; description: string }[]
 }
 
 /** Client body fields sent with each chat request. */

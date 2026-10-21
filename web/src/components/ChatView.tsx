@@ -11,6 +11,7 @@ import { Markdown } from './Markdown'
 import { TopBar } from './TopBar'
 import { MOCK } from '../mode'
 import { formatSize } from '../util'
+import { suggestions } from './suggest'
 
 const statusLabel: Record<Turn['status'], string> = {
   queued: '已接收，排队中',
@@ -75,7 +76,7 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
         }
       return store.callToolFromView(conv.id, turn.id, call.id, name, args)
     },
-    sendMessage: (text) => store.reply(conv.id, text, model, effort),
+    sendMessage: (text) => store.reply(conv.id, { text }, model, effort),
     requestDisplayMode: (mode) => {
       if (mode !== 'inline') setSideId(null)
       setPanel(mode === 'inline' ? null : { turnId: turn.id, callId: call.id })
@@ -170,11 +171,13 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
             onEffort={setEffort}
             busy={busy}
             onStop={() => last && store.stop(conv.id, last.id)}
-            onSend={(text, files) => {
-              store.reply(conv.id, text, model, effort, files)
+            onSend={(message) => {
+              store.reply(conv.id, message, model, effort)
               setAtBottom(true)
             }}
             onAttach={store.upload}
+            suggest={suggestions(store, { convId: conv.id, side: !!last && !busy })}
+            onClientCommand={(id) => id === 'side' && last && actions.side(last)}
             footnote
           />
           )}
@@ -405,6 +408,7 @@ function TurnView({
   return (
     <section className="turn">
       {turn.attachments?.length ? <AttachmentCards files={turn.attachments} /> : null}
+      {turn.command || turn.mentions?.length ? <RefChips turn={turn} /> : null}
       <UserBubble
         text={turn.userMessage}
         versions={actions && turn.userVersions}
@@ -642,7 +646,7 @@ function SideThread({ store, side, onClose }: { store: Store; side: Conversation
   const [error, setError] = useState('')
   const noHost: ViewHost = {
     callTool: async () => ({ content: '支线面板中不支持界面调用', isError: true }),
-    sendMessage: (text) => store.reply(side.id, text, model, effort),
+    sendMessage: (text) => store.reply(side.id, { text }, model, effort),
     requestDisplayMode: () => {},
     setViewState: () => {},
   }
@@ -695,11 +699,12 @@ function SideThread({ store, side, onClose }: { store: Store; side: Conversation
           onEffort={setEffort}
           busy={busy}
           onStop={() => last && store.stop(side.id, last.id)}
-          onSend={(text, files) => {
-            if (turns.length === 0) store.patchConv(side.id, (c) => ({ ...c, title: text.replace(/\s+/g, ' ').slice(0, 30) }))
-            store.reply(side.id, text, model, effort, files)
+          onSend={(message) => {
+            if (turns.length === 0) store.patchConv(side.id, (c) => ({ ...c, title: message.text.replace(/\s+/g, ' ').slice(0, 30) }))
+            store.reply(side.id, message, model, effort)
           }}
           onAttach={store.upload}
+          suggest={suggestions(store, { convId: side.id })}
         />
       </div>
     </aside>
@@ -762,6 +767,24 @@ function AttachmentCards({ files }: { files: Attachment[] }) {
           </a>
         )
       })}
+    </div>
+  )
+}
+
+/** The command and mentions a user message was sent with. */
+function RefChips({ turn }: { turn: Turn }) {
+  return (
+    <div className="user-files">
+      {turn.command && (
+        <span className="ref-chip" title="命令">
+          <span className="ellipsis">/{turn.command.label}</span>
+        </span>
+      )}
+      {turn.mentions?.map((m) => (
+        <span key={m.kind + m.id} className="ref-chip" title={m.kind === 'chat' ? '会话' : '插件'}>
+          <span className="ellipsis">@{m.label}</span>
+        </span>
+      ))}
     </div>
   )
 }

@@ -2,6 +2,7 @@ import type { WorkerEnv } from './env'
 import { Agent, callable, type Connection, type ConnectionContext } from 'agents'
 import { RoutedAgents } from 'agents/routing'
 import { z } from 'zod'
+import { builtinSkills, parseSkill } from '../src/skills'
 import type { BranchNote, ChatMeta, DriveFile, HubState, Provider, TurnSettings } from '../src/types'
 import type { Chat } from './chat'
 import { Drive, MAX_UPLOAD_BYTES, type Folders, type TextCache } from './drive'
@@ -16,6 +17,21 @@ const MODELS_TTL = 60 * 60 * 1000
 const CAPS_TTL = 24 * 60 * 60 * 1000
 const MODELS_DEV = 'https://models.dev/api.json'
 const OAUTH_STATE_TTL = 10 * 60 * 1000
+const MAX_SKILLS = 50
+const SKILL_FILE = 'SKILL.md'
+/** Folders per Drive query when looking for SKILL.md files; keeps the query string short. */
+const QUERY_PARENTS = 25
+
+const builtinInfo = builtinSkills.map(({ name, description }) => ({ name, description, source: 'builtin' as const }))
+
+/** A skill read from GenseBot/Skills/<folder>/SKILL.md, kept until the file changes. */
+interface DriveSkill {
+  name: string
+  description: string
+  fileId: string
+  folderId: string
+  modifiedTime: number
+}
 
 /** What UserHub keeps about the Google grant; never part of the broadcast state. */
 interface GoogleGrant {
@@ -39,6 +55,7 @@ const patchSchema = z
     memories: z.array(z.object({ id: z.string().max(64), text: z.string().max(2000) })).max(200),
     prefs: z.object({ language: z.string().max(32), defaultEffort: effort, model: z.string().max(200) }),
     enabledPlugins: z.array(z.string().max(64)).max(50),
+    disabledSkills: z.array(z.string().max(64)).max(200),
   })
   .partial()
   .strict()
@@ -65,6 +82,9 @@ export class UserHub extends Agent<WorkerEnv, HubState> {
     availablePlugins: [...pluginIds],
     account: { name: '', email: '', driveConnected: false, driveError: null },
     files: [],
+    skills: builtinInfo,
+    disabledSkills: [],
+    skillsError: null,
     models: [],
     modelsError: null,
   }
@@ -87,9 +107,11 @@ export class UserHub extends Agent<WorkerEnv, HubState> {
     const seen = this.ctx.storage.kv.get<string[]>('seenPlugins') ?? ['files', 'artifact']
     const enabledPlugins = [...this.state.enabledPlugins, ...available.filter((id) => !seen.includes(id) && !this.state.enabledPlugins.includes(id))]
     this.ctx.storage.kv.put('seenPlugins', [...new Set([...seen, ...available])])
-    this.setState({ ...this.state, prefs, account, files: this.state.files ?? [], availablePlugins: available, enabledPlugins })
+    const skills = { skills: this.state.skills ?? builtinInfo, disabledSkills: this.state.disabledSkills ?? [], skillsError: this.state.skillsError ?? null }
+    this.setState({ ...this.state, prefs, account, files: this.state.files ?? [], availablePlugins: available, enabledPlugins, ...skills })
     await this.syncChats()
     if (this.grant()) void this.refreshFiles()
+    void this.refreshSkills()
     if (Date.now() - (this.ctx.storage.kv.get<number>('modelsAt') ?? 0) > MODELS_TTL) void this.refreshModels()
   }
 
@@ -267,7 +289,7 @@ export class UserHub extends Agent<WorkerEnv, HubState> {
   private dropGrant(reason: string | null) {
     this.ctx.storage.kv.delete('google')
     this.access = undefined
-    this.setState({ ...this.state, files: [], account: { ...this.state.account, driveConnected: false, driveError: reason } })
+    this.setState({ ...this.state, files: [], skills: builtinInfo, skillsError: null, account: { ...this.state.account, driveConnected: false, driveError: reason } })
   }
 
   /** Called by the Worker for `/oauth/google/start`; the state is single-use. */
@@ -301,6 +323,7 @@ export class UserHub extends Agent<WorkerEnv, HubState> {
       this.access = { token: t.access_token, exp: Date.now() + t.expires_in * 1000 }
       this.setAccount({ driveConnected: true, driveError: null })
       await this.refreshFiles()
+      void this.refreshSkills()
       return null
     } catch (e) {
       return e instanceof Error ? e.message : String(e)
@@ -325,6 +348,97 @@ export class UserHub extends Agent<WorkerEnv, HubState> {
     } catch (e) {
       if (this.grant()) this.setAccount({ driveError: e instanceof Error ? e.message : String(e) })
     }
+  }
+
+  // ---- Skills (roadmap-2 "L2 Skills") ----
+
+  /**
+   * Re-reads GenseBot/Skills: each folder in it holding a valid SKILL.md is one skill. Built-in
+   * skills always come first; a Drive skill with a name already taken is skipped and reported.
+   */
+  @callable()
+  async refreshSkills() {
+    if (!this.grant()) return this.setState({ ...this.state, skills: builtinInfo, skillsError: null })
+    const kv = this.ctx.storage.kv
+    try {
+      const { drive, folders } = await this.drive()
+      const dirs = (await drive.folders(await drive.skillsFolder(folders))).slice(0, MAX_SKILLS)
+      const groups: string[][] = []
+      for (let i = 0; i < dirs.length; i += QUERY_PARENTS) groups.push(dirs.slice(i, i + QUERY_PARENTS).map((d) => d.id))
+      const files = (await Promise.all(groups.map((ids) => drive.named(SKILL_FILE, ids)))).flat()
+      const cache = kv.get<Record<string, DriveSkill>>('driveSkills') ?? {}
+      const problems: string[] = []
+      const read = await Promise.all(
+        dirs.map(async (dir): Promise<DriveSkill | null> => {
+          const file = files.find((f) => f.parent === dir.id)
+          if (!file) return problems.push(`${dir.name}：缺少 ${SKILL_FILE}`), null
+          const hit = cache[dir.id]
+          if (hit?.fileId === file.id && hit.modifiedTime === file.modifiedTime) return hit
+          try {
+            const doc = parseSkill((await drive.readText(file.id, folders)).text)
+            if (doc) return { name: doc.name, description: doc.description, fileId: file.id, folderId: dir.id, modifiedTime: file.modifiedTime }
+            problems.push(`${dir.name}：${SKILL_FILE} 开头缺少有效的 name 和 description`)
+          } catch (e) {
+            problems.push(`${dir.name}：${e instanceof Error ? e.message : String(e)}`)
+          }
+          return null
+        }),
+      )
+      const found = read.filter((s): s is DriveSkill => !!s)
+      kv.put('driveSkills', Object.fromEntries(found.map((s) => [s.folderId, s])))
+      const taken = new Set(builtinInfo.map((s) => s.name))
+      const fromDrive = found.flatMap((s) => {
+        if (taken.has(s.name)) return problems.push(`${s.name}：与已有 Skill 重名，已跳过`), []
+        taken.add(s.name)
+        return [{ name: s.name, description: s.description, source: 'drive' as const }]
+      })
+      this.setState({ ...this.state, skills: [...builtinInfo, ...fromDrive], skillsError: problems.length ? `部分 Skill 没有加载：${problems.join('；')}` : null })
+    } catch (e) {
+      // Keep the last list; only explain why it may be stale.
+      this.setState({ ...this.state, skillsError: e instanceof Error ? e.message : String(e) })
+    }
+  }
+
+  /** The Drive entry of an enabled skill, or null for a built-in one. */
+  private skill(name: string): DriveSkill | null {
+    const info = this.state.skills.find((s) => s.name === name)
+    if (!info || this.state.disabledSkills.includes(name)) throw new Error(`没有可用的 Skill「${name}」`)
+    if (info.source === 'builtin') return null
+    const entry = Object.values(this.ctx.storage.kv.get<Record<string, DriveSkill>>('driveSkills') ?? {}).find((s) => s.name === name)
+    if (!entry) throw new Error(`Skill「${name}」需要重新读取，请在“定制”页刷新 Skills`)
+    return entry
+  }
+
+  /** Files beside a skill's SKILL.md, one folder level deep, by path. */
+  private async skillFiles(drive: Drive, folderId: string): Promise<{ path: string; id: string }[]> {
+    const [top, dirs] = await Promise.all([drive.list(folderId, 'drive'), drive.folders(folderId)])
+    const nested = await Promise.all(dirs.slice(0, 20).map(async (d) => (await drive.list(d.id, 'drive')).map((f) => ({ path: `${d.name}/${f.name}`, id: f.id }))))
+    return [...top.map((f) => ({ path: f.name, id: f.id })), ...nested.flat()].filter((f) => f.path !== SKILL_FILE)
+  }
+
+  async loadSkill(name: string): Promise<{ body: string; resources: string[] }> {
+    const entry = this.skill(name)
+    if (!entry) return { body: builtinSkills.find((s) => s.name === name)!.body, resources: [] }
+    const { drive, folders } = await this.drive()
+    const [{ text }, files] = await Promise.all([drive.readText(entry.fileId, folders), this.skillFiles(drive, entry.folderId)])
+    return { body: parseSkill(text)?.body ?? text, resources: files.map((f) => f.path) }
+  }
+
+  async readSkillResource(name: string, path: string): Promise<string> {
+    const entry = this.skill(name)
+    if (!entry) throw new Error(`内置 Skill「${name}」没有附带文件`)
+    const { drive, folders } = await this.drive()
+    const file = (await this.skillFiles(drive, entry.folderId)).find((f) => f.path === path.replace(/^\.?\//, ''))
+    if (!file) throw new Error(`Skill「${name}」里没有 ${path}`)
+    return (await drive.readText(file.id, folders, this.textCache)).text
+  }
+
+  /** Another chat of this user, as text (`chats_read`). */
+  async chatText(id: string): Promise<{ title: string; text: string }> {
+    const meta = this.state.chats.find((c) => c.id === id)
+    const stub = meta && (await this.chats.get(id))
+    if (!meta || !stub) throw new Error('会话不存在或已删除')
+    return { title: meta.title, text: await stub.transcript() }
   }
 
   @callable()
@@ -386,7 +500,8 @@ export class UserHub extends Agent<WorkerEnv, HubState> {
     const projectId = chats.find((c) => c.id === chatId)?.projectId
     const project = projects.find((p) => p.id === projectId)
     const projectContext = project ? [`项目：${project.name}`, project.description.trim()].filter(Boolean).join('\n') : ''
-    return { enabledPlugins, memories: memories.map((m) => m.text), language: prefs.language, models, driveConnected: account.driveConnected, projectContext }
+    const skills = this.state.skills.filter((s) => !this.state.disabledSkills.includes(s.name)).map(({ name, description }) => ({ name, description }))
+    return { enabledPlugins, memories: memories.map((m) => m.text), language: prefs.language, models, driveConnected: account.driveConnected, projectContext, skills }
   }
 
   /** Bumps the chat to the top of the list after a turn and remembers the model chosen. */

@@ -434,3 +434,17 @@ code, pre { font-family: var(--mono); }
 .file-card { display: inline-flex; align-items: center; gap: 8px; max-width: min(100%, 280px); padding: 8px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); font-size: 13.5px; color: var(--text); text-decoration: none; }
 a.file-card:hover { background: var(--hover); }
 .file-card .muted { flex-shrink: 0; font-size: 12px; }
+
+/* `/` commands and `@` mentions */
+.composer { position: relative; }
+.suggest-menu { position: absolute; left: 8px; right: 8px; bottom: calc(100% + 6px); z-index: 21; max-height: min(50vh, 340px); overflow-y: auto; padding: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 30px rgb(0 0 0 / .12); }
+.suggest-group { font-size: 12px; color: var(--muted); padding: 8px 10px 2px; }
+.suggest-item { display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left; padding: 7px 10px; border-radius: 8px; font-size: 14px; }
+.suggest-item > :first-child { flex-shrink: 0; max-width: 60%; }
+.suggest-item.active { background: var(--hover); }
+.attach-chip.command, .attach-chip.mention, .ref-chip { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+.ref-chip { display: inline-flex; align-items: center; max-width: 240px; padding: 3px 10px; border: 1px solid; border-radius: 99px; font-size: 12.5px; }
+.skill-help { margin: 8px 0 0; padding-left: 18px; }
+.skill-help code { font-size: 12.5px; }
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 28px 0 10px; }
+.section-head .section-title { margin: 0; }

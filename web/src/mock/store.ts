@@ -4,11 +4,11 @@ import { seed } from './seed'
 import { tools } from '../plugins'
 import type { ToolContext } from '../plugins/types'
 import type { Store } from '../store'
-import type { AppState, Attachment, BranchNote, Conversation, DriveFile, Effort, ToolCall, ToolResult, Turn, Versions, WebSource } from '../types'
+import type { AppState, BranchNote, Conversation, DriveFile, Effort, Outgoing, ToolCall, ToolResult, Turn, Versions, WebSource } from '../types'
 import { MAX_UPLOAD_BYTES, uid } from '../util'
 
-// v4: files carry `size`, the account carries `driveError`.
-const KEY = 'gensebot-mock-v5'
+// v6: skills.
+const KEY = 'gensebot-mock-v6'
 /** Older versions by the id of the message they replaced: the turns from there on, per chat. */
 const BRANCHES_KEY = 'gensebot-mock-branches-v1'
 type Branches = Record<string, Record<string, Turn[]>>
@@ -22,6 +22,9 @@ function load(): AppState {
   }
   return structuredClone(seed)
 }
+
+/** A turn's message sent again (regenerate, edit) keeps its attachments, command and mentions. */
+const resend = (t: Turn, text: string): Outgoing => ({ text, attachments: t.attachments, command: t.command && { ...t.command, prompt: '' }, mentions: t.mentions })
 
 function loadBranches(): Branches {
   try {
@@ -77,7 +80,7 @@ export function useMockStore(): Store {
     (name: string, input: unknown): ToolResult => {
       const tool = tools[name]
       if (!tool) return { content: `工具 ${name} 未注册`, isError: true }
-      const ctx: ToolContext = { files: stateRef.current.files, addFile }
+      const ctx: ToolContext = { files: stateRef.current.files, addFile, conversations: stateRef.current.conversations }
       return tool.execute(input as never, ctx)
     },
     [addFile],
@@ -85,7 +88,7 @@ export function useMockStore(): Store {
 
   const run = useCallback(
     (convId: string, turn: Turn) => {
-      const script = planReply(turn.userMessage, stateRef.current, turn.attachments)
+      const script = planReply(turn, stateRef.current)
       const ids: number[] = []
       timers.current.set(turn.id, ids)
       let t = 0
@@ -139,14 +142,14 @@ export function useMockStore(): Store {
     return () => all.forEach((ids) => ids.forEach(clearTimeout))
   }, [patchTurn, run])
 
-  const newTurn = (message: string, model: string, effort: Effort, attachments?: Attachment[]): Turn => {
+  const newTurn = ({ text, attachments, command, mentions }: Outgoing, model: string, effort: Effort): Turn => {
     // The last model chosen becomes the default for new conversations.
     setState((s) => (s.prefs.model === model ? s : { ...s, prefs: { ...s.prefs, model } }))
     return {
       id: uid(),
       requestId: uid(),
       status: 'queued',
-      userMessage: message,
+      userMessage: text,
       assistantMessage: '',
       toolCalls: [],
       citations: [],
@@ -154,14 +157,16 @@ export function useMockStore(): Store {
       effort,
       createdAt: Date.now(),
       attachments: attachments?.length ? attachments : undefined,
+      command: command && { id: command.id, label: command.label },
+      mentions: mentions?.length ? mentions : undefined,
     }
   }
 
-  const startConversation = (message: string, projectId: string | null, model: string, effort: Effort, attachments?: Attachment[]) => {
-    const turn = newTurn(message, model, effort, attachments)
+  const startConversation = (message: Outgoing, projectId: string | null, model: string, effort: Effort) => {
+    const turn = newTurn(message, model, effort)
     const conv: Conversation = {
       id: uid(),
-      title: message.replace(/\s+/g, ' ').slice(0, 24),
+      title: message.text.replace(/\s+/g, ' ').slice(0, 24),
       projectId,
       pinned: false,
       updatedAt: Date.now(),
@@ -172,8 +177,8 @@ export function useMockStore(): Store {
     return Promise.resolve(conv.id)
   }
 
-  const reply = (convId: string, message: string, model: string, effort: Effort, attachments?: Attachment[]) => {
-    const turn = newTurn(message, model, effort, attachments)
+  const reply = (convId: string, message: Outgoing, model: string, effort: Effort) => {
+    const turn = newTurn(message, model, effort)
     patchConv(convId, (c) => ({ ...c, updatedAt: Date.now(), turns: [...c.turns, turn] }))
     run(convId, turn)
   }
@@ -198,12 +203,12 @@ export function useMockStore(): Store {
 
   const regenerate = (convId: string, turn: Turn, model: string, effort: Effort) => {
     const requestId = uid()
-    const next: Turn = { ...newTurn(turn.userMessage, model, effort), id: turn.id, requestId, userVersions: turn.userVersions, answerVersions: addVersion(turn.answerVersions, turn.requestId, requestId) }
+    const next: Turn = { ...newTurn(resend(turn, turn.userMessage), model, effort), id: turn.id, requestId, userVersions: turn.userVersions, answerVersions: addVersion(turn.answerVersions, turn.requestId, requestId) }
     replaceFrom(convId, turn, turn.requestId, next)
   }
 
   const editMessage = (convId: string, turn: Turn, text: string, model: string, effort: Effort) => {
-    const next = newTurn(text, model, effort)
+    const next = newTurn(resend(turn, text), model, effort)
     replaceFrom(convId, turn, turn.id, { ...next, userVersions: addVersion(turn.userVersions, turn.id, next.id) })
   }
 
@@ -321,5 +326,5 @@ export function useMockStore(): Store {
     setViews({})
   }
 
-  return { state, ready: true, turnsLoaded: () => true, setState, patchConv, startConversation, reply, regenerate, editMessage, showVersion, branch, summarizeSide, attach: () => {}, stop, reset, callToolFromView, setViewState, upload, setDrive, refreshFiles: () => {}, readFile, searchDrive, bridge: null }
+  return { state, ready: true, turnsLoaded: () => true, setState, patchConv, startConversation, reply, regenerate, editMessage, showVersion, branch, summarizeSide, attach: () => {}, stop, reset, callToolFromView, setViewState, upload, setDrive, refreshFiles: () => {}, refreshSkills: () => {}, readFile, searchDrive, bridge: null }
 }

@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { MOCK } from './mode'
 import { useMockStore } from './mock/store'
 import { useRealStore } from './real/store'
-import type { AppState, Attachment, Conversation, DriveFile, Effort, ToolResult, Turn } from './types'
+import type { AppState, Conversation, DriveFile, Effort, Outgoing, ToolResult, Turn } from './types'
 
 /** What the views need from the data layer; the mock and the Worker-backed store both provide it. */
 export interface Store {
@@ -14,8 +14,8 @@ export interface Store {
   setState: (fn: (s: AppState) => AppState) => void
   patchConv: (convId: string, fn: (c: Conversation) => Conversation) => void
   /** Resolves to the new conversation's id; the first message is sent once its chat is open. */
-  startConversation: (message: string, projectId: string | null, model: string, effort: Effort, attachments?: Attachment[]) => Promise<string>
-  reply: (convId: string, message: string, model: string, effort: Effort, attachments?: Attachment[]) => void
+  startConversation: (message: Outgoing, projectId: string | null, model: string, effort: Effort) => Promise<string>
+  reply: (convId: string, message: Outgoing, model: string, effort: Effort) => void
   /** A new answer beside the turn's current one; the old answer stays as an older version. */
   regenerate: (convId: string, turn: Turn, model: string, effort: Effort) => void
   /** Sends an edited copy of the turn's message; the original stays as an older version. */
@@ -38,6 +38,8 @@ export interface Store {
   setDrive: (connected: boolean) => void
   /** Reloads GenseBot/资料 and Artifacts from Drive. */
   refreshFiles: () => void
+  /** Reloads the skills in GenseBot/Skills. */
+  refreshSkills: () => void
   /** Text of any readable Drive file; rejects with a message for the user. */
   readFile: (id: string) => Promise<{ file: DriveFile; text: string }>
   /** Name and full-text search across the user's Drive. */

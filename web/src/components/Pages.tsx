@@ -7,6 +7,7 @@ import { findQuote, formatSize } from '../util'
 import { Composer, Picker, effortLabel } from './Composer'
 import { IconAlert, IconDoc, IconPin, IconPlus, IconProject, IconRetry, IconSearch, IconTrash, Spark } from './Icons'
 import { Markdown } from './Markdown'
+import { suggestions } from './suggest'
 import { TopBar } from './TopBar'
 
 function greeting() {
@@ -40,8 +41,9 @@ export function HomeView({ store }: { store: Store }) {
           onModel={setModel}
           onEffort={setEffort}
           autoFocus
-          onSend={(text, files) => void store.startConversation(text, projectId || null, model, effort, files).then((id) => navigate({ name: 'chat', id }))}
+          onSend={(message) => void store.startConversation(message, projectId || null, model, effort).then((id) => navigate({ name: 'chat', id }))}
           onAttach={store.upload}
+          suggest={suggestions(store)}
           leftSlot={<Picker value={projectId} options={[{ value: '', label: '无项目' }, ...projects.map((p) => ({ value: p.id, label: p.name }))]} onChange={setProjectId} />}
         />
         <div className="suggestions">
@@ -49,7 +51,7 @@ export function HomeView({ store }: { store: Store }) {
             ? ['读一下奖学金通知，整理时间点', '把周报整理成组会汇报提纲', '帮我给王老师写封邮件', '模拟模型端点错误']
             : ['在我的 Drive 里找最近的周报，总结要点', '帮我列一个组会汇报提纲', '把一段英文摘要翻译成中文']
           ).map((s) => (
-            <button key={s} className="chip" onClick={() => void store.startConversation(s, projectId || null, model, effort).then((id) => navigate({ name: 'chat', id }))}>
+            <button key={s} className="chip" onClick={() => void store.startConversation({ text: s }, projectId || null, model, effort).then((id) => navigate({ name: 'chat', id }))}>
               {s}
             </button>
           ))}
@@ -158,8 +160,9 @@ export function ProjectView({ store, id }: { store: Store; id: string }) {
           effort={effort}
           onModel={setModel}
           onEffort={setEffort}
-          onSend={(text, files) => void store.startConversation(text, id, model, effort, files).then((cid) => navigate({ name: 'chat', id: cid }))}
+          onSend={(message) => void store.startConversation(message, id, model, effort).then((cid) => navigate({ name: 'chat', id: cid }))}
           onAttach={store.upload}
+          suggest={suggestions(store)}
         />
         <label className="field project-desc">
           <span>项目说明</span>
@@ -456,7 +459,7 @@ export function ScheduledView({ store }: { store: Store }) {
 }
 
 export function CustomizeView({ store }: { store: Store }) {
-  const { plugins, memories, prefs, account } = store.state
+  const { plugins, skills, skillsError, memories, prefs, account } = store.state
   const [memo, setMemo] = useState('')
   return (
     <div className="page">
@@ -499,6 +502,39 @@ export function CustomizeView({ store }: { store: Store }) {
               />
             </li>
           ))}
+        </ul>
+
+        <div className="section-head">
+          <h3 className="section-title">Skills</h3>
+          {account.driveConnected && (
+            <button className="pill-btn" onClick={() => store.refreshSkills()}>
+              刷新
+            </button>
+          )}
+        </div>
+        <p className="muted small">
+          Skill 是一份写给助手的任务说明。任务符合时助手会自动启用它，你也可以在输入框里用 / 指定。关闭后助手不会再使用它。
+        </p>
+        <ul className="list rows">
+          {skills.map((s) => (
+            <li key={s.name} className="row">
+              <div className="row-main">
+                <strong>
+                  {s.name} <span className="tag">{s.source === 'builtin' ? '内置' : 'Drive'}</span>
+                </strong>
+                <span className="muted small">{s.description}</span>
+              </div>
+              <Toggle checked={s.enabled} label={s.name} onChange={(v) => store.setState((st) => ({ ...st, skills: st.skills.map((x) => (x.name === s.name ? { ...x, enabled: v } : x)) }))} />
+            </li>
+          ))}
+        </ul>
+        {skillsError && <p className="small error-text">{skillsError}</p>}
+        <ul className="muted small skill-help">
+          <li>
+            添加自己的 Skill：在 Drive 的 <code>GenseBot/Skills/</code> 里新建一个文件夹，放入 <code>SKILL.md</code>，开头写上
+            <code>name</code> 和 <code>description</code>（YAML 格式），下面写说明，然后点“刷新”。
+          </li>
+          <li>同一文件夹里的其他文件（最多一层子文件夹）会作为附带资料，助手需要时读取。</li>
         </ul>
 
         <h3 className="section-title">记忆</h3>

@@ -9,6 +9,7 @@
 3. [架构 Design 草案](design/architecture.md)：技术职责、数据流、待定问题和实现前验证。
 4. [Cloudflare 托管决策](adr/0001-cloudflare-free-tier.md)：已确认的部署方向及取舍。
 5. [免费额度与依赖核查](research/cloudflare-free-tier.md)：价格依据、限制和未验证事项。
+6. [网页界面 Spec](specs/web-ui.md)：页面、组件、移动端行为和交付阶段；M0 Mock 前端在 [`web/`](../web/)。
 
 原始课程材料保留在 [实验 1](intents/lab1.md) 和 [实验 2](intents/lab2.md)。它们提供长期方向，不代表其中每项功能都属于第一版交付范围。
 

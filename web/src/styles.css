@@ -293,9 +293,9 @@ code, pre { font-family: var(--mono); }
 
 /* Mobile */
 @media (max-width: 767px) {
-  .sidebar { position: fixed; z-index: 40; top: 0; bottom: 0; left: 0; width: min(86vw, var(--sidebar-w)); transform: translateX(-100%); box-shadow: 0 0 40px rgb(0 0 0 / .18); }
+  .sidebar { position: fixed; z-index: 40; top: 0; bottom: 0; left: 0; width: min(86vw, var(--sidebar-w)); transform: translateX(-100%); }
   .app.collapsed .sidebar { margin-left: 0; }
-  .sidebar.open { transform: none; }
+  .sidebar.open { transform: none; box-shadow: 0 0 40px rgb(0 0 0 / .18); }
   .scrim { display: block; position: fixed; inset: 0; z-index: 39; background: rgb(0 0 0 / .3); opacity: 0; pointer-events: none; transition: opacity .2s; }
   .scrim.show { opacity: 1; pointer-events: auto; }
   .menu-btn { display: inline-grid; }

@@ -113,7 +113,7 @@ Turn 的 `status` 取值：`queued`、`running`、`succeeded`、`failed`、`inte
 | M1 接入首个闭环 | 认证、真实会话与任务状态、文档读写、真实模型与工具 | 满足首版 Spec S1 至 S10 |
 | M2 及以后 | 定时任务、记忆编辑、确认卡片接入邮件 / ehall | 各自另写 Spec |
 
-M0 不做认证，部署地址任何人可访问，因此只放演示数据，不放个人资料。
+M0 已部署到 <https://gensebot-mock.rayama114514.workers.dev>（Worker `gensebot-mock`，仅静态资源，Free 计划）。M0 不做认证，部署地址任何人可访问，因此只放演示数据，不放个人资料。
 
 ## 待定
 

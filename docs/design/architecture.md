@@ -1,107 +1,152 @@
 # Design：Cloudflare 云端个人助手
 
-状态：架构草案，待评审与部署验证。当前仓库尚无产品实现。部署方向已确认，内部划分、数据归属和协议不是已定稿的接口。
+状态：架构草案，待评审与部署验证。2026-10-21 起改用 Think + Google Drive（见 [ADR-0002](../adr/0002-think-google-drive.md)），原 Pi Durable / PiHarness / Computer Workspace 方案作废。
 
-依据：[产品 Intent](../intents/personal-assistant.md)、[Spec 草案](../specs/personal-assistant.md)、[ADR-0001](../adr/0001-cloudflare-free-tier.md)。
+依据：[产品 Intent](../intents/personal-assistant.md)、[Spec](../specs/personal-assistant.md)、[网页界面 Spec](../specs/web-ui.md)。
 
 ## 技术基线
 
-| 用途 | 当前方向 | 需要验证或决定的事项 |
+| 用途 | 选择 | 备注 |
 | --- | --- | --- |
-| 语言 | TypeScript | 工具链版本在验证阶段锁定 |
-| 前端 | React + Vite，适配手机 | 先做独立网页，不要求原生 App |
-| 云端宿主 | Workers + SQLite-backed Durable Objects | 在 Free 计划验证部署和资源消耗 |
-| Agent 核心 | Pi Durable + Agents SDK 的 `agents/harness/pi` | 选择兼容的已发布依赖，不混用 main 与 npm 的接口假设 |
-| 模型接入 | `pi-ai` | 选可免费使用且通过任务验收的模型，不绑定付费回退 |
-| 小文件 | Cloudflare Computer Workspace | 只使用文件系统，验证不依赖 Worker Loader 或其他付费能力 |
-| 测试与 CI | Workers 运行时测试 + GitHub Actions | 测试实际实现；具体检查和评审门禁后续确定 |
+| 语言 | TypeScript | |
+| 前端 | React + Vite（沿用 `web/`） | 聊天用 `@cloudflare/ai-chat/react` 的 `useAgentChat` |
+| 宿主 | Workers + SQLite-backed Durable Objects，Free 计划 | `nodejs_compat`；静态资源与 Agent 同一个 Worker |
+| Agent 运行时 | `@cloudflare/think` | 依赖锁定精确版本；`@cloudflare/computer` 只作为 peer dependency 安装 |
+| 模型 | AI SDK `@ai-sdk/anthropic` | 端点、token 和模型名来自 `.env` |
+| 登录 | Cloudflare Access，Google 身份提供方 | Worker 自己再校验 Access JWT |
+| 用户文件 | Google Drive API v3 | OAuth scope 先只申请 `drive.file` |
+| 部署 | `cf deploy --secrets-file .env` | 密钥不进 Git，不经过对话 |
 
-不配置 Dynamic Workers、Computer 执行后端或 Containers。不为未来本地部署预先增加抽象层。大文件、R2、向量检索和额外数据库没有进入基线。
+不使用 Dynamic Workers、Containers、Workers AI、R2 或向量库。
 
-## 职责划分
+## 组件
 
 ```text
-手机网页
-    │ 认证后的请求与进度连接
-Workers 入口
-    │ 路由到有权访问的对象
-Durable Object 宿主
-    ├─ Agents SDK：生命周期、通信和可选能力
-    ├─ PiHarness：Pi 存储与唤醒适配
-    │    └─ Pi Durable：对话、模型循环、工具任务、检查点和恢复
-    ├─ 工作区：持久化小文件
-    └─ 产品逻辑：授权、预算、工具策略、结果展示
+浏览器（手机 / 桌面）
+  │  Cloudflare Access（Google 登录、邮箱白名单）
+  ▼
+Worker 入口
+  ├─ 静态资源（SPA）
+  ├─ 校验 Cf-Access-Jwt-Assertion → 不通过返回 403
+  ├─ /oauth/google/*   Google 授权回调
+  └─ /agents/*         routeAgentRequest
+        ├─ UserHub（Agent，每个用户一个）
+        │    会话索引、项目、偏好、工具开关、记忆、Google 凭据
+        └─ Chat（Think，每个会话一个）
+             消息、轮次状态、工具循环、恢复
+             工具 → UserHub 取 access token → Drive API
 ```
 
-这些是职责，不要求为每一项创建独立 package、进程或框架。优先组合现有能力，只有出现真实复杂度时再拆分。
+- **Chat** 每个会话一个实例，名称就是会话 ID。消息、流恢复和去重都由 Think 负责，我们不再维护第二份聊天记录。
+- **UserHub** 保存跨会话的数据。Chat 通过 DO RPC 找它要短期 access token，refresh token 不离开 UserHub。
+- 单用户首版也按用户 ID（Access JWT 中的 `sub`）给 UserHub 命名，以后支持多用户时不用迁移数据。
 
-Pi Durable 拥有对话执行和恢复语义。不在 Agents 的队列或 Workflows 中再复制一套模型循环或工具重放状态机。
+## 登录与授权
 
-`PiHarness` 不提供完整聊天协议和 UI。网页需要把 Pi 的记录和事件映射为可理解的任务状态；Agents 的 React 客户端能否直接复用到这一层，需要验证，而不是默认成立。
+1. Access 应用覆盖整个域名（包括 `workers.dev`），策略：只允许指定的 Google 邮箱。
+2. Worker 对每个非静态请求都校验 `Cf-Access-Jwt-Assertion`：签名用团队域名的 certs，`aud` 要匹配应用的 AUD tag。不能只信任“请求经过了 Access”，这样可以防止有人绕过 Access 直接访问 Worker。
+3. 首次使用时，界面提示“连接 Google Drive”，走 OAuth 授权码流程（`access_type=offline`），拿到 refresh token 后加密保存在 UserHub。加密用 AES-GCM，密钥来自 secret `TOKEN_ENCRYPTION_KEY`。
+4. Google OAuth 应用发布为 Production（未验证）。如果停留在 Testing，refresh token 约 7 天过期。`drive.file` 是非敏感 scope；以后加日历、Tasks 时增量申请对应 scope。
 
-## 数据与状态
+Access 登录和 Google OAuth 是两次授权：前者证明“你是谁”，后者授权“助手可以访问你的 Drive”。暂时不合并，因为 Access 不会把 Google 的 API token 交给我们的应用。
 
-- Pi 的会话、提交请求和任务使用其持久化存储，不再维护第二份可独立修改的聊天真相。
-- Workspace 保存用户文档和产物。不要将整个工作区复制进每次模型上下文。
-- 用户可编辑的长期记忆与对话压缩是不同能力。压缩用于控制上下文，不默认承担偏好提炼、遗忘和资料更新。
-- 网页缓存只帮助显示，重连以服务端持久化状态为准。
-- 凭据由部署密钥配置或专门设计的凭据机制管理，不写入工作区、模型提示词或 Git。
-- 授权检查由宿主执行，不依赖模型遵守系统提示词。
+## 模型
 
-同一 DO 内共享数据库时，遵循已选 Pi 版本的表命名和事务队列约束。Workspace 与 Pi 共用数据库的正确组合必须通过验证，不能绕过事务约束直接写 Pi 表。
+```ts
+getModel() {
+  const base = this.env.ANTHROPIC_BASE_URL.replace(/\/+$/, '')
+  return createAnthropic({
+    baseURL: base.endsWith('/v1') ? base : `${base}/v1`,
+    authToken: this.env.ANTHROPIC_AUTH_TOKEN, // 以 Authorization: Bearer 发送
+  })(this.env.ANTHROPIC_MODEL)
+}
+```
 
-## 一次任务的数据流
+`.env` 需要三个变量：`ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_MODEL`。界面上的模型选择器只显示 `ANTHROPIC_MODEL`。以后要支持多个模型，可以改成用逗号分隔的列表。
 
-1. 网页为提交生成稳定的请求标识。入口完成认证、输入和预算检查。
-2. 宿主向 Pi 提交请求。只有持久化接受后才向网页确认接收。
-3. Pi 驱动模型与工具，产品层在执行点检查授权、参数和预算。
-4. 网页获取进度。刷新或重连获取快照，不要求从任意历史事件游标重放。
-5. 终态与产物保持可查询。用户关闭网页不自动取消任务。
-6. 宿主重启后恢复持久化工作。安全工具与不安全工具使用不同的重放策略。
+## Drive 存储
 
-路径校验、文件写入冲突和外部幂等检查位于真实工具实现中，不能只写在工具描述里。请求接受、工具执行成功和任务完成是三个不同事实。
+```text
+我的云端硬盘/
+└─ GenseBot/
+   ├─ 资料/        用户上传的文件
+   └─ Artifacts/   助手保存的产物
+```
 
-## 扩展方式
+- `drive.file` 只能访问本应用创建的文件，以及用户通过 Google Picker 选中的文件。用户自己手动放进 `资料/` 的文件，助手看不到，需要用 Picker 选择一次。这是用权限范围换来的安全性：如果申请完整的 `drive` scope，就属于受限 scope，授权页会出现更严重的警告。（待用户确认，见“待定”）
+- 文件 ID 是唯一标识，路径只用于显示。UserHub 缓存文件列表（ID、名称、修改时间），Drive 才是数据源。
+- 首版只处理文本：`.md`、`.txt`、`.csv`、`.json` 和 Google 文档（导出为 Markdown 或纯文本）。PDF 和图片放到后续阶段。
 
-先添加经过部署和审查的 TypeScript 工具。工具需要声明参数、可访问资源、外部副作用、重放策略和资源限制。
+### 工具
 
-接入远程 MCP 时，复用连接与授权能力，再适配为 Pi 工具。第三方 MCP 不因协议标准化就变成免费、可信或可安全重试。交互中的 OAuth、用户输入和待确认操作能否跨重启恢复，需要单独验证。
+| 工具 | 副作用 | 说明 |
+| --- | --- | --- |
+| `files.list` / `files.search` | 无 | 列出或按名称搜索资料与 Artifacts |
+| `files.read` | 无 | 按文件 ID 读取文本，过长时分段读取 |
+| `artifact.save` | 创建新文件 | 只在 `Artifacts/` 中新建文件，不覆盖已有文件，所以可以安全重试（以 `idempotencyKey` 作为 Drive `appProperties` 去重） |
+| `files.update` / `files.delete` | 修改用户数据 | 首版不提供；后续通过 Think Actions 的审批流程加入 |
 
-开发用 Pi CLI 插件与产品运行时扩展不同。仓库里的 Fleet、PR 状态插件和个人 `pi-gpt-search` 不会自动成为云端助手能力，也不应把开发机登录态复制给产品。
+### 引用
+
+助手回答时，以结构化数据输出引用：`{ fileId, name, quote }`，`quote` 是不超过 200 字的原文。界面打开文件后，先做精确匹配，再做去掉空白后的匹配，找到就高亮，找不到就提示“原文已变化”。服务端在保存这一轮之前检查 `quote` 确实出现在本轮读过的内容中，不在的引用直接丢弃，防止模型编造引用。
+
+## 一轮任务的数据流
+
+1. 前端为每条消息生成稳定 ID，通过 `useAgentChat` 发送。
+2. Think 持久化消息后开始执行（S3）。文档只明确保证了 `runTurn({ mode: 'submit', idempotencyKey })` 和 `addMessages()`（按消息 ID）是幂等的，没有说明 WebSocket 路径会对同一条消息 ID 去重。V4 要实测；如果不去重，就改为由前端通过 callable 方法调用 `runTurn` 的 submit 模式，WebSocket 只用来接收流。
+3. 模型调用工具，工具执行前检查 UserHub 中的工具开关（S8）。
+4. 浏览器断开后，DO 继续执行；重新连接时 Think 恢复流或返回最终消息（S4）。
+5. DO 被驱逐或重新部署后，由 `chatRecovery` 恢复（S7）。有副作用的工具标记为不可重放：恢复时如果发现它已开始但没有结果，标记为“结果未知”，不重跑。
+
+## 兜底限制的实现
+
+- 单轮工具调用：`maxSteps = 20`。
+- 模型流卡住：`chatStreamStallTimeoutMs = 120_000`。
+- 恢复：使用 `chatRecovery` 的 `maxRecoveryWork`、`shouldKeepRecovering`；超过后，本轮标记为失败。
+- 错误分类：模型 4xx/5xx、Drive 错误、平台额度错误分别映射到界面文案（Spec S2、S9）。
+- 不做按天计数。如果以后发现需要，再在 UserHub 中加计数器。
+
+## 后续能力
+
+### smail（腾讯企业邮）
+
+腾讯企业邮的开放 API 需要组织管理员权限，学生账号拿不到，所以只能走标准协议：
+
+- **读取**：IMAP `imap.exmail.qq.com:993`（SSL），用邮箱设置里生成的“客户端专用密码”登录，不用主密码。UserHub 用 Think scheduled tasks 定时（例如每 15 分钟）拉取新邮件，按 `UIDVALIDITY + UID` 去重，生成摘要。
+- **回复**：助手把起草好的回复写入草稿箱（IMAP `APPEND` 到 Drafts）。用户在企业微信或邮箱 App 中打开草稿，修改后自己点发送。这样“发送的是用户确认的最终版本”这一点由用户的操作保证，我们不需要实现发送确认、幂等和结果未知的处理。
+- **直接发送**（可选，更晚）：SMTP `smtp.exmail.qq.com:465`，必须走确认卡片；发送后把邮件 `APPEND` 到“已发送”。
+- **待验证**：Workers 的 TCP sockets 能否连接这两个端口；`imapflow` 等 IMAP 库能否在 `nodejs_compat`（`node:net` / `node:tls`）下运行。如果不行，就自己用 `cloudflare:sockets` 实现所需的少量 IMAP 命令。
+- **备选**：在 smail 中设置自动转发到 Gmail，再用 Gmail API 读取。缺点是需要 `gmail.readonly`（受限 scope），而且回复仍要通过腾讯的 SMTP 以 smail 身份发出。
+
+### Google Calendar / Tasks
+
+共用同一个 Google OAuth 授权，增量申请 scope。提醒以 Google Tasks 或日历事件的形式交付，这样手机上有原生通知，我们就不用自己做推送。
 
 ## 实现前验证
 
-先做有退出条件的最小验证，不先搭建完整产品。验证涉及真实免费账户或外部请求时，先取得所需授权；本轮仅准备文档，没有部署或调用模型。
-
 | 阶段 | 验证内容 | 通过证据 |
 | --- | --- | --- |
-| V1 | 发布版本兼容性与免费部署 | 记录依赖锁定、compatibility date、bindings 和账户计划；不要求任何付费绑定即可部署 |
-| V2 | 真实模型与工具闭环 | 免费模型实际调用一个工具并使用结果回答；不能只用固定回复冒充模型验证 |
-| V3 | Pi 与 Workspace 持久化 | 实际保存和读取文件，中断运行时后数据仍在；没有引入执行后端或事务冲突 |
-| V4 | 请求去重、断线和恢复 | 通过公开调用入口重复提交、关闭客户端并重启宿主；检查请求记录、工具执行和终态 |
-| V5 | 定时唤醒 | 浏览器关闭后由持久化 alarm 唤醒一次测试工作，并在重启场景验证；这不等于已实现提醒产品 |
-| V6 | 免费额度适配 | 测量 CPU、SQL 读写、模型消耗与空闲行为；验证预算、失败停止和休眠，不将少量测试外推为无限可用 |
+| V1 | Think 部署到 Free 计划，并接入用户模型 | 锁定的依赖版本；一轮对话正常返回；记录 compatibility date |
+| V2 | Access 与 JWT 校验 | Spec S1 的三个操作全部符合预期 |
+| V3 | Google OAuth 与 Drive | 授权后上传、读取、保存 Artifact；8 天后 refresh token 仍有效（Production 状态） |
+| V4 | 去重、断线、恢复 | Spec S3、S4、S7 的操作 |
+| V5 | 兜底限制 | Spec S9 的操作 |
+| V6 | Free 计划资源 | 记录一天正常使用的 Worker 请求数、DO 请求数和 SQL 读写行数，与免费额度对比 |
+| V7（后续） | smail IMAP | 在 Worker 中登录并列出收件箱的最新 5 封邮件；`APPEND` 一封草稿后，在 App 中能看到 |
 
-本地测试验证真实业务路径和运行时存储；测试替身只能辅助控制外部故障，不能替代实现。Free 账户上的部署验证与本地测试都需要保留结果。尚未执行的验证保持未通过状态。
+测试走真实路径：使用真实模型端点和真实的测试 Drive 账号，不写只测 mock 的测试。
 
-任何阶段失败，记录具体阻碍。可提出缩小首版范围或替换非核心依赖，但不能自动开通付费计划、迁移本地或修改用户目标。
+## 待定
 
-## 待定设计
-
-- 认证方案与用户范围，尤其是未认证请求和 WebSocket 的访问控制。
-- 按用户、会话还是其他边界分配 DO，以及哪些文档需要跨会话共享。
-- 模型与工具预算如何覆盖自动重试、上下文压缩和并行调用，而不只计算一次请求。
-- 文件大小与总量、文档保留和删除、并发修改及引用位置。
-- HTTP、WebSocket 或其他通信方式，及在 Free 计划下的 CPU 和休眠表现。
-- 额度耗尽、恢复失败、执行结果不确定时的终态和人工恢复流程。
-- GitHub CI、代理评审的凭据、权限和免费额度。暂不默认自动合并或部署。
+- 用 `drive.file` + Picker，还是申请完整的 `drive` scope（见“Drive 存储”）。
+- Google 文档的导出格式选 Markdown 还是纯文本，取决于 Drive API 的实际导出质量。
+- 是否需要会话全文搜索；Think 的 session search 能否跨会话使用。
 
 ## 上游依据
 
-- [Agents SDK](https://github.com/cloudflare/agents)
-- [PiHarness 文档](https://github.com/cloudflare/agents/blob/main/docs/agents/harnesses/pi.md)
-- [Pi Durable](https://github.com/earendil-works/pi/tree/main/packages/durable)
-- [Computer 包说明与状态](https://github.com/cloudflare/computer/blob/main/packages/computer/README.md)
-- [Workers 测试集成](https://developers.cloudflare.com/workers/testing/vitest-integration/)
-
-上游仍在变化。源码能力、文档说明、npm 发布和我们自己的部署验证是四种不同证据，不互相替代。
+- [Think 文档](https://developers.cloudflare.com/agents/harnesses/think/)
+- [Think 配置](https://developers.cloudflare.com/agents/harnesses/think/configuration/)、[恢复](https://developers.cloudflare.com/agents/harnesses/think/recovery/)、[Actions](https://developers.cloudflare.com/agents/harnesses/think/actions/)
+- [AI SDK Anthropic provider](https://ai-sdk.dev/providers/ai-sdk-providers/anthropic)
+- [Cloudflare Access：校验 JWT](https://developers.cloudflare.com/cloudflare-one/identity/authorization-cookie/validating-json/)
+- [Workers TCP sockets](https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/)
+- [Google Drive API scopes](https://developers.google.com/workspace/drive/api/guides/api-specific-auth)

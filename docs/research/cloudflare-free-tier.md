@@ -1,5 +1,7 @@
 # Cloudflare 免费额度与依赖核查
 
+> 2026-10-21：按 [ADR-0002](../adr/0002-think-google-drive.md)，Pi Durable、PiHarness、Computer Workspace 和 Workers AI 已不在方案中。Workers 与 DO 的额度仍然适用。
+
 核查记录：2026-10-20。本记录来自本次讨论中读取的官方文档、源码和 npm 发布元数据，不是账户上的部署测试。价格和产品可用性会变化，实施前必须再次核对官方页面与目标账户。
 
 ## 成本边界

@@ -6,7 +6,7 @@ import type { Store } from '../store'
 import type { Conversation, DriveFile, Effort, ToolCall, Turn } from '../types'
 import { modelName, useModels } from '../models'
 import { Composer, effortLabel } from './Composer'
-import { IconAlert, IconArrowDown, IconCheck, IconChevronDown, IconChevronRight, IconDoc, IconInfo, IconRetry, IconTool, IconX } from './Icons'
+import { IconAlert, IconArrowDown, IconCheck, IconChevronDown, IconChevronRight, IconCopy, IconDoc, IconInfo, IconRetry, IconTool, IconX } from './Icons'
 import { Markdown } from './Markdown'
 import { TopBar } from './TopBar'
 
@@ -62,14 +62,8 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
   return (
     <div className={'chat-layout' + (panelCall ? ' with-panel' : '')}>
       <div className="page chat">
-        <TopBar
-          right={
-            <button className={'pill-btn' + (showDetails ? ' on' : '')} onClick={() => setShowDetails(!showDetails)}>
-              任务详情
-            </button>
-          }
-        >
-          <TitleMenu store={store} conv={conv} />
+        <TopBar>
+          <TitleMenu store={store} conv={conv} showDetails={showDetails} onShowDetails={setShowDetails} />
         </TopBar>
 
         <div
@@ -81,8 +75,13 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
           }}
         >
           <div className="thread">
+            {conv.turns.length === 0 && !store.turnsLoaded(conv.id) && (
+              <div className="page-loading muted">
+                <span className="spinner" /> 正在载入会话…
+              </div>
+            )}
             {conv.turns.map((t) => (
-              <TurnView key={t.id} turn={t} store={store} conv={conv} showDetails={showDetails} hostFor={hostFor} />
+              <TurnView key={t.id} turn={t} store={store} conv={conv} showDetails={showDetails} hostFor={hostFor} isLast={t === last} />
             ))}
           </div>
         </div>
@@ -154,32 +153,49 @@ function CitationCard({ c, file }: { c: Turn['citations'][number]; file?: DriveF
   )
 }
 
-function TitleMenu({ store, conv }: { store: Store; conv: Conversation }) {
+function TitleMenu({ store, conv, showDetails, onShowDetails }: { store: Store; conv: Conversation; showDetails: boolean; onShowDetails: (v: boolean) => void }) {
   const [open, setOpen] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [editing, setEditing] = useState(false)
   const close = () => {
     setOpen(false)
     setConfirmDelete(false)
   }
+  const rename = (title: string) => {
+    setEditing(false)
+    if (title.trim() && title.trim() !== conv.title) store.patchConv(conv.id, (c) => ({ ...c, title: title.trim() }))
+  }
+
+  if (editing)
+    return (
+      <input
+        className="title-input"
+        defaultValue={conv.title}
+        autoFocus
+        aria-label="会话标题"
+        onFocus={(e) => e.currentTarget.select()}
+        onBlur={(e) => rename(e.currentTarget.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.nativeEvent.isComposing) e.currentTarget.blur()
+          if (e.key === 'Escape') setEditing(false)
+        }}
+      />
+    )
+
   return (
     <div className="title-menu">
-      <button className="title-btn" onClick={() => setOpen(!open)}>
+      <button className="title-btn" onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open}>
         <span className="ellipsis">{conv.title}</span>
         <IconChevronDown width={16} height={16} />
       </button>
       {open && (
         <>
           <div className="menu-scrim" onClick={close} />
-          <div className="menu">
+          <div className="menu" role="menu">
             <button
               onClick={() => {
-                const title = window.prompt('重命名会话', conv.title)
-                if (title?.trim())
-                  store.patchConv(conv.id, (c) => ({
-                    ...c,
-                    title: title.trim(),
-                  }))
                 close()
+                setEditing(true)
               }}
             >
               重命名
@@ -192,16 +208,23 @@ function TitleMenu({ store, conv }: { store: Store; conv: Conversation }) {
             >
               {conv.pinned ? '取消置顶' : '置顶到最近'}
             </button>
+            <button
+              className={showDetails ? 'checked' : ''}
+              onClick={() => {
+                onShowDetails(!showDetails)
+                close()
+              }}
+            >
+              显示任务详情
+              {showDetails && <IconCheck width={15} height={15} />}
+            </button>
             <div className="menu-label">移入项目</div>
             {[{ id: null, name: '无项目' }, ...store.state.projects].map((p) => (
               <button
                 key={p.id ?? 'none'}
                 className={conv.projectId === p.id ? 'checked' : ''}
                 onClick={() => {
-                  store.patchConv(conv.id, (c) => ({
-                    ...c,
-                    projectId: p.id,
-                  }))
+                  store.patchConv(conv.id, (c) => ({ ...c, projectId: p.id }))
                   close()
                 }}
               >
@@ -214,10 +237,7 @@ function TitleMenu({ store, conv }: { store: Store; conv: Conversation }) {
               <button
                 className="danger"
                 onClick={() => {
-                  store.setState((s) => ({
-                    ...s,
-                    conversations: s.conversations.filter((c) => c.id !== conv.id),
-                  }))
+                  store.setState((s) => ({ ...s, conversations: s.conversations.filter((c) => c.id !== conv.id) }))
                   navigate({ name: 'home' })
                 }}
               >
@@ -241,12 +261,14 @@ function TurnView({
   conv,
   showDetails,
   hostFor,
+  isLast,
 }: {
   turn: Turn
   store: Store
   conv: Conversation
   showDetails: boolean
   hostFor: (t: Turn, c: ToolCall) => ViewHost
+  isLast: boolean
 }) {
   const models = useModels()
   const [processOpen, setProcessOpen] = useState(false)
@@ -260,7 +282,7 @@ function TurnView({
         <div className="turn-details">
           <span>请求 {turn.requestId}</span>
           <span>{modelName(models, turn.model)}</span>
-          <span>Effort {effortLabel[turn.effort]}</span>
+          <span>{effortLabel[turn.effort]}</span>
           <span>{new Date(turn.createdAt).toLocaleString('zh-CN')}</span>
           <span className={'status-chip ' + turn.status}>{statusLabel[turn.status]}</span>
         </div>
@@ -305,11 +327,7 @@ function TurnView({
                   <div>
                     <span className="muted">参数</span> <code className="args">{JSON.stringify(c.input)}</code>
                   </div>
-                  {c.result && (
-                    <div>
-                      <span className="muted">结果</span> {c.result.content}
-                    </div>
-                  )}
+                  {c.result && <ToolOutput text={c.result.content} />}
                 </div>
               </li>
             ))}
@@ -332,6 +350,17 @@ function TurnView({
             {turn.citations.map((c, i) => (
               <CitationCard key={i} c={c} file={store.state.files.find((f) => f.id === c.fileId)} />
             ))}
+          </div>
+        )}
+
+        {!active && (turn.assistantMessage || turn.status === 'succeeded') && (
+          <div className="msg-actions">
+            {turn.assistantMessage && <CopyButton text={turn.assistantMessage} />}
+            {isLast && turn.status === 'succeeded' && (
+              <button className="icon-btn small" aria-label="重新生成" title="重新生成" onClick={() => store.retry(conv.id, turn)}>
+                <IconRetry width={15} height={15} />
+              </button>
+            )}
           </div>
         )}
 
@@ -364,6 +393,40 @@ function TurnView({
   )
 }
 
+function ToolOutput({ text }: { text: string }) {
+  const [open, setOpen] = useState(false)
+  const long = text.length > 240 || text.split('\n').length > 4
+  return (
+    <div className="tool-output">
+      <span className="muted">结果</span>
+      <div className={'tool-output-text' + (long && !open ? ' clamped' : '')}>{text}</div>
+      {long && (
+        <button className="link-btn small" onClick={() => setOpen(!open)}>
+          {open ? '收起' : '展开全部'}
+        </button>
+      )}
+    </div>
+  )
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      className="icon-btn small"
+      aria-label={copied ? '已复制' : '复制'}
+      title={copied ? '已复制' : '复制'}
+      onClick={() => {
+        void navigator.clipboard?.writeText(text)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1500)
+      }}
+    >
+      {copied ? <IconCheck width={15} height={15} /> : <IconCopy width={15} height={15} />}
+    </button>
+  )
+}
+
 function UserBubble({ text }: { text: string }) {
   const ref = useRef<HTMLDivElement>(null)
   const [overflow, setOverflow] = useState(false)
@@ -373,6 +436,9 @@ function UserBubble({ text }: { text: string }) {
   }, [text])
   return (
     <div className="user-row">
+      <div className="user-actions">
+        <CopyButton text={text} />
+      </div>
       <div className={'user-bubble' + (overflow && !expanded ? ' clamped' : '')}>
         <div ref={ref} className="user-text">
           {text}

@@ -6,6 +6,7 @@ import type { DriveFile, Effort, Project } from '../types'
 import { findQuote } from '../util'
 import { Composer, Picker, effortLabel } from './Composer'
 import { IconAlert, IconDoc, IconPin, IconPlus, IconProject, IconRetry, IconSearch, IconTrash, Spark } from './Icons'
+import { Markdown } from './Markdown'
 import { TopBar } from './TopBar'
 
 function greeting() {
@@ -43,7 +44,7 @@ export function HomeView({ store }: { store: Store }) {
         <div className="suggestions">
           {(MOCK
             ? ['读一下奖学金通知，整理时间点', '把周报整理成组会汇报提纲', '帮我给王老师写封邮件', '模拟模型端点错误']
-            : ['帮我列一个组会汇报提纲', '解释一下这段代码在做什么']
+            : ['在我的 Drive 里找最近的周报，总结要点', '帮我列一个组会汇报提纲', '把一段英文摘要翻译成中文']
           ).map((s) => (
             <button key={s} className="chip" onClick={() => void store.startConversation(s, projectId || null, model, effort).then((id) => navigate({ name: 'chat', id }))}>
               {s}
@@ -68,8 +69,10 @@ export function ProjectsView({ store }: { store: Store }) {
           onSubmit={(e) => {
             e.preventDefault()
             if (!name.trim()) return
-            store.setState((s) => ({ ...s, projects: [...s.projects, { id: 'p-' + Date.now(), name: name.trim(), description: '', pinned: false }] }))
+            const id = 'p-' + Date.now()
+            store.setState((s) => ({ ...s, projects: [...s.projects, { id, name: name.trim(), description: '', pinned: false }] }))
             setName('')
+            navigate({ name: 'project', id })
           }}
         >
           <input placeholder="新项目名称" value={name} onChange={(e) => setName(e.target.value)} />
@@ -77,6 +80,7 @@ export function ProjectsView({ store }: { store: Store }) {
             新建
           </button>
         </form>
+        {store.state.projects.length === 0 && <p className="muted empty">项目把相关的会话放在一起，并给每次对话附上同一份说明。先新建一个吧。</p>}
         <div className="card-grid">
           {store.state.projects.map((p) => {
             const count = store.state.conversations.filter((c) => c.projectId === p.id).length
@@ -98,29 +102,72 @@ export function ProjectsView({ store }: { store: Store }) {
 }
 
 export function ProjectView({ store, id }: { store: Store; id: string }) {
+  const { prefs } = store.state
+  const [model, setModel] = useState(prefs.model)
+  const [effort, setEffort] = useState<Effort>(prefs.defaultEffort)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const project = store.state.projects.find((p) => p.id === id)
-  if (!project) return <NotFound what="项目" />
+  if (!project) return store.ready ? <NotFound what="项目" /> : <Loading />
   const convs = store.state.conversations.filter((c) => c.projectId === id).sort((a, b) => b.updatedAt - a.updatedAt)
   const patch = (fn: (p: Project) => Project) => store.setState((s) => ({ ...s, projects: s.projects.map((p) => (p.id === id ? fn(p) : p)) }))
+  // Chats of a deleted project stay, moved out of it.
+  const remove = () => {
+    store.setState((s) => ({
+      ...s,
+      projects: s.projects.filter((p) => p.id !== id),
+      conversations: s.conversations.map((c) => (c.projectId === id ? { ...c, projectId: null } : c)),
+    }))
+    navigate({ name: 'projects' })
+  }
 
   return (
     <div className="page">
       <TopBar
         right={
-          <button className="pill-btn" onClick={() => patch((p) => ({ ...p, pinned: !p.pinned }))}>
-            <IconPin width={15} height={15} /> {project.pinned ? '取消置顶' : '置顶'}
-          </button>
+          <>
+            <button className="pill-btn" onClick={() => patch((p) => ({ ...p, pinned: !p.pinned }))}>
+              <IconPin width={15} height={15} /> {project.pinned ? '取消置顶' : '置顶'}
+            </button>
+            <button className={'pill-btn' + (confirmDelete ? ' danger' : '')} onClick={() => (confirmDelete ? remove() : setConfirmDelete(true))} onBlur={() => setConfirmDelete(false)}>
+              <IconTrash width={15} height={15} /> {confirmDelete ? '确认删除' : '删除'}
+            </button>
+          </>
         }
       >
-        <h2 className="page-title">{project.name}</h2>
+        <input
+          key={project.id}
+          className="page-title title-edit"
+          defaultValue={project.name}
+          aria-label="项目名称"
+          onBlur={(e) => {
+            const name = e.currentTarget.value.trim()
+            if (name && name !== project.name) patch((p) => ({ ...p, name }))
+            else e.currentTarget.value = project.name
+          }}
+          onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && e.currentTarget.blur()}
+        />
       </TopBar>
       <div className="page-body">
-        <label className="field">
-          <span>项目说明（每次对话都会作为上下文）</span>
-          <textarea rows={3} value={project.description} onChange={(e) => patch((p) => ({ ...p, description: e.target.value }))} />
+        <Composer
+          placeholder={`在「${project.name}」中开始新对话`}
+          model={model}
+          effort={effort}
+          onModel={setModel}
+          onEffort={setEffort}
+          onSend={(text) => void store.startConversation(text, id, model, effort).then((cid) => navigate({ name: 'chat', id: cid }))}
+        />
+        <label className="field project-desc">
+          <span>项目说明</span>
+          <textarea
+            rows={3}
+            placeholder="例如：我是研二学生，这个项目整理组会材料。回答用中文，引用原文。"
+            value={project.description}
+            onChange={(e) => patch((p) => ({ ...p, description: e.target.value }))}
+          />
+          <small className="muted">这个项目里的每次对话都会把这段说明发给助手。</small>
         </label>
         <h3 className="section-title">会话</h3>
-        {convs.length === 0 && <p className="muted">还没有会话。在首页选择这个项目后开始对话。</p>}
+        {convs.length === 0 && <p className="muted">还没有会话。在上方输入框开始第一个。</p>}
         <ul className="list">
           {convs.map((c) => (
             <li key={c.id}>
@@ -298,6 +345,9 @@ function FilePreview({ store, id, tab, quote }: { store: Store; id: string; tab:
     mark.current?.scrollIntoView({ block: 'center' })
   }, [text, quote])
   const name = current?.file?.name ?? store.state.files.find((f) => f.id === id)?.name ?? ''
+  const [raw, setRaw] = useState(false)
+  // Highlighting needs the raw text; otherwise Markdown reads better rendered.
+  const markdown = !quote && !raw && current?.file != null && (/\.(md|markdown)$/i.test(current.file.name) || current.file.mimeType === 'application/vnd.google-apps.document')
 
   return (
     <div className="doc-preview">
@@ -309,6 +359,11 @@ function FilePreview({ store, id, tab, quote }: { store: Store; id: string; tab:
           {current?.file ? folderOf[current.file.kind] : ''}
           {name}
         </code>
+        {!quote && text != null && current?.file && (/\.(md|markdown)$/i.test(current.file.name) || current.file.mimeType === 'application/vnd.google-apps.document') && (
+          <button className="pill-btn open-drive" onClick={() => setRaw(!raw)}>
+            {raw ? '预览' : '原文'}
+          </button>
+        )}
         {!MOCK && (
           <a className="pill-btn open-drive" href={`https://drive.google.com/open?id=${encodeURIComponent(id)}`} target="_blank" rel="noreferrer">
             在 Drive 中打开
@@ -339,7 +394,12 @@ function FilePreview({ store, id, tab, quote }: { store: Store; id: string; tab:
           </div>
         </div>
       )}
-      {text != null && (
+      {text != null && markdown && (
+        <div className="doc-md">
+          <Markdown text={text} />
+        </div>
+      )}
+      {text != null && !markdown && (
         <pre className="doc-text">
           {range ? (
             <>
@@ -369,7 +429,7 @@ export function ScheduledView({ store }: { store: Store }) {
         <h2 className="page-title">定时任务</h2>
       </TopBar>
       <div className="page-body">
-        <p className="notice">定时任务属于后续阶段。这里只演示界面，开关只改变浏览器内的 Mock 数据。</p>
+        <p className="notice">{MOCK ? '定时任务属于后续阶段。这里只演示界面，开关只改变浏览器内的 Mock 数据。' : '定时任务还在开发中，上线后会出现在这里。'}</p>
         <ul className="list rows">
           {store.state.schedules.map((s) => (
             <li key={s.id} className="row">
@@ -475,12 +535,17 @@ export function CustomizeView({ store }: { store: Store }) {
           <label className="field">
             <span>回答语言</span>
             <select value={prefs.language} onChange={(e) => store.setState((s) => ({ ...s, prefs: { ...s.prefs, language: e.target.value } }))}>
-              <option>中文</option>
-              <option>English</option>
+              {Object.entries(languages).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+              {!(prefs.language in languages) && <option value={prefs.language}>{prefs.language}</option>}
             </select>
           </label>
           <label className="field">
-            <span>默认 effort</span>
+            <span>默认思考强度</span>
+            <small className="muted">新会话的初始值；模型不支持时自动忽略</small>
             <select value={prefs.defaultEffort} onChange={(e) => store.setState((s) => ({ ...s, prefs: { ...s.prefs, defaultEffort: e.target.value as Effort } }))}>
               {(['low', 'medium', 'high'] as Effort[]).map((e) => (
                 <option key={e} value={e}>
@@ -495,11 +560,25 @@ export function CustomizeView({ store }: { store: Store }) {
   )
 }
 
+/** Values are BCP 47 tags; the server passes them to the model as the reply language. */
+const languages: Record<string, string> = { 'zh-CN': '简体中文', 'zh-TW': '繁體中文', en: 'English', ja: '日本語' }
+
 function Toggle({ checked, onChange, disabled, label }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean; label: string }) {
   return (
     <button role="switch" aria-checked={checked} aria-label={label} disabled={disabled} className={'toggle' + (checked ? ' on' : '')} onClick={() => onChange(!checked)}>
       <span />
     </button>
+  )
+}
+
+export function Loading() {
+  return (
+    <div className="page">
+      <TopBar />
+      <div className="page-loading muted">
+        <span className="spinner" /> 加载中…
+      </div>
+    </div>
   )
 }
 

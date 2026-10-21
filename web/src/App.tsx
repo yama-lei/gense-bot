@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { ChatView } from './components/ChatView'
-import { CustomizeView, FilesView, HomeView, NotFound, ProjectView, ProjectsView, ScheduledView } from './components/Pages'
+import { CustomizeView, FilesView, HomeView, Loading, NotFound, ProjectView, ProjectsView, ScheduledView } from './components/Pages'
 import { Sidebar } from './components/Sidebar'
 import { SidebarContext } from './components/TopBar'
 import { ModelsContext } from './models'
 import { navigate, useRoute } from './router'
 import { useStore } from './store'
+
+const titles: Record<string, string> = { projects: '项目', files: '资料', scheduled: '定时任务', customize: '定制' }
 
 export default function App() {
   const store = useStore()
@@ -16,6 +18,13 @@ export default function App() {
 
   useEffect(() => setDrawer(false), [route])
 
+  const conv = route.name === 'chat' ? store.state.conversations.find((c) => c.id === route.id) : undefined
+  const project = route.name === 'project' ? store.state.projects.find((p) => p.id === route.id) : undefined
+  const pageTitle = conv?.title ?? project?.name ?? titles[route.name]
+  useEffect(() => {
+    document.title = pageTitle ? `${pageTitle} · GenseBot` : 'GenseBot'
+  }, [pageTitle])
+
   const toggle = () => (mobile() ? setDrawer((v) => !v) : setCollapsed((v) => !v))
 
   let view
@@ -25,7 +34,7 @@ export default function App() {
       break
     case 'chat': {
       const conv = store.state.conversations.find((c) => c.id === route.id)
-      view = conv ? <ChatView key={conv.id} store={store} conv={conv} /> : <NotFound what="会话" />
+      view = conv ? <ChatView key={conv.id} store={store} conv={conv} /> : store.ready ? <NotFound what="会话" /> : <Loading />
       break
     }
     case 'projects':

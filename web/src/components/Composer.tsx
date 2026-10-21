@@ -4,7 +4,8 @@ import { findModel, modelKey, modelName, useModels } from '../models'
 import type { Effort, ModelOption } from '../types'
 import { IconArrowUp, IconChevronDown, IconStop } from './Icons'
 
-export const effortLabel: Record<Effort, string> = { low: '低', medium: '中', high: '高' }
+/** Reasoning effort, shown as how hard the model thinks. */
+export const effortLabel: Record<Effort, string> = { low: '轻度思考', medium: '标准思考', high: '深度思考' }
 
 const providerLabel = { anthropic: 'Anthropic 端点', openai: 'OpenAI 端点' }
 
@@ -79,7 +80,7 @@ export function Composer({ placeholder, model, effort, onModel, onEffort, onSend
             {(findModel(models, model)?.capabilities?.efforts.length ?? 0) > 0 && (
               <Picker
                 value={effort}
-                options={findModel(models, model)!.capabilities!.efforts.map((e) => ({ value: e, label: `Effort ${effortLabel[e]}` }))}
+                options={findModel(models, model)!.capabilities!.efforts.map((e) => ({ value: e, label: effortLabel[e] }))}
                 onChange={(v) => onEffort(v as Effort)}
               />
             )}

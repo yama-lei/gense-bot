@@ -111,6 +111,8 @@ export function useRealStore(): Store {
 
   return {
     state,
+    ready: hubAgent.state != null,
+    turnsLoaded: (convId) => convId in turns,
     setState,
     patchConv,
     startConversation,

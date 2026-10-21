@@ -7,6 +7,10 @@ import type { AppState, Conversation, DriveFile, Effort, ToolResult, Turn } from
 /** What the views need from the data layer; the mock and the Worker-backed store both provide it. */
 export interface Store {
   state: AppState
+  /** False until the first server state arrives; views show loading instead of "not found". */
+  ready: boolean
+  /** Whether an open conversation's turns have arrived. */
+  turnsLoaded: (convId: string) => boolean
   setState: (fn: (s: AppState) => AppState) => void
   patchConv: (convId: string, fn: (c: Conversation) => Conversation) => void
   /** Resolves to the new conversation's id; the first message is sent once its chat is open. */

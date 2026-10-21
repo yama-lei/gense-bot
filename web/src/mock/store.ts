@@ -210,5 +210,5 @@ export function useMockStore(): Store {
     setState(structuredClone(seed))
   }
 
-  return { state, setState, patchConv, startConversation, reply, retry, stop, reset, callToolFromView, setViewState, upload, setDrive, refreshFiles: () => {}, readFile, searchDrive, bridge: null }
+  return { state, ready: true, turnsLoaded: () => true, setState, patchConv, startConversation, reply, retry, stop, reset, callToolFromView, setViewState, upload, setDrive, refreshFiles: () => {}, readFile, searchDrive, bridge: null }
 }

@@ -26,7 +26,8 @@ export function Sidebar({ state, route, open, onClose, onReset }: Props) {
   const nav = [
     { label: '项目', icon: <IconProject />, to: href({ name: 'projects' }), active: route.name === 'projects' || route.name === 'project' },
     { label: '资料', icon: <IconDoc />, to: href({ name: 'files' }), active: route.name === 'files' },
-    { label: '定时任务', icon: <IconClock />, to: href({ name: 'scheduled' }), active: route.name === 'scheduled' },
+    // Schedules exist only in the mock until the feature ships.
+    ...(MOCK ? [{ label: '定时任务', icon: <IconClock />, to: href({ name: 'scheduled' }), active: route.name === 'scheduled' }] : []),
     { label: '定制', icon: <IconSliders />, to: href({ name: 'customize' }), active: route.name === 'customize' },
   ]
 
@@ -87,7 +88,7 @@ export function Sidebar({ state, route, open, onClose, onReset }: Props) {
             </>
           ) : (
             <>
-              <div className="sb-label">置顶</div>
+              {pinned.length > 0 && <div className="sb-label">置顶项目</div>}
               {pinned.map((p) => {
                 const convs = recent.filter((c) => c.projectId === p.id).slice(0, 2)
                 return (
@@ -112,6 +113,7 @@ export function Sidebar({ state, route, open, onClose, onReset }: Props) {
                 )
               })}
               <div className="sb-label">最近</div>
+              {loose.length === 0 && <div className="sb-empty">还没有会话</div>}
               {loose.map((c) => (
                 <a key={c.id} className={'sb-item sub flush' + (c.id === activeChat ? ' active' : '')} href={href({ name: 'chat', id: c.id })}>
                   <span className="ellipsis">{c.title}</span>
@@ -122,13 +124,15 @@ export function Sidebar({ state, route, open, onClose, onReset }: Props) {
           )}
         </div>
 
-        <div className="sb-foot">
-          <span className="avatar">{state.account.name[0]}</span>
-          <span className="ellipsis">{state.account.name}</span>
-          <a className={'muted small drive-status' + (state.account.driveConnected ? '' : ' off')} href={href({ name: 'customize' })}>
-            · Drive {state.account.driveConnected ? '已连接' : '未连接'}
-          </a>
-        </div>
+        <a className="sb-foot" href={href({ name: 'customize' })} title="账号与定制">
+          <span className="avatar">{(state.account.name || state.account.email || '?')[0].toUpperCase()}</span>
+          <span className="sb-account">
+            <span className="ellipsis">{state.account.name || state.account.email}</span>
+            <span className={'small drive-status' + (state.account.driveConnected && !state.account.driveError ? '' : ' off')}>
+              Drive {state.account.driveError ? '需要处理' : state.account.driveConnected ? '已连接' : '未连接'}
+            </span>
+          </span>
+        </a>
       </aside>
     </>
   )

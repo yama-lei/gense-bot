@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { MOCK } from '../mode'
 import { href, navigate } from '../router'
 import type { Store } from '../store'
-import type { DriveFile, Effort, Project } from '../types'
+import { listed, type DriveFile, type Effort, type Project } from '../types'
 import { findQuote } from '../util'
 import { Composer, Picker, effortLabel } from './Composer'
 import { IconAlert, IconDoc, IconPin, IconPlus, IconProject, IconRetry, IconSearch, IconTrash, Spark } from './Icons'
@@ -85,7 +85,7 @@ export function ProjectsView({ store }: { store: Store }) {
         {store.state.projects.length === 0 && <p className="muted empty">项目把相关的会话放在一起，并给每次对话附上同一份说明。先新建一个吧。</p>}
         <div className="card-grid">
           {store.state.projects.map((p) => {
-            const count = store.state.conversations.filter((c) => c.projectId === p.id).length
+            const count = listed(store.state.conversations).filter((c) => c.projectId === p.id).length
             return (
               <a key={p.id} className="card" href={href({ name: 'project', id: p.id })}>
                 <div className="card-title">
@@ -111,7 +111,7 @@ export function ProjectView({ store, id }: { store: Store; id: string }) {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const project = store.state.projects.find((p) => p.id === id)
   if (!project) return store.ready ? <NotFound what="项目" /> : <Loading />
-  const convs = store.state.conversations.filter((c) => c.projectId === id).sort((a, b) => b.updatedAt - a.updatedAt)
+  const convs = listed(store.state.conversations).filter((c) => c.projectId === id).sort((a, b) => b.updatedAt - a.updatedAt)
   const patch = (fn: (p: Project) => Project) => store.setState((s) => ({ ...s, projects: s.projects.map((p) => (p.id === id ? fn(p) : p)) }))
   // Chats of a deleted project stay, moved out of it.
   const remove = () => {

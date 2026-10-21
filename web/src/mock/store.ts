@@ -1,14 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { planReply } from './engine'
 import { seed } from './seed'
 import { tools } from '../plugins'
 import type { ToolContext } from '../plugins/types'
 import type { Store } from '../store'
-import type { AppState, Conversation, DriveFile, Effort, ToolCall, ToolResult, Turn, WebSource } from '../types'
+import type { AppState, BranchNote, Conversation, DriveFile, Effort, ToolCall, ToolResult, Turn, Versions, WebSource } from '../types'
 import { uid } from '../util'
 
 // v4: files carry `size`, the account carries `driveError`.
 const KEY = 'gensebot-mock-v5'
+/** Older versions by the id of the message they replaced: the turns from there on, per chat. */
+const BRANCHES_KEY = 'gensebot-mock-branches-v1'
+type Branches = Record<string, Record<string, Turn[]>>
 /** Upload limit from the spec's circuit-breaker table. */
 export const MAX_UPLOAD = 2 * 1024 * 1024
 
@@ -22,21 +25,42 @@ function load(): AppState {
   return structuredClone(seed)
 }
 
+function loadBranches(): Branches {
+  try {
+    return JSON.parse(localStorage.getItem(BRANCHES_KEY) ?? '{}') as Branches
+  } catch {
+    return {}
+  }
+}
+
+const addVersion = (v: Versions | undefined, first: string, id: string): Versions => {
+  const ids = [...(v?.ids ?? [first]), id]
+  return { ids, index: ids.length - 1 }
+}
+
 export function useMockStore(): Store {
-  const [state, setState] = useState<AppState>(load)
+  const [raw, setState] = useState<AppState>(load)
+  const [branches, setBranches] = useState<Branches>(loadBranches)
+  // Chats showing an older version: the turns shown instead of the live ones (not persisted).
+  const [views, setViews] = useState<Record<string, Turn[]>>({})
+  const state = useMemo(
+    () => (Object.keys(views).length ? { ...raw, conversations: raw.conversations.map((c) => (views[c.id] ? { ...c, turns: views[c.id], viewingOld: true } : c)) } : raw),
+    [raw, views],
+  )
   const timers = useRef(new Map<string, number[]>())
-  const stateRef = useRef(state)
+  const stateRef = useRef(raw)
   useEffect(() => {
-    stateRef.current = state
-  }, [state])
+    stateRef.current = raw
+  }, [raw])
 
   useEffect(() => {
     try {
-      localStorage.setItem(KEY, JSON.stringify(state))
+      localStorage.setItem(KEY, JSON.stringify(raw))
+      localStorage.setItem(BRANCHES_KEY, JSON.stringify(branches))
     } catch {
       // Ignore quota or privacy-mode errors; the mock still works in memory.
     }
-  }, [state])
+  }, [raw, branches])
 
   const patchConv = useCallback((convId: string, fn: (c: Conversation) => Conversation) => {
     setState((s) => ({ ...s, conversations: s.conversations.map((c) => (c.id === convId ? fn(c) : c)) }))
@@ -155,7 +179,84 @@ export function useMockStore(): Store {
     run(convId, turn)
   }
 
-  const retry = (convId: string, turn: Turn) => reply(convId, turn.userMessage, turn.model, turn.effort)
+  const live = (convId: string) => stateRef.current.conversations.find((c) => c.id === convId)
+  const showLive = (convId: string) =>
+    setViews((v) => {
+      const { [convId]: _, ...rest } = v
+      return rest
+    })
+
+  /** Replaces the turn and everything after it with `next`, keeping the old ones under `oldId`. */
+  const replaceFrom = (convId: string, turn: Turn, oldId: string, next: Turn) => {
+    const c = live(convId)
+    const i = c?.turns.findIndex((t) => t.id === turn.id) ?? -1
+    if (!c || i < 0) return
+    setBranches((b) => ({ ...b, [convId]: { ...b[convId], [oldId]: c.turns.slice(i) } }))
+    showLive(convId)
+    patchConv(convId, (x) => ({ ...x, updatedAt: Date.now(), turns: [...x.turns.slice(0, i), next] }))
+    run(convId, next)
+  }
+
+  const regenerate = (convId: string, turn: Turn, model: string, effort: Effort) => {
+    const requestId = uid()
+    const next: Turn = { ...newTurn(turn.userMessage, model, effort), id: turn.id, requestId, userVersions: turn.userVersions, answerVersions: addVersion(turn.answerVersions, turn.requestId, requestId) }
+    replaceFrom(convId, turn, turn.requestId, next)
+  }
+
+  const editMessage = (convId: string, turn: Turn, text: string, model: string, effort: Effort) => {
+    const next = newTurn(text, model, effort)
+    replaceFrom(convId, turn, turn.id, { ...next, userVersions: addVersion(turn.userVersions, turn.id, next.id) })
+  }
+
+  const showVersion = (convId: string, messageId: string) => {
+    if (!messageId) return showLive(convId)
+    const c = state.conversations.find((x) => x.id === convId)
+    const i = c?.turns.findIndex((t) => t.userVersions?.ids.includes(messageId) || t.answerVersions?.ids.includes(messageId)) ?? -1
+    if (!c || i < 0) return
+    const liveTurns = live(convId)?.turns ?? []
+    if (liveTurns.some((t) => t.id === messageId || t.requestId === messageId)) return showLive(convId)
+    const old = branches[convId]?.[messageId]
+    if (!old) return
+    const at = c.turns[i]
+    const pick = (v: Versions | undefined) => v && { ...v, index: v.ids.indexOf(messageId) }
+    const first = at.userVersions?.ids.includes(messageId) ? { ...old[0], userVersions: pick(at.userVersions) } : { ...old[0], answerVersions: pick(at.answerVersions) }
+    setViews((v) => ({ ...v, [convId]: [...c.turns.slice(0, i), first, ...old.slice(1)] }))
+  }
+
+  const branch = async (convId: string, turn: Turn, kind: 'fork' | 'side') => {
+    const c = state.conversations.find((x) => x.id === convId)
+    const i = c?.turns.findIndex((t) => t.id === turn.id) ?? -1
+    if (!c || i < 0) throw new Error('会话不存在')
+    const conv: Conversation = {
+      id: uid(),
+      title: kind === 'fork' ? `分支：${c.title.replace(/^分支：/, '')}`.slice(0, 40) : '支线',
+      projectId: c.projectId,
+      pinned: false,
+      updatedAt: Date.now(),
+      turns: c.turns.slice(0, i + 1).map((t) => ({ ...t, userVersions: undefined, answerVersions: undefined })),
+      parent: { chatId: convId, messageId: turn.id, kind },
+    }
+    setState((s) => ({ ...s, conversations: [conv, ...s.conversations] }))
+    return conv.id
+  }
+
+  const summarizeSide = async (sideId: string) => {
+    const side = live(sideId)
+    if (!side?.parent) throw new Error('这不是一条支线')
+    const at = side.turns.findIndex((t) => t.id === side.parent!.messageId)
+    const asked = side.turns.slice(at + 1).filter((t) => t.status === 'succeeded')
+    if (!asked.length) throw new Error('支线里还没有对话，无需总结')
+    await new Promise((r) => setTimeout(r, 900))
+    const summary = `支线讨论了 ${asked.length} 个问题。（Mock 总结）\n\n${asked.map((t) => `- **${t.userMessage.slice(0, 40)}**：${t.assistantMessage.replace(/\s+/g, ' ').slice(0, 60)}…`).join('\n')}`
+    const note: BranchNote = { sideChatId: sideId, title: side.title, summary }
+    if (stateRef.current.account.driveConnected) {
+      const file: DriveFile = { id: 'f-' + uid(), name: `支线总结 - ${side.title}.md`, kind: 'artifact', mimeType: 'text/markdown', size: summary.length, modifiedTime: Date.now(), content: `# ${side.title}\n\n${summary}\n` }
+      addFile(file)
+      Object.assign(note, { fileId: file.id, fileName: file.name })
+    }
+    const noteTurn: Turn = { id: uid(), requestId: uid(), status: 'succeeded', userMessage: '', assistantMessage: '', toolCalls: [], citations: [], model: side.turns[0]?.model ?? '', effort: 'medium', createdAt: Date.now(), note }
+    patchConv(side.parent.chatId, (c) => ({ ...c, updatedAt: Date.now(), turns: [...c.turns, noteTurn] }))
+  }
 
   /** `tools/call` from a view: recorded on the turn so the process list shows it. */
   const callToolFromView = async (convId: string, turnId: string, _callId: string, name: string, input: unknown): Promise<ToolResult> => {
@@ -213,7 +314,9 @@ export function useMockStore(): Store {
     timers.current.forEach((ids) => ids.forEach(clearTimeout))
     timers.current.clear()
     setState(structuredClone(seed))
+    setBranches({})
+    setViews({})
   }
 
-  return { state, ready: true, turnsLoaded: () => true, setState, patchConv, startConversation, reply, retry, stop, reset, callToolFromView, setViewState, upload, setDrive, refreshFiles: () => {}, readFile, searchDrive, bridge: null }
+  return { state, ready: true, turnsLoaded: () => true, setState, patchConv, startConversation, reply, regenerate, editMessage, showVersion, branch, summarizeSide, attach: () => {}, stop, reset, callToolFromView, setViewState, upload, setDrive, refreshFiles: () => {}, readFile, searchDrive, bridge: null }
 }

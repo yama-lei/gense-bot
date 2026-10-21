@@ -16,7 +16,18 @@ export interface Store {
   /** Resolves to the new conversation's id; the first message is sent once its chat is open. */
   startConversation: (message: string, projectId: string | null, model: string, effort: Effort) => Promise<string>
   reply: (convId: string, message: string, model: string, effort: Effort) => void
-  retry: (convId: string, turn: Turn) => void
+  /** A new answer beside the turn's current one; the old answer stays as an older version. */
+  regenerate: (convId: string, turn: Turn, model: string, effort: Effort) => void
+  /** Sends an edited copy of the turn's message; the original stays as an older version. */
+  editMessage: (convId: string, turn: Turn, text: string, model: string, effort: Effort) => void
+  /** Shows the version that contains `messageId` (read-only when older); an empty id shows the live conversation. */
+  showVersion: (convId: string, messageId: string) => void
+  /** A new chat holding the conversation up to the end of `turn`; resolves to its id. */
+  branch: (convId: string, turn: Turn, kind: 'fork' | 'side') => Promise<string>
+  /** Summarizes a side thread into its parent chat; rejects with a message for the user. */
+  summarizeSide: (sideId: string) => Promise<void>
+  /** Keeps one more chat connected besides the open one (the side thread panel). */
+  attach: (convId: string | null) => void
   stop: (convId: string, turnId: string) => void
   reset: () => void
   /** `tools/call` from the view rendered by tool call `callId`; the call id makes retries idempotent. */

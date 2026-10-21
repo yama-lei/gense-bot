@@ -2,7 +2,7 @@ import type { WorkerEnv } from './env'
 import { Agent, callable, type Connection, type ConnectionContext } from 'agents'
 import { RoutedAgents } from 'agents/routing'
 import { z } from 'zod'
-import type { ChatMeta, DriveFile, HubState, Provider, TurnSettings } from '../src/types'
+import type { BranchNote, ChatMeta, DriveFile, HubState, Provider, TurnSettings } from '../src/types'
 import type { Chat } from './chat'
 import { Drive, MAX_TEXT_BYTES, isText, type Folders } from './drive'
 import { DRIVE_SCOPE, GrantRevokedError, authUrl, decrypt, encrypt, exchangeCode, refreshAccessToken, revoke } from './google'
@@ -124,10 +124,61 @@ export class UserHub extends Agent<WorkerEnv, HubState> {
     await this.syncChats()
   }
 
+  /** Deletes a chat with its side threads; forks are chats of their own and stay. */
   @callable()
   async deleteChat(id: string) {
+    for (const c of this.state.chats) if (c.parent?.kind === 'side' && c.parent.chatId === id) await this.chats.delete(c.id)
     await this.chats.delete(id)
     await this.syncChats()
+  }
+
+  /**
+   * A new chat holding a copy of `chatId` up to `messageId` (roadmap-2 "L0-3 会话树"): a fork
+   * is listed like any chat; a side thread only shows beside its parent.
+   */
+  @callable()
+  async forkChat(chatId: string, messageId: string, kind: 'fork' | 'side'): Promise<string> {
+    const source = this.state.chats.find((c) => c.id === chatId)
+    const src = source && (await this.chats.get(chatId))
+    if (!source || !src) throw new Error('会话不存在')
+    const at = z.string().min(1).max(100).parse(messageId)
+    const messages = await src.pathTo(at)
+    const title = kind === 'fork' ? `分支：${source.title.replace(/^分支：/, '')}`.slice(0, 40) : '支线'
+    const entry = await this.chats.create({ metadata: { title, projectId: source.projectId, pinned: false, parent: { chatId, messageId: at, kind: z.enum(['fork', 'side']).parse(kind) } } })
+    const stub = await this.chats.get(entry.id)
+    await stub?.bind(this.name, entry.id)
+    await stub?.importMessages(messages, await src.viewStates())
+    await this.syncChats()
+    return entry.id
+  }
+
+  /**
+   * Summarizes a side thread back into its parent: a Markdown note in GenseBot/Artifacts when
+   * Drive is connected, and a message in the parent chat that its model sees from then on.
+   */
+  @callable()
+  async summarizeSide(sideId: string): Promise<BranchNote> {
+    const side = this.state.chats.find((c) => c.id === sideId)
+    if (side?.parent?.kind !== 'side') throw new Error('这不是一条支线')
+    const main = this.state.chats.find((c) => c.id === side.parent?.chatId)
+    const [sideStub, mainStub] = await Promise.all([this.chats.get(sideId), main && this.chats.get(main.id)])
+    if (!main || !sideStub || !mainStub) throw new Error('主线会话已删除')
+    const summary = await sideStub.summarize(side.parent.messageId)
+    const note: BranchNote = { sideChatId: sideId, title: side.title, summary }
+    if (this.grant()) {
+      try {
+        const { drive, folders } = await this.drive()
+        const base = `支线总结 - ${main.title} - ${side.title}`.replace(/[\\/:*?"<>|\n\r]+/g, ' ').trim()
+        const file = await drive.create(folders, folders.artifacts, await drive.freeName(folders.artifacts, `${base}.md`), `# ${side.title}\n\n${summary}\n`)
+        Object.assign(note, { fileId: file.id, fileName: file.name })
+        void this.refreshFiles()
+      } catch (e) {
+        // The note still reaches the main chat; only the file copy is missing.
+        console.warn('saving side summary failed', e)
+      }
+    }
+    await mainStub.addNote(note)
+    return note
   }
 
   @callable()

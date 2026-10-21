@@ -29,7 +29,8 @@ export function useRealStore(): Store {
   const route = useRoute()
   const hubAgent = useAgent<HubState>({ agent: 'UserHub', basePath: 'agents/hub' })
   const hub = hubAgent.state ?? emptyHub
-  const [turns, setTurns] = useState<Record<string, Turn[]>>({})
+  const [turns, setTurns] = useState<Record<string, { turns: Turn[]; viewingOld: boolean }>>({})
+  const [attached, attach] = useState<string | null>(null)
   // A local edit shows at once and is dropped when the hub broadcasts its own state.
   const [local, setLocal] = useState<{ base: HubState | undefined; state: AppState } | null>(null)
   const controls = useRef(new Map<string, ChatControls>())
@@ -37,7 +38,7 @@ export function useRealStore(): Store {
   const derived = useMemo<AppState>(
     () => ({
       projects: hub.projects,
-      conversations: hub.chats.map((c): Conversation => ({ ...c, turns: turns[c.id] ?? [] })),
+      conversations: hub.chats.map((c): Conversation => ({ ...c, turns: turns[c.id]?.turns ?? [], viewingOld: turns[c.id]?.viewingOld })),
       files: hub.files,
       schedules: [],
       plugins: pluginCatalog.map((p) => ({ ...p, enabled: hub.enabledPlugins.includes(p.id), available: hub.availablePlugins.includes(p.id) })),
@@ -103,7 +104,7 @@ export function useRealStore(): Store {
   }
 
   const chatId = route.name === 'chat' ? route.id : null
-  const onTurns = useCallback((id: string, t: Turn[]) => setTurns((s) => ({ ...s, [id]: t })), [])
+  const onTurns = useCallback((id: string, t: Turn[], viewingOld: boolean) => setTurns((s) => ({ ...s, [id]: { turns: t, viewingOld } })), [])
   const register = useCallback((id: string, c: ChatControls | null) => {
     if (c) controls.current.set(id, c)
     else controls.current.delete(id)
@@ -117,7 +118,14 @@ export function useRealStore(): Store {
     patchConv,
     startConversation,
     reply,
-    retry: (convId, turn) => reply(convId, turn.userMessage, turn.model, turn.effort),
+    regenerate: (convId, turn, model, effort) => controls.current.get(convId)?.regenerate(turn, { model, effort }),
+    editMessage: (convId, turn, text, model, effort) => controls.current.get(convId)?.edit(turn, text, { model, effort }),
+    showVersion: (convId, messageId) => controls.current.get(convId)?.show(messageId),
+    branch: (convId, turn, kind) => hubAgent.call<string>('forkChat', [convId, turn.lastMessageId ?? turn.id, kind]),
+    summarizeSide: async (sideId) => {
+      await hubAgent.call('summarizeSide', [sideId])
+    },
+    attach,
     stop: (convId) => controls.current.get(convId)?.stop(),
     reset: () => {},
     callToolFromView: async (convId, _turnId, callId, name, input) => {
@@ -143,6 +151,8 @@ export function useRealStore(): Store {
     refreshFiles: () => void call('refreshFiles', []),
     readFile: (id) => hubAgent.call<{ file: DriveFile; text: string }>('readFile', [id]),
     searchDrive: (query) => hubAgent.call<DriveFile[]>('searchDrive', [query]),
-    bridge: chatId && hub.chats.some((c) => c.id === chatId) ? <ChatBridge key={chatId} id={chatId} defaults={hub.prefs} onTurns={onTurns} register={register} /> : null,
+    bridge: [...new Set([chatId, attached])]
+      .filter((id): id is string => !!id && hub.chats.some((c) => c.id === id))
+      .map((id) => <ChatBridge key={id} id={id} defaults={hub.prefs} onTurns={onTurns} register={register} />),
   }
 }

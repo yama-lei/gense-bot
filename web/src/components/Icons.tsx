@@ -47,3 +47,8 @@ export function Spark({ size = 34 }: { size?: number }) {
     </svg>
   )
 }
+export const IconChevronLeft = (p: P) => <Svg {...p}><path d="m14 7-5 5 5 5" /></Svg>
+export const IconEdit = (p: P) => <Svg {...p}><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z" /><path d="m13.5 6.5 4 4" /></Svg>
+export const IconMore = (p: P) => <Svg {...p}><circle cx="6" cy="12" r="1.2" fill="currentColor" /><circle cx="12" cy="12" r="1.2" fill="currentColor" /><circle cx="18" cy="12" r="1.2" fill="currentColor" /></Svg>
+export const IconBranch = (p: P) => <Svg {...p}><circle cx="6" cy="5.5" r="2" /><circle cx="6" cy="18.5" r="2" /><circle cx="18" cy="8" r="2" /><path d="M6 7.5v9M18 10c0 4-6 3.5-11 6.5" /></Svg>
+export const IconSide = (p: P) => <Svg {...p}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M14 4v16M16.5 9h2M16.5 12.5h2" /></Svg>

@@ -1,6 +1,6 @@
 import type { UIMessage } from 'ai'
 import { tools } from '../plugins'
-import type { Citation, Effort, ToolCall, ToolResult, Turn, TurnMetadata, WebSource } from '../types'
+import type { BranchNote, Citation, Effort, ToolCall, ToolResult, Turn, TurnMetadata, Versions, WebSource } from '../types'
 
 export type ChatStatus = 'submitted' | 'streaming' | 'ready' | 'error'
 
@@ -49,11 +49,23 @@ export function toTurns(
     viewStates: Record<string, unknown>
     defaultEffort: Effort
     defaultModel: string
+    /** Sibling ids of messages that have several versions (Chat.versions). */
+    siblings: Record<string, string[]>
   },
 ): Turn[] {
+  const versions = (id: string): Versions | undefined => {
+    const ids = opts.siblings[id]
+    return ids && { ids, index: ids.indexOf(id) }
+  }
   const turns: Turn[] = []
   for (const m of messages) {
-    if (m.role === 'user' || turns.length === 0) {
+    const note = (m.metadata as { branchNote?: BranchNote } | undefined)?.branchNote
+    if (note) {
+      const at = (m.metadata as Partial<TurnMetadata>).createdAt ?? Date.now()
+      turns.push({ id: m.id, requestId: m.id, status: 'succeeded', userMessage: '', assistantMessage: '', toolCalls: [], citations: [], model: opts.defaultModel, effort: opts.defaultEffort, createdAt: at, lastMessageId: m.id, note })
+      continue
+    }
+    if (m.role === 'user' || turns.length === 0 || turns.at(-1)!.note) {
       turns.push({
         id: m.id,
         requestId: m.id,
@@ -65,11 +77,15 @@ export function toTurns(
         model: opts.defaultModel,
         effort: opts.defaultEffort,
         createdAt: Date.now(),
+        userVersions: versions(m.id),
+        lastMessageId: m.id,
       })
       if (m.role === 'user') continue
     }
     if (m.role !== 'assistant') continue
     const t = turns.at(-1)!
+    if (t.lastMessageId === t.id) t.answerVersions = versions(m.id)
+    t.lastMessageId = m.id
     const meta = m.metadata as Partial<TurnMetadata> | undefined
     t.assistantMessage += text(m)
     for (const call of m.parts.filter(isToolPart).map(toolCall)) {

@@ -3,10 +3,10 @@ import { tools, views } from '../plugins'
 import type { DisplayMode, ViewHost } from '../plugins/types'
 import { href, navigate } from '../router'
 import type { Store } from '../store'
-import type { Conversation, DriveFile, Effort, ToolCall, Turn, WebSource } from '../types'
+import type { BranchNote, Conversation, DriveFile, Effort, ToolCall, Turn, Versions, WebSource } from '../types'
 import { modelName, useModels } from '../models'
 import { Composer, effortLabel } from './Composer'
-import { IconAlert, IconArrowDown, IconCheck, IconChevronDown, IconChevronRight, IconCopy, IconDoc, IconInfo, IconRetry, IconTool, IconX } from './Icons'
+import { IconAlert, IconArrowDown, IconBranch, IconCheck, IconChevronDown, IconChevronLeft, IconChevronRight, IconCopy, IconDoc, IconEdit, IconInfo, IconMore, IconRetry, IconSide, IconTool, IconX } from './Icons'
 import { Markdown } from './Markdown'
 import { TopBar } from './TopBar'
 
@@ -31,6 +31,37 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
   const [panel, setPanel] = useState<{ turnId: string; callId: string } | null>(null)
   const panelTurn = panel && conv.turns.find((t) => t.id === panel.turnId)
   const panelCall = panelTurn?.toolCalls.find((c) => c.id === panel!.callId)
+  // One panel at a time: opening a side thread closes the plugin panel and the other way round.
+  const [sideOpen, setSideOpen] = useState<{ convId: string; id: string } | null>(null)
+  const sideId = sideOpen?.convId === conv.id ? sideOpen.id : null
+  const setSideId = (id: string | null) => setSideOpen(id ? { convId: conv.id, id } : null)
+  const side = sideId ? store.state.conversations.find((c) => c.id === sideId) : undefined
+  const sides = store.state.conversations.filter((c) => c.parent?.kind === 'side' && c.parent.chatId === conv.id)
+  const parent = conv.parent && store.state.conversations.find((c) => c.id === conv.parent!.chatId)
+  const openSide = (id: string) => {
+    setPanel(null)
+    setSideId(id)
+  }
+
+  useEffect(() => {
+    store.attach(sideId)
+    return () => store.attach(null)
+  }, [sideId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const actions: TurnActions = {
+    regenerate: (turn) => store.regenerate(conv.id, turn, model, effort),
+    edit: (turn, text) => {
+      store.editMessage(conv.id, turn, text, model, effort)
+      setAtBottom(true)
+    },
+    show: (messageId) => store.showVersion(conv.id, messageId),
+    fork: (turn) => void store.branch(conv.id, turn, 'fork').then((id) => navigate({ name: 'chat', id }), (e: unknown) => console.error('fork failed', e)),
+    side: (turn) => void store.branch(conv.id, turn, 'side').then(openSide, (e: unknown) => console.error('side thread failed', e)),
+    openSide,
+    busy,
+    // Old versions are read-only; a running turn has to finish before history changes.
+    canChange: !busy && !conv.viewingOld,
+  }
 
   // Host side of the MCP Apps bridge for one rendered tool call.
   const hostFor = (turn: Turn, call: ToolCall): ViewHost => ({
@@ -43,7 +74,10 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
       return store.callToolFromView(conv.id, turn.id, call.id, name, args)
     },
     sendMessage: (text) => store.reply(conv.id, text, model, effort),
-    requestDisplayMode: (mode) => setPanel(mode === 'inline' ? null : { turnId: turn.id, callId: call.id }),
+    requestDisplayMode: (mode) => {
+      if (mode !== 'inline') setSideId(null)
+      setPanel(mode === 'inline' ? null : { turnId: turn.id, callId: call.id })
+    },
     setViewState: (state) => store.setViewState(conv.id, turn.id, call.id, state),
   })
 
@@ -62,7 +96,7 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
   }, [last?.assistantMessage, last?.toolCalls.length, last?.status, conv.turns.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className={'chat-layout' + (panelCall ? ' with-panel' : '')}>
+    <div className={'chat-layout' + (panelCall || side ? ' with-panel' : '')}>
       <div className="page chat">
         <TopBar>
           <TitleMenu store={store} conv={conv} showDetails={showDetails} onShowDetails={setShowDetails} />
@@ -77,14 +111,32 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
           }}
         >
           <div className="thread">
+            {conv.parent?.kind === 'fork' && (
+              <div className="fork-banner muted small">
+                <IconBranch width={14} height={14} /> 分支自{' '}
+                {parent ? <a href={href({ name: 'chat', id: parent.id })}>{parent.title}</a> : '已删除的会话'}
+              </div>
+            )}
             {conv.turns.length === 0 && !store.turnsLoaded(conv.id) && (
               <div className="page-loading muted">
                 <span className="spinner" /> 正在载入会话…
               </div>
             )}
-            {conv.turns.map((t) => (
-              <TurnView key={t.id} turn={t} store={store} conv={conv} showDetails={showDetails} hostFor={hostFor} isLast={t === last} />
-            ))}
+            {conv.turns.map((t) =>
+              t.note ? (
+                <NoteCard key={t.id} note={t.note} store={store} onOpen={openSide} />
+              ) : (
+                <TurnView
+                  key={t.id}
+                  turn={t}
+                  store={store}
+                  showDetails={showDetails}
+                  hostFor={hostFor}
+                  actions={actions}
+                  sides={sides.filter((c) => c.parent!.messageId === (t.lastMessageId ?? t.id))}
+                />
+              ),
+            )}
           </div>
         </div>
 
@@ -95,6 +147,19 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
         )}
 
         <div className="chat-composer">
+          {conv.viewingOld ? (
+            <div className="old-version-bar">
+              <span>正在查看较早的版本，只读</span>
+              <button className="pill-btn" onClick={() => store.showVersion(conv.id, '')}>
+                回到当前版本
+              </button>
+              {last && (
+                <button className="pill-btn" onClick={() => actions.fork(last)}>
+                  <IconBranch width={15} height={15} /> 从这里分支
+                </button>
+              )}
+            </div>
+          ) : (
           <Composer
             placeholder="回复…"
             model={model}
@@ -109,9 +174,11 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
             }}
             footnote
           />
+          )}
         </div>
       </div>
-      {panelCall && panelTurn && (
+      {side && <SideThread store={store} side={side} onClose={() => setSideId(null)} />}
+      {panelCall && panelTurn && !side && (
         <aside className="side-panel" aria-label="插件面板">
           <div className="side-panel-head">
             <strong className="ellipsis">{(panelCall.input as { title?: string }).title ?? panelCall.name}</strong>
@@ -299,28 +366,48 @@ function TitleMenu({ store, conv, showDetails, onShowDetails }: { store: Store; 
   )
 }
 
+interface TurnActions {
+  regenerate: (turn: Turn) => void
+  edit: (turn: Turn, text: string) => void
+  show: (messageId: string) => void
+  fork: (turn: Turn) => void
+  side: (turn: Turn) => void
+  openSide: (sideId: string) => void
+  /** A turn is running; versions stay put until it settles. */
+  busy: boolean
+  canChange: boolean
+}
+
 function TurnView({
   turn,
   store,
-  conv,
   showDetails,
   hostFor,
-  isLast,
+  actions,
+  sides,
 }: {
   turn: Turn
   store: Store
-  conv: Conversation
   showDetails: boolean
   hostFor: (t: Turn, c: ToolCall) => ViewHost
-  isLast: boolean
+  /** Omitted inside a side thread panel, which shows the turns without tree controls. */
+  actions?: TurnActions
+  sides?: Conversation[]
 }) {
   const models = useModels()
   const [processOpen, setProcessOpen] = useState(false)
   const active = turn.status === 'queued' || turn.status === 'running'
+  const canChange = actions?.canChange ?? false
 
   return (
     <section className="turn">
-      <UserBubble text={turn.userMessage} />
+      <UserBubble
+        text={turn.userMessage}
+        versions={actions && turn.userVersions}
+        onShow={actions?.show}
+        onEdit={canChange ? (text) => actions!.edit(turn, text) : undefined}
+        busy={actions?.busy ?? false}
+      />
 
       {showDetails && (
         <div className="turn-details">
@@ -399,14 +486,26 @@ function TurnView({
           </div>
         )}
 
-        {!active && (turn.assistantMessage || turn.status === 'succeeded') && (
+        {!active && (turn.assistantMessage || turn.status === 'succeeded' || turn.answerVersions) && (
           <div className="msg-actions">
+            {actions && turn.answerVersions && <VersionNav versions={turn.answerVersions} onShow={actions.show} disabled={actions.busy} />}
             {turn.assistantMessage && <CopyButton text={turn.assistantMessage} />}
-            {isLast && turn.status === 'succeeded' && (
-              <button className="icon-btn small" aria-label="重新生成" title="重新生成" onClick={() => store.retry(conv.id, turn)}>
+            {canChange && turn.status === 'succeeded' && (
+              <button className="icon-btn small" aria-label="重新生成" title="重新生成" onClick={() => actions!.regenerate(turn)}>
                 <IconRetry width={15} height={15} />
               </button>
             )}
+            {actions && <MoreMenu turn={turn} actions={actions} />}
+          </div>
+        )}
+
+        {sides && sides.length > 0 && (
+          <div className="side-chips">
+            {sides.map((c) => (
+              <button key={c.id} className="side-chip" onClick={() => actions?.openSide(c.id)}>
+                <IconSide width={14} height={14} /> <span className="ellipsis">{c.title}</span>
+              </button>
+            ))}
           </div>
         )}
 
@@ -417,9 +516,11 @@ function TurnView({
               <strong>任务失败</strong>
               <p>{turn.error}</p>
             </div>
-            <button className="pill-btn" onClick={() => store.retry(conv.id, turn)}>
-              <IconRetry width={15} height={15} /> 重试
-            </button>
+            {canChange && (
+              <button className="pill-btn" onClick={() => actions!.regenerate(turn)}>
+                <IconRetry width={15} height={15} /> 重试
+              </button>
+            )}
           </div>
         )}
         {turn.status === 'interrupted' && (
@@ -429,13 +530,174 @@ function TurnView({
               <strong>已中断</strong>
               <p>已产生的内容保留；未完成的工具调用不会自动重跑。</p>
             </div>
-            <button className="pill-btn" onClick={() => store.retry(conv.id, turn)}>
-              <IconRetry width={15} height={15} /> 重新提交
-            </button>
+            {canChange && (
+              <button className="pill-btn" onClick={() => actions!.regenerate(turn)}>
+                <IconRetry width={15} height={15} /> 重新提交
+              </button>
+            )}
           </div>
         )}
       </div>
     </section>
+  )
+}
+
+/** "‹ 2 / 3 ›" between sibling versions of a message. */
+function VersionNav({ versions, onShow, disabled }: { versions: Versions; onShow: (id: string) => void; disabled?: boolean }) {
+  const { ids, index } = versions
+  return (
+    <span className="version-nav">
+      <button className="icon-btn small" aria-label="上一个版本" disabled={disabled || index === 0} onClick={() => onShow(ids[index - 1])}>
+        <IconChevronLeft width={15} height={15} />
+      </button>
+      <span className="small">
+        {index + 1} / {ids.length}
+      </span>
+      <button className="icon-btn small" aria-label="下一个版本" disabled={disabled || index === ids.length - 1} onClick={() => onShow(ids[index + 1])}>
+        <IconChevronRight width={15} height={15} />
+      </button>
+    </span>
+  )
+}
+
+function MoreMenu({ turn, actions }: { turn: Turn; actions: TurnActions }) {
+  const [open, setOpen] = useState(false)
+  const pick = (fn: (t: Turn) => void) => () => {
+    setOpen(false)
+    fn(turn)
+  }
+  return (
+    <span className="more-menu">
+      <button className="icon-btn small" aria-label="更多" title="更多" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <IconMore width={15} height={15} />
+      </button>
+      {open && (
+        <>
+          <div className="menu-scrim" onClick={() => setOpen(false)} />
+          <div className="menu up" role="menu">
+            <button onClick={pick(actions.fork)}>
+              <span>
+                <IconBranch width={15} height={15} /> 分支到新会话
+              </span>
+            </button>
+            {actions.canChange && (
+              <button onClick={pick(actions.side)}>
+                <span>
+                  <IconSide width={15} height={15} /> 开支线
+                </span>
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </span>
+  )
+}
+
+/** A side thread's summary in the main line; the full text is the note message itself. */
+function NoteCard({ note, store, onOpen }: { note: BranchNote; store: Store; onOpen: (sideId: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const exists = store.state.conversations.some((c) => c.id === note.sideChatId)
+  return (
+    <section className="turn">
+      <div className="note-card">
+        <button className="note-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+          <IconSide width={15} height={15} />
+          <span className="ellipsis">支线总结：{note.title}</span>
+          <IconChevronRight width={14} height={14} style={{ transform: open ? 'rotate(90deg)' : undefined }} />
+        </button>
+        {open && <Markdown text={note.summary} />}
+        <div className="note-links small">
+          {note.fileId && (
+            <a href={href({ name: 'files', tab: 'artifact', id: note.fileId })}>
+              <IconDoc width={13} height={13} /> {note.fileName ?? '总结文件'}
+            </a>
+          )}
+          {exists && (
+            <button className="link-btn" onClick={() => onOpen(note.sideChatId)}>
+              打开支线
+            </button>
+          )}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+/** A side thread beside its parent: only the turns after the branch point, with its own composer. */
+function SideThread({ store, side, onClose }: { store: Store; side: Conversation; onClose: () => void }) {
+  const anchor = side.parent!.messageId
+  const from = side.turns.findIndex((t) => (t.lastMessageId ?? t.id) === anchor)
+  const turns = side.turns.slice(from + 1)
+  const last = turns.at(-1)
+  const busy = last?.status === 'queued' || last?.status === 'running'
+  const [picked, setModel] = useState(side.turns.at(-1)?.model ?? '')
+  const model = picked || store.state.prefs.model
+  const [effort, setEffort] = useState<Effort>(store.state.prefs.defaultEffort)
+  const [summarizing, setSummarizing] = useState(false)
+  const [error, setError] = useState('')
+  const noHost: ViewHost = {
+    callTool: async () => ({ content: '支线面板中不支持界面调用', isError: true }),
+    sendMessage: (text) => store.reply(side.id, text, model, effort),
+    requestDisplayMode: () => {},
+    setViewState: () => {},
+  }
+
+  const summarize = () => {
+    setSummarizing(true)
+    setError('')
+    store
+      .summarizeSide(side.id)
+      .then(onClose)
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setSummarizing(false))
+  }
+
+  return (
+    <aside className="side-panel side-thread" aria-label="支线">
+      <div className="side-panel-head">
+        <IconSide width={16} height={16} />
+        <strong className="ellipsis">{side.title}</strong>
+        <button className="pill-btn" disabled={busy || summarizing || turns.length === 0} onClick={summarize}>
+          {summarizing && <span className="spinner" />} 总结回主线
+        </button>
+        <button className="icon-btn" aria-label="关闭支线" onClick={onClose}>
+          <IconX />
+        </button>
+      </div>
+      <div className="side-panel-body">
+        <div className="thread">
+          {error && (
+            <div className="banner error">
+              <IconAlert />
+              <div>
+                <strong>总结失败</strong>
+                <p>{error}</p>
+              </div>
+            </div>
+          )}
+          {turns.length === 0 && <p className="muted side-empty">在这里追问细节，不会打断主线。聊完后点“总结回主线”，要点会写回主会话。</p>}
+          {turns.map((t) => (
+            <TurnView key={t.id} turn={t} store={store} showDetails={false} hostFor={() => noHost} />
+          ))}
+        </div>
+      </div>
+      <div className="chat-composer">
+        <Composer
+          placeholder="在支线里追问…"
+          model={model}
+          effort={effort}
+          onModel={setModel}
+          onEffort={setEffort}
+          busy={busy}
+          onStop={() => last && store.stop(side.id, last.id)}
+          onSend={(text) => {
+            if (turns.length === 0) store.patchConv(side.id, (c) => ({ ...c, title: text.replace(/\s+/g, ' ').slice(0, 30) }))
+            store.reply(side.id, text, model, effort)
+          }}
+        />
+      </div>
+    </aside>
   )
 }
 
@@ -473,17 +735,71 @@ function CopyButton({ text }: { text: string }) {
   )
 }
 
-function UserBubble({ text }: { text: string }) {
+function UserBubble({
+  text,
+  versions,
+  onShow,
+  onEdit,
+  busy,
+}: {
+  text: string
+  versions?: Versions
+  onShow?: (id: string) => void
+  /** Present when the message may be edited now. */
+  onEdit?: (text: string) => void
+  busy: boolean
+}) {
   const ref = useRef<HTMLDivElement>(null)
   const [overflow, setOverflow] = useState(false)
   const [expanded, setExpanded] = useState(false)
+  const [draft, setDraft] = useState<string | null>(null)
   useLayoutEffect(() => {
     if (ref.current) setOverflow(ref.current.scrollHeight > 300)
   }, [text])
+
+  if (draft != null)
+    return (
+      <div className="user-row">
+        <div className="edit-box">
+          <textarea
+            value={draft}
+            autoFocus
+            aria-label="编辑消息"
+            rows={Math.min(10, draft.split('\n').length + 1)}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setDraft(null)
+            }}
+          />
+          <div className="edit-actions">
+            <button className="pill-btn" onClick={() => setDraft(null)}>
+              取消
+            </button>
+            <button
+              className="pill-btn primary"
+              disabled={!draft.trim() || draft.trim() === text.trim() || !onEdit}
+              onClick={() => {
+                onEdit?.(draft.trim())
+                setDraft(null)
+              }}
+            >
+              发送
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+
   return (
     <div className="user-row">
-      <div className="user-actions">
+      <div className={'user-actions' + (versions ? ' versioned' : '')}>
+        {versions && onShow && <VersionNav versions={versions} onShow={onShow} disabled={busy} />}
         <CopyButton text={text} />
+        {onEdit && (
+          <button className="icon-btn small" aria-label="编辑" title="编辑" onClick={() => setDraft(text)}>
+            <IconEdit width={15} height={15} />
+          </button>
+        )}
       </div>
       <div className={'user-bubble' + (overflow && !expanded ? ' clamped' : '')}>
         <div ref={ref} className="user-text">

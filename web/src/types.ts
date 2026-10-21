@@ -64,6 +64,36 @@ export interface Turn {
   model: string
   effort: Effort
   createdAt: number
+  /** Edits of the user message: sibling message ids, oldest first, and which one is shown. */
+  userVersions?: Versions
+  /** Regenerations of the answer, likewise. */
+  answerVersions?: Versions
+  /** Last message of the turn; forks and side threads branch off here. */
+  lastMessageId?: string
+  /** A side thread's summary brought back to this chat; such a turn has no user message. */
+  note?: BranchNote
+}
+
+export interface Versions {
+  ids: string[]
+  index: number
+}
+
+/** Summary of a side thread, added to the main chat as its own message. */
+export interface BranchNote {
+  sideChatId: string
+  title: string
+  summary: string
+  /** The Markdown file in GenseBot/Artifacts, when Drive was connected. */
+  fileId?: string
+  fileName?: string
+}
+
+/** Where a chat branched off: a fork is a normal chat, a side thread hangs off its parent. */
+export interface ChatParent {
+  chatId: string
+  messageId: string
+  kind: 'fork' | 'side'
 }
 
 export interface Conversation {
@@ -73,7 +103,13 @@ export interface Conversation {
   pinned: boolean
   updatedAt: number
   turns: Turn[]
+  parent?: ChatParent
+  /** The turns shown are an older version (read-only), not the live conversation. */
+  viewingOld?: boolean
 }
+
+/** Chats the sidebar and project pages list; side threads only show beside their parent. */
+export const listed = (cs: Conversation[]) => cs.filter((c) => c.parent?.kind !== 'side')
 
 /** A Drive file: under GenseBot/资料 (`source`), GenseBot/Artifacts (`artifact`) or elsewhere in Drive (`drive`). */
 export interface DriveFile {
@@ -160,6 +196,7 @@ export interface ChatMeta {
   projectId: string | null
   pinned: boolean
   updatedAt: number
+  parent?: ChatParent
 }
 
 /** UserHub state, broadcast to every tab. Holds no secrets. */

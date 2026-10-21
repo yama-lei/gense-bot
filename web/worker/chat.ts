@@ -1,8 +1,9 @@
 import type { WorkerEnv } from './env'
 import { Think, type ChatResponseResult, type TurnConfig, type TurnContext } from '@cloudflare/think'
 import { callable, getAgentByName } from 'agents'
+import { generateText, type UIMessage } from 'ai'
 import { z } from 'zod'
-import type { Effort, ToolResult, TurnMetadata } from '../src/types'
+import type { BranchNote, Effort, ToolResult, TurnBody, TurnMetadata } from '../src/types'
 import { Drive } from './drive'
 import { defaultModel, effortOptions, languageModel, parseModelKey } from './models'
 import { artifactInput, availablePlugins, createTools, enabledTools, saveArtifact, type ToolHost } from './tools'
@@ -71,8 +72,11 @@ export class Chat extends Think<WorkerEnv> {
   async beforeTurn(ctx: TurnContext): Promise<TurnConfig> {
     const settings = await (await this.hub()).turnSettings(this.ctx.storage.kv.get<string>('id'))
     const kv = this.ctx.storage.kv
+    // An edit runs its turn without a request body, so it leaves its choice here.
     // Continuations and recovered turns carry no body; reuse the last choice.
-    const body = ctx.body ?? {}
+    const pendingBody = kv.get<TurnBody>('pendingBody')
+    if (pendingBody) kv.delete('pendingBody')
+    const body: Record<string, unknown> = { ...(pendingBody ?? ctx.body) }
     const requested = typeof body.model === 'string' ? body.model : (kv.get<string>('model') ?? defaultModel(this.env) ?? '')
     const key = parseModelKey(requested)
     const option = key && settings.models.find((m) => m.provider === key.provider && m.id === key.id)
@@ -118,6 +122,110 @@ export class Chat extends Think<WorkerEnv> {
       // The list order is a derived projection; a failed push only leaves it stale.
       console.warn('recordTurn failed', e)
     }
+  }
+
+  // ---- Conversation tree (roadmap-2 "L0-3 会话树") ----
+  // Think keeps every message in a tree and always continues from the newest leaf, so edits
+  // and regenerations add siblings and older versions stay readable but not resumable.
+
+  /** Sibling ids (oldest first) for each message on the path that has more than one version. */
+  private async siblings(path: UIMessage[]): Promise<Record<string, string[]>> {
+    const out: Record<string, string[]> = {}
+    // Session has no query for root messages, so edits of the first message record them here.
+    const roots = this.ctx.storage.kv.get<string[]>('roots') ?? []
+    for (let i = 0; i < path.length; i++) {
+      const ids = i === 0 ? roots : (await this.session.getBranches(path[i - 1].id)).map((m) => m.id)
+      if (ids.length > 1) out[path[i].id] = ids
+    }
+    return out
+  }
+
+  /** Versions along the live conversation. */
+  @callable()
+  async versions(): Promise<Record<string, string[]>> {
+    return this.siblings((await this.session.getHistory()) as UIMessage[])
+  }
+
+  /** An older version, read-only: the path through `messageId` down to its newest leaf. */
+  @callable()
+  async view(messageId: string): Promise<{ messages: UIMessage[]; siblings: Record<string, string[]> }> {
+    let leaf = z.string().min(1).max(100).parse(messageId)
+    if (!(await this.session.getMessage(leaf))) throw new Error('该版本不存在')
+    for (;;) {
+      const next = (await this.session.getBranches(leaf)).at(-1)
+      if (!next) break
+      leaf = next.id
+    }
+    const messages = (await this.session.getHistory(leaf)) as UIMessage[]
+    return { messages, siblings: await this.siblings(messages) }
+  }
+
+  /** Path from the first message to `messageId`, for copying into a fork or side thread. */
+  async pathTo(messageId: string): Promise<UIMessage[]> {
+    const path = (await this.session.getHistory(messageId)) as UIMessage[]
+    if (path.at(-1)?.id !== messageId) throw new Error('该消息不存在')
+    return path
+  }
+
+  /** Called by the hub on a new fork or side thread; runs no turn. */
+  async importMessages(messages: UIMessage[], viewStates: Record<string, unknown>) {
+    await this.addMessages(messages, { parentId: null })
+    this.ctx.storage.kv.put('viewStates', viewStates)
+  }
+
+  /** Sends an edited copy of a user message beside the original and answers it. */
+  @callable()
+  async editMessage(messageId: string, text: string, body: TurnBody) {
+    const content = z.string().trim().min(1).max(100_000).parse(text)
+    const path = await this.session.getHistory()
+    const i = path.findIndex((m) => m.id === messageId)
+    if (i < 0 || path[i].role !== 'user') throw new Error('只能编辑当前版本里的消息')
+    const parentId = i === 0 ? null : path[i - 1].id
+    const message: UIMessage = { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: content }] }
+    if (parentId === null) {
+      const roots = this.ctx.storage.kv.get<string[]>('roots') ?? [path[0].id]
+      this.ctx.storage.kv.put('roots', [...roots, message.id])
+    }
+    await this.addMessages([message], { parentId })
+    this.ctx.storage.kv.put('pendingBody', body)
+    // The new message is the newest leaf, so the turn answers it; clients follow the broadcast.
+    void this.saveMessages([]).catch((e: unknown) => console.error('edit turn failed', e))
+  }
+
+  /** Markdown summary of what was said after `afterId` (the fork point), in the chat's model. */
+  async summarize(afterId: string): Promise<string> {
+    const path = await this.session.getHistory()
+    const from = path.findIndex((m) => m.id === afterId)
+    const transcript = path
+      .slice(from + 1)
+      .map((m) => {
+        const text = m.parts.flatMap((p) => (p.type === 'text' ? [p.text] : [])).join('')
+        return text && `${m.role === 'user' ? '用户' : '助手'}：${text}`
+      })
+      .filter(Boolean)
+      .join('\n\n')
+    if (!transcript) throw new Error('支线里还没有对话，无需总结')
+    const key = parseModelKey(this.ctx.storage.kv.get<string>('model') ?? defaultModel(this.env) ?? '')
+    if (!key) throw new Error('未配置模型端点')
+    const { language } = await (await this.hub()).turnSettings()
+    const { text } = await generateText({
+      model: languageModel(this.env, key.provider, key.id),
+      system: `把一段支线讨论整理成给主线参考的 Markdown 笔记，用${language}书写。先写一句话结论，再列关键要点、得出的事实或决定，最后列仍未解决的问题（没有就省略）。只写讨论中出现过的内容，不要寒暄。`,
+      prompt: transcript.slice(-60_000),
+    })
+    return text.trim()
+  }
+
+  /** Adds a side thread's summary to this chat as an assistant message the model will see. */
+  async addNote(note: BranchNote) {
+    const saved = note.fileName ? `\n\n（全文已保存为 GenseBot/Artifacts/${note.fileName}）` : ''
+    const message: UIMessage = {
+      id: crypto.randomUUID(),
+      role: 'assistant',
+      parts: [{ type: 'text', text: `【支线总结：${note.title}】\n\n${note.summary}${saved}` }],
+      metadata: { branchNote: note },
+    }
+    await this.addMessages([message])
   }
 
   // ---- Plugin views (MCP Apps host bridge, architecture "界面（前端）") ----

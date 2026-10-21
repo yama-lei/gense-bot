@@ -1,6 +1,6 @@
 # 路线图 2：从首个闭环到日常可用
 
-状态：2026-10-21 制定，按阶段开发中。来源是仓库根目录的 `goal.md`（用户的新功能清单），这里把它整理成 Intent → Spec → Design，并给出分层和开发顺序。所有取舍由开发者决定，理由写在各节；有长期成本的决定另见 [ADR-0003](../adr/0003-free-plan-agent-features.md)。
+状态：2026-10-21 制定，按阶段开发中（阶段 1、2 已完成）。来源是仓库根目录的 `goal.md`（用户的新功能清单），这里把它整理成 Intent → Spec → Design，并给出分层和开发顺序。所有取舍由开发者决定，理由写在各节；有长期成本的决定另见 [ADR-0003](../adr/0003-free-plan-agent-features.md)。
 
 依据：[首版 Spec](../specs/personal-assistant.md)、[网页界面 Spec](../specs/web-ui.md)、[架构](../design/architecture.md)。
 
@@ -74,12 +74,12 @@ L0 平台改造  工具注册表与按需加载 · 附件管线 · 会话树存�
 
 | 编号 | 行为 | 验收操作 → 期望结果 |
 | --- | --- | --- |
-| R11 | 重新生成 | 点最后一条回答的“重新生成”→ 产生新回答，不新增用户消息；旧回答保留为上一版本 |
+| R11 | 重新生成 | 点任意一条回答的“重新生成”→ 产生新回答，不新增用户消息；旧回答（及其后的对话）保留为上一版本 |
 | R12 | 编辑消息 | 编辑任意一条用户消息并发送 → 从该处产生新分支，之后的消息换成新分支的内容 |
 | R13 | 版本 | 有多个版本的消息显示 “‹ 2 / 2 ›”，可以翻看旧版本（只读）；在旧版本上点“从这里分支”→ 以该版本为止的内容创建新会话 |
 | R14 | 分支为新会话 | 任意一条回答的菜单中“分支到新会话”→ 新会话包含到此为止的全部消息，标题标注来源，可跳回原会话 |
 | R15 | 支线 | 回答菜单中“开支线”→ 右侧（手机全屏）打开支线面板，在其中提问不影响主线上下文 |
-| R16 | 总结回主线 | 支线中点“总结回主线”→ 生成 Markdown 总结，保存到 `GenseBot/支线/`；主线出现一条“支线总结”提示卡片；之后主线的助手知道这份总结存在，需要时会读取 |
+| R16 | 总结回主线 | 支线中点“总结回主线”→ 生成 Markdown 总结，Drive 已连接时另存到 `GenseBot/Artifacts/`；主线出现一条“支线总结”卡片，消息正文就是总结全文，之后主线的助手直接在上下文中看到它 |
 
 ### 命令与提及（G9）、Skills（G8）
 
@@ -120,13 +120,14 @@ L0 平台改造  工具注册表与按需加载 · 附件管线 · 会话树存�
 
 ### L0-3 会话树
 
-- 重新生成用 Think 原生的 `regenerate()`（非破坏性）。现在的“重试”会再发一条相同的用户消息，改为：失败或最后一轮用 `regenerate()`。
-- 编辑消息：Chat 新增 callable `editMessage(messageId, text)`，以原消息的父节点为 parent 追加新用户消息，再运行一轮。新消息成为最新叶子，即活动路径。
-- 版本：Chat 新增 callable `versions(messageId)`，返回同一父节点下的兄弟消息及其后续路径摘要。由于 Think 的活动路径只能是最新叶子，旧版本只读；要在旧版本上继续，就“从这里分支”。这样不用改 Think 的内部状态，代价是旧版本不能原地复活。ChatGPT 允许原地切换，我们用分支替代，见 ADR-0003。
+- 重新生成用 Think 原生的 `regenerate({messageId})`（非破坏性），任意一轮都可以；原来的“重试”（再发一条相同的用户消息）已删除。
+- 编辑消息：Chat 新增 callable `editMessage(messageId, text, body)`，以原消息的父节点为 parent 用 `addMessages` 追加新用户消息，再用 `saveMessages([])` 运行一轮（本轮的模型与思考强度经 KV `pendingBody` 交给 `beforeTurn`）。新消息成为最新叶子，即活动路径。客户端 WebSocket 发来的消息总是接在最新叶子上，所以编辑必须走服务端 callable。根消息没有父节点，`getBranches` 查不到根的兄弟，编辑根消息时把新根记在 KV `roots`。
+- 版本：Chat 新增 callable `versions()` 返回活动路径上每个有兄弟的消息的兄弟列表，`view(messageId)` 返回经过该消息的最新叶子路径（只读查看）。由于 Think 的活动路径只能是最新叶子，旧版本只读；要在旧版本上继续，就“从这里分支”。这样不用改 Think 的内部状态，代价是旧版本不能原地复活。ChatGPT 允许原地切换，我们用分支替代，见 ADR-0003。
 - 分支与支线都是新的 Chat：UserHub 的会话元数据增加 `parent: {chatId, messageId, kind: 'fork' | 'side'}`。创建时把到 `messageId` 为止的活动路径消息用 `addMessages` 复制进新 Chat（不触发模型）。
   - fork：普通会话，出现在侧栏，标题加“分支：”前缀，会话页顶部显示“分支自 …”。
   - side（支线）：不出现在侧栏，只在主线消息旁显示入口和右侧面板。
-- 总结回主线：支线 Chat 的 callable `summarizeToParent()` 用当前模型生成 Markdown 总结 → 写入 `GenseBot/支线/<主线标题> - <支线标题>.md` → 在主线 Chat 用 `addMessages` 追加一条助手消息，带 `metadata.branchNote = {fileId, name, sideChatId}`，界面渲染成提示卡片。主线系统提示中列出本会话的支线总结文件，模型需要时用 `files_read` 读取。
+- 总结回主线：UserHub 的 callable `summarizeSide(sideId)` 让支线 Chat 用其当前模型总结分支点之后的对话 → Drive 已连接时写入 `GenseBot/Artifacts/支线总结 - <主线标题> - <支线标题>.md`（失败只记日志）→ 在主线 Chat 用 `addMessages` 追加一条助手消息，正文是总结全文，带 `metadata.branchNote = {sideChatId, title, summary, fileId?, fileName?}`，界面渲染成可展开的卡片。总结全文直接进入主线上下文，比“列出文件、需要时再读”少一次工具调用，也不依赖 Drive。写到 Artifacts 而不是新建 `GenseBot/支线/`，是因为 V3 的写权限只覆盖 GenseBot/ 下已建好的目录，总结本身也是一种产物。
+- 删除主线会话时一并删除它的支线；分支（fork）是独立会话，保留。
 
 ### L0-4 输入框扩展点
 

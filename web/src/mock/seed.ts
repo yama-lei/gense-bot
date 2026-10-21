@@ -1,4 +1,7 @@
-import type { AppState, ModelOption, ToolCall } from '../types'
+import { pluginCatalog } from '../plugins/catalog'
+import type { AppState, ToolCall } from '../types'
+
+const mockPlugins = ['files', 'artifact', 'email']
 
 const now = Date.now()
 const min = 60_000
@@ -82,7 +85,7 @@ const outline = {
 
 const read = (id: string, fileId: string, name: string, text: string, durationMs: number): ToolCall => ({
   id,
-  name: 'files.read',
+  name: 'files_read',
   status: 'succeeded',
   input: { fileId },
   result: { content: `读取 ${name}，${text.length} 字`, structuredContent: { id: fileId, name, text } },
@@ -126,10 +129,7 @@ export const seed: AppState = {
 3. 科研成果证明：你的 Workshop 论文 *Efficient KV Cache Offloading* 可以作为成果，需要论文首页或录用通知
 
 你符合申请对象（2025级硕士）。要我起草一封给王老师的咨询邮件吗？`,
-          toolCalls: [
-            read('tc1', 'f-notice', '奖学金通知.md', notice, 42),
-            read('tc2', 'f-profile', '个人资料.md', profile, 31),
-          ],
+          toolCalls: [read('tc1', 'f-notice', '奖学金通知.md', notice, 42), read('tc2', 'f-profile', '个人资料.md', profile, 31)],
           citations: [
             { fileId: 'f-notice', name: '奖学金通知.md', quote: '报名截止时间：2026年10月30日 17:00。' },
             { fileId: 'f-notice', name: '奖学金通知.md', quote: '答辩活动时间：2026年11月6日 14:00，地点仙Ⅱ-302。' },
@@ -149,7 +149,7 @@ export const seed: AppState = {
           toolCalls: [
             {
               id: 'tc3',
-              name: 'email.draft',
+              name: 'email_draft',
               status: 'succeeded',
               input: draft,
               result: { content: '已生成给 grad-office@example.edu.cn 的草稿，等待用户检查', structuredContent: draft },
@@ -235,7 +235,7 @@ torch.cat([half_cos, half_cos], dim=-1)   # shape (5, 4)
             read('tc4', 'f-weekly', '周报-2026-10-13.md', weekly, 28),
             {
               id: 'tc4b',
-              name: 'artifact.create',
+              name: 'artifact_create',
               status: 'succeeded',
               input: outline,
               result: { content: '已创建 Artifact「组会汇报提纲」（未保存）', structuredContent: outline },
@@ -246,7 +246,7 @@ torch.cat([half_cos, half_cos], dim=-1)   # shape (5, 4)
             },
             {
               id: 'tc4c',
-              name: 'artifact.save',
+              name: 'artifact_save',
               status: 'succeeded',
               input: outline,
               result: { content: '已保存到 GenseBot/Artifacts/组会汇报提纲.md', structuredContent: { fileId: 'f-outline', name: '组会汇报提纲.md' } },
@@ -294,7 +294,15 @@ torch.cat([half_cos, half_cos], dim=-1)   # shape (5, 4)
           assistantMessage: '我先从你的资料里确认了导师信息，正在检索',
           toolCalls: [
             read('tc5', 'f-profile', '个人资料.md', profile, 30),
-            { id: 'tc6', name: 'web.search', status: 'failed', input: { query: '陈 大模型推理 2024..2026' }, result: { content: '已被你停止', isError: true }, origin: 'model', durationMs: 4100 },
+            {
+              id: 'tc6',
+              name: 'web.search',
+              status: 'failed',
+              input: { query: '陈 大模型推理 2024..2026' },
+              result: { content: '已被你停止', isError: true },
+              origin: 'model',
+              durationMs: 4100,
+            },
           ],
           citations: [{ fileId: 'f-profile', name: '个人资料.md', quote: '导师：陈老师' }],
           model: 'anthropic:claude-haiku-5-5',
@@ -315,13 +323,7 @@ torch.cat([half_cos, half_cos], dim=-1)   # shape (5, 4)
     { id: 's2', name: '奖学金报名截止提醒', rule: '2026-10-29 20:00 一次', nextRunAt: now + 8 * day, enabled: true, lastResult: '尚未执行' },
     { id: 's3', name: '周报草稿', rule: '每周五 18:00', nextRunAt: now + 3 * day, enabled: false, lastResult: '上周五 · 失败：免费额度耗尽' },
   ],
-  plugins: [
-    { id: 'files', name: '资料', description: '列出、搜索、读取 Drive 中的资料和 Artifacts。只读。', sideEffect: false, enabled: true, available: true },
-    { id: 'artifact', name: 'Artifact', description: '在会话中展示产物，并另存到 GenseBot/Artifacts/。不会覆盖已有文件。', sideEffect: false, enabled: true, available: true },
-    { id: 'email', name: '邮件', description: '起草 smail 邮件并写入草稿箱，由你在邮箱 App 中发送。', sideEffect: true, enabled: true, available: true },
-    { id: 'web.search', name: '网页搜索', description: '检索公开网页。', sideEffect: false, enabled: false, available: false },
-    { id: 'mcp', name: 'MCP 服务器', description: '接入外部 MCP 工具及其界面（MCP Apps）。已预留接口。', sideEffect: true, enabled: false, available: false },
-  ],
+  plugins: pluginCatalog.map((p) => ({ ...p, enabled: mockPlugins.includes(p.id), available: mockPlugins.includes(p.id) })),
   memories: [
     { id: 'm1', text: '不要把报名截止时间当成活动开始时间。' },
     { id: 'm2', text: '邮件署名使用中文全名。' },
@@ -329,13 +331,13 @@ torch.cat([half_cos, half_cos], dim=-1)   # shape (5, 4)
   ],
   prefs: { language: '中文', defaultEffort: 'medium', model: 'anthropic:claude-haiku-5-5' },
   account: { name: 'Rayama', email: 'rayama@gmail.com', driveConnected: true },
+  // Stand-in for GET /v1/models on both endpoints, joined with models.dev capabilities.
+  models: [
+    { provider: 'anthropic', id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5', capabilities: { toolCall: true, efforts: ['low', 'medium', 'high'], context: 1_000_000 } },
+    { provider: 'anthropic', id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', capabilities: { toolCall: true, efforts: ['low', 'medium', 'high'], context: 1_000_000 } },
+    { provider: 'openai', id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol', capabilities: { toolCall: true, efforts: ['low', 'medium', 'high'], context: 400_000 } },
+    { provider: 'openai', id: 'gpt-6.1-mini', name: 'GPT-6.1 Mini', capabilities: { toolCall: true, efforts: [], context: 400_000 } },
+    { provider: 'openai', id: 'my-proxy-model', name: 'my-proxy-model', capabilities: null },
+  ],
+  modelsError: null,
 }
-
-/** Stand-in for GET /v1/models on both endpoints, joined with models.dev capabilities. */
-export const models: ModelOption[] = [
-  { provider: 'anthropic', id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5', capabilities: { toolCall: true, efforts: ['low', 'medium', 'high'], context: 1_000_000 } },
-  { provider: 'anthropic', id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', capabilities: { toolCall: true, efforts: ['low', 'medium', 'high'], context: 1_000_000 } },
-  { provider: 'openai', id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol', capabilities: { toolCall: true, efforts: ['low', 'medium', 'high'], context: 400_000 } },
-  { provider: 'openai', id: 'gpt-6.1-mini', name: 'GPT-6.1 Mini', capabilities: { toolCall: true, efforts: [], context: 400_000 } },
-  { provider: 'openai', id: 'my-proxy-model', name: 'my-proxy-model', capabilities: null },
-]

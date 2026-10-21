@@ -133,4 +133,51 @@ export interface AppState {
   memories: Memory[]
   prefs: Preferences
   account: Account
+  /** Models served by the endpoints; `modelsError` explains an empty or stale list. */
+  models: ModelOption[]
+  modelsError: string | null
+}
+
+/** A chat as listed by the user's hub; its turns live in the chat's own Durable Object. */
+export interface ChatMeta {
+  id: string
+  title: string
+  projectId: string | null
+  pinned: boolean
+  updatedAt: number
+}
+
+/** UserHub state, broadcast to every tab. Holds no secrets. */
+export interface HubState {
+  chats: ChatMeta[]
+  projects: Project[]
+  memories: Memory[]
+  prefs: Preferences
+  enabledPlugins: string[]
+  /** Plugins whose tools the server implements. */
+  availablePlugins: string[]
+  account: Account
+  models: ModelOption[]
+  modelsError: string | null
+}
+
+/** What a chat asks its hub for before each turn. */
+export interface TurnSettings {
+  enabledPlugins: string[]
+  memories: string[]
+  language: string
+  models: ModelOption[]
+}
+
+/** Client body fields sent with each chat request. */
+export interface TurnBody {
+  model: string
+  effort: Effort
+}
+
+/** Metadata the server stamps on each assistant message. */
+export interface TurnMetadata {
+  model: string
+  effort: Effort
+  createdAt: number
 }

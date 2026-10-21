@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { MOCK } from '../mode'
 import { href, type Route } from '../router'
 import type { AppState } from '../types'
 import { IconChevronRight, IconClock, IconDoc, IconPlus, IconProject, IconSearch, IconSidebar, IconSliders } from './Icons'
@@ -18,9 +19,7 @@ export function Sidebar({ state, route, open, onClose, onReset }: Props) {
   const q = query.trim().toLowerCase()
 
   const recent = [...state.conversations].sort((a, b) => b.updatedAt - a.updatedAt)
-  const matches = q
-    ? recent.filter((c) => c.title.toLowerCase().includes(q) || c.turns.some((t) => (t.userMessage + t.assistantMessage).toLowerCase().includes(q)))
-    : []
+  const matches = q ? recent.filter((c) => c.title.toLowerCase().includes(q) || c.turns.some((t) => (t.userMessage + t.assistantMessage).toLowerCase().includes(q))) : []
   const pinned = state.projects.filter((p) => p.pinned)
   const loose = recent.filter((c) => !c.projectId || c.pinned)
 
@@ -39,8 +38,14 @@ export function Sidebar({ state, route, open, onClose, onReset }: Props) {
           <button className="icon-btn" aria-label="收起侧栏" onClick={onClose}>
             <IconSidebar />
           </button>
-          <a className="brand" href="#/">GenseBot</a>
-          <span className="mock-badge" title="数据全部在浏览器内伪造">Mock</span>
+          <a className="brand" href="#/">
+            GenseBot
+          </a>
+          {MOCK && (
+            <span className="mock-badge" title="数据全部在浏览器内伪造">
+              Mock
+            </span>
+          )}
         </div>
 
         <label className="sb-search">
@@ -57,10 +62,12 @@ export function Sidebar({ state, route, open, onClose, onReset }: Props) {
               {n.icon} {n.label}
             </a>
           ))}
-          <button className="sb-item muted" onClick={() => setMoreOpen(!moreOpen)}>
-            <IconChevronRight style={{ transform: moreOpen ? 'rotate(90deg)' : undefined, transition: 'transform .15s' }} /> 更多
-          </button>
-          {moreOpen && (
+          {MOCK && (
+            <button className="sb-item muted" onClick={() => setMoreOpen(!moreOpen)}>
+              <IconChevronRight style={{ transform: moreOpen ? 'rotate(90deg)' : undefined, transition: 'transform .15s' }} /> 更多
+            </button>
+          )}
+          {MOCK && moreOpen && (
             <button className="sb-item sub" onClick={onReset}>
               重置 Mock 数据
             </button>

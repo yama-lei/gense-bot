@@ -5,7 +5,7 @@ import { href, navigate } from '../router'
 import type { Store } from '../store'
 import type { Conversation, DriveFile, Effort, ToolCall, Turn } from '../types'
 import { findQuote } from '../util'
-import { modelName } from '../models'
+import { modelName, useModels } from '../models'
 import { Composer, effortLabel } from './Composer'
 import { IconAlert, IconArrowDown, IconCheck, IconChevronDown, IconChevronRight, IconDoc, IconInfo, IconRetry, IconTool, IconX } from './Icons'
 import { Markdown } from './Markdown'
@@ -258,6 +258,7 @@ function TurnView({
   showDetails: boolean
   hostFor: (t: Turn, c: ToolCall) => ViewHost
 }) {
+  const models = useModels()
   const [processOpen, setProcessOpen] = useState(false)
   const active = turn.status === 'queued' || turn.status === 'running'
 
@@ -268,7 +269,7 @@ function TurnView({
       {showDetails && (
         <div className="turn-details">
           <span>请求 {turn.requestId}</span>
-          <span>{modelName(turn.model)}</span>
+          <span>{modelName(models, turn.model)}</span>
           <span>Effort {effortLabel[turn.effort]}</span>
           <span>{new Date(turn.createdAt).toLocaleString('zh-CN')}</span>
           <span className={'status-chip ' + turn.status}>{statusLabel[turn.status]}</span>

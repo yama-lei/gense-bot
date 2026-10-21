@@ -55,7 +55,7 @@ export function planReply(message: string, state: AppState): Script {
   if (/步数|循环/.test(message)) {
     return {
       summary: '反复搜索资料',
-      steps: Array.from({ length: MAX_STEPS }, (_, i) => ({ name: 'files.search', input: { query: `第 ${i + 1} 次` }, durationMs: 20 })),
+      steps: Array.from({ length: MAX_STEPS }, (_, i) => ({ name: 'files_search', input: { query: `第 ${i + 1} 次` }, durationMs: 20 })),
       text: '',
       citations: [],
       error: `已达到单轮步数上限（${MAX_STEPS}），本轮停止，已有内容保留。可以把问题拆小后重新提交。`,
@@ -69,7 +69,7 @@ export function planReply(message: string, state: AppState): Script {
       summary: '起草邮件，等待你检查',
       steps: [
         {
-          name: 'email.draft',
+          name: 'email_draft',
           input: {
             to: 'grad-office@example.edu.cn',
             subject: '咨询：' + message.replace(/\s+/g, ' ').slice(0, 20),
@@ -101,9 +101,9 @@ export function planReply(message: string, state: AppState): Script {
     return {
       summary: `读取 ${file.name}，生成提纲`,
       steps: [
-        { name: 'files.read', input: { fileId: file.id }, durationMs: 160 },
+        { name: 'files_read', input: { fileId: file.id }, durationMs: 160 },
         {
-          name: 'artifact.create',
+          name: 'artifact_create',
           input: {
             title: `${file.name.replace(/\.\w+$/, '')} 提纲`,
             type: 'markdown',
@@ -123,8 +123,8 @@ export function planReply(message: string, state: AppState): Script {
     return {
       summary: `读取 ${file.name} 并整理要点`,
       steps: [
-        { name: 'files.search', input: { query: file.name.replace(/\.\w+$/, '') }, durationMs: 90 },
-        { name: 'files.read', input: { fileId: file.id }, durationMs: 140 },
+        { name: 'files_search', input: { query: file.name.replace(/\.\w+$/, '') }, durationMs: 90 },
+        { name: 'files_read', input: { fileId: file.id }, durationMs: 140 },
       ],
       text: `我读取了 **${file.name}**，摘出几条要点：\n\n${cites.map((c) => `- ${c.quote}`).join('\n')}\n\n下方引用显示原文摘录，点击可以打开文件并定位。需要的话我可以把整理结果另存为 Artifact。`,
       citations: cites,

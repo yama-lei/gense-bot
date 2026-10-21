@@ -22,7 +22,7 @@ export function EmailDraftView({ toolInput, viewState, host }: ViewProps<DraftIn
 
   const save = async () => {
     setSaving(true)
-    const r = await host.callTool('email.saveDraft', fields)
+    const r = await host.callTool('email_saveDraft', fields)
     setSaving(false)
     if (!r.isError) host.setViewState({ fields, savedDraftId: (r.structuredContent as { draftId: string }).draftId })
   }

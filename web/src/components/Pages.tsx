@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { MOCK } from '../mode'
 import { href, navigate } from '../router'
 import type { Store } from '../store'
 import type { DriveFile, Effort, Project } from '../types'
@@ -36,18 +37,15 @@ export function HomeView({ store }: { store: Store }) {
           onModel={setModel}
           onEffort={setEffort}
           autoFocus
-          onSend={(text) => navigate({ name: 'chat', id: store.startConversation(text, projectId || null, model, effort) })}
-          leftSlot={
-            <Picker
-              value={projectId}
-              options={[{ value: '', label: '无项目' }, ...projects.map((p) => ({ value: p.id, label: p.name }))]}
-              onChange={setProjectId}
-            />
-          }
+          onSend={(text) => void store.startConversation(text, projectId || null, model, effort).then((id) => navigate({ name: 'chat', id }))}
+          leftSlot={<Picker value={projectId} options={[{ value: '', label: '无项目' }, ...projects.map((p) => ({ value: p.id, label: p.name }))]} onChange={setProjectId} />}
         />
         <div className="suggestions">
-          {['读一下奖学金通知，整理时间点', '把周报整理成组会汇报提纲', '帮我给王老师写封邮件', '模拟模型端点错误'].map((s) => (
-            <button key={s} className="chip" onClick={() => navigate({ name: 'chat', id: store.startConversation(s, projectId || null, model, effort) })}>
+          {(MOCK
+            ? ['读一下奖学金通知，整理时间点', '把周报整理成组会汇报提纲', '帮我给王老师写封邮件', '模拟模型端点错误']
+            : ['帮我列一个组会汇报提纲', '解释一下这段代码在做什么']
+          ).map((s) => (
+            <button key={s} className="chip" onClick={() => void store.startConversation(s, projectId || null, model, effort).then((id) => navigate({ name: 'chat', id }))}>
               {s}
             </button>
           ))}
@@ -103,8 +101,7 @@ export function ProjectView({ store, id }: { store: Store; id: string }) {
   const project = store.state.projects.find((p) => p.id === id)
   if (!project) return <NotFound what="项目" />
   const convs = store.state.conversations.filter((c) => c.projectId === id).sort((a, b) => b.updatedAt - a.updatedAt)
-  const patch = (fn: (p: Project) => Project) =>
-    store.setState((s) => ({ ...s, projects: s.projects.map((p) => (p.id === id ? fn(p) : p)) }))
+  const patch = (fn: (p: Project) => Project) => store.setState((s) => ({ ...s, projects: s.projects.map((p) => (p.id === id ? fn(p) : p)) }))
 
   return (
     <div className="page">
@@ -247,7 +244,9 @@ function FilePreview({ file, quote }: { file: DriveFile; quote?: string }) {
         <a className="link-btn back" href={href({ name: 'files', tab: file.kind })}>
           ← 全部{tabLabel[file.kind]}
         </a>
-        <code className="ellipsis">GenseBot/{file.kind === 'source' ? '资料' : 'Artifacts'}/{file.name}</code>
+        <code className="ellipsis">
+          GenseBot/{file.kind === 'source' ? '资料' : 'Artifacts'}/{file.name}
+        </code>
       </div>
       {quote && !range && (
         <div className="banner warn quote-missing">
@@ -323,9 +322,7 @@ export function CustomizeView({ store }: { store: Store }) {
           <li className="row">
             <div className="row-main">
               <strong>{account.email}</strong>
-              <span className="muted small">
-                {account.driveConnected ? 'Google Drive 已连接 · 只能访问本应用创建或你选择的文件（drive.file）' : 'Google Drive 未连接'}
-              </span>
+              <span className="muted small">{account.driveConnected ? 'Google Drive 已连接 · 只能访问本应用创建或你选择的文件（drive.file）' : 'Google Drive 未连接'}</span>
             </div>
             <button className="btn" onClick={() => store.setDrive(!account.driveConnected)}>
               {account.driveConnected ? '断开' : '连接'}
@@ -396,10 +393,7 @@ export function CustomizeView({ store }: { store: Store }) {
           </label>
           <label className="field">
             <span>默认 effort</span>
-            <select
-              value={prefs.defaultEffort}
-              onChange={(e) => store.setState((s) => ({ ...s, prefs: { ...s.prefs, defaultEffort: e.target.value as Effort } }))}
-            >
+            <select value={prefs.defaultEffort} onChange={(e) => store.setState((s) => ({ ...s, prefs: { ...s.prefs, defaultEffort: e.target.value as Effort } }))}>
               {(['low', 'medium', 'high'] as Effort[]).map((e) => (
                 <option key={e} value={e}>
                   {effortLabel[e]}

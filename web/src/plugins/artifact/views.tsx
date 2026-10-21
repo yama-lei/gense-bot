@@ -15,7 +15,7 @@ export function ArtifactView({ toolInput, displayMode, viewState, host }: ViewPr
 
   const save = async () => {
     setSaving(true)
-    const r = await host.callTool('artifact.save', a)
+    const r = await host.callTool('artifact_save', a)
     setSaving(false)
     if (!r.isError) host.setViewState({ saved: r.structuredContent as Saved })
   }

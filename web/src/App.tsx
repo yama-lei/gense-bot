@@ -3,6 +3,7 @@ import { ChatView } from './components/ChatView'
 import { CustomizeView, FilesView, HomeView, NotFound, ProjectView, ProjectsView, ScheduledView } from './components/Pages'
 import { Sidebar } from './components/Sidebar'
 import { SidebarContext } from './components/TopBar'
+import { ModelsContext } from './models'
 import { navigate, useRoute } from './router'
 import { useStore } from './store'
 
@@ -45,20 +46,23 @@ export default function App() {
   }
 
   return (
-    <SidebarContext.Provider value={{ toggle, open: drawer || !collapsed }}>
-      <div className={'app' + (collapsed ? ' collapsed' : '')}>
-        <Sidebar
-          state={store.state}
-          route={route}
-          open={drawer}
-          onClose={() => (mobile() ? setDrawer(false) : setCollapsed(true))}
-          onReset={() => {
-            store.reset()
-            navigate({ name: 'home' })
-          }}
-        />
-        <main className="main">{view}</main>
-      </div>
-    </SidebarContext.Provider>
+    <ModelsContext.Provider value={store.state.models}>
+      <SidebarContext.Provider value={{ toggle, open: drawer || !collapsed }}>
+        <div className={'app' + (collapsed ? ' collapsed' : '')}>
+          <Sidebar
+            state={store.state}
+            route={route}
+            open={drawer}
+            onClose={() => (mobile() ? setDrawer(false) : setCollapsed(true))}
+            onReset={() => {
+              store.reset()
+              navigate({ name: 'home' })
+            }}
+          />
+          <main className="main">{view}</main>
+        </div>
+        {store.bridge}
+      </SidebarContext.Provider>
+    </ModelsContext.Provider>
   )
 }

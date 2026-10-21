@@ -5,7 +5,7 @@ const summary = (f: DriveFile) => ({ id: f.id, name: f.name, kind: f.kind, size:
 
 export const filesTools: PluginTool[] = [
   {
-    name: 'files.list',
+    name: 'files_list',
     plugin: 'files',
     description: '列出资料与 Artifacts',
     sideEffect: false,
@@ -15,7 +15,7 @@ export const filesTools: PluginTool[] = [
     },
   },
   {
-    name: 'files.search',
+    name: 'files_search',
     plugin: 'files',
     description: '按名称搜索文件',
     sideEffect: false,
@@ -25,7 +25,7 @@ export const filesTools: PluginTool[] = [
     },
   },
   {
-    name: 'files.read',
+    name: 'files_read',
     plugin: 'files',
     description: '按文件 ID 读取文本',
     sideEffect: false,

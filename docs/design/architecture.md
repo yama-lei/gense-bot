@@ -9,7 +9,7 @@
 | 用途 | 选择 | 备注 |
 | --- | --- | --- |
 | 语言 | TypeScript | |
-| 前端 | React + Vite（沿用 `web/`） | 聊天用 `@cloudflare/ai-chat/react` 的 `useAgentChat` |
+| 前端 | React + Vite（沿用 `web/`） | 聊天用 `@cloudflare/think/react` 的 `useAgentChat`；`vite build --mode mock` 构建 Mock 版 |
 | 宿主 | Workers + SQLite-backed Durable Objects，Free 计划 | `nodejs_compat`；静态资源与 Agent 同一个 Worker |
 | Agent 运行时 | `@cloudflare/think` | 依赖锁定精确版本；`@cloudflare/computer` 只作为 peer dependency 安装 |
 | 模型 | AI SDK `@ai-sdk/anthropic`、`@ai-sdk/openai` | 两个兼容端点，配置来自 `.env`，模型列表从端点获取 |
@@ -30,16 +30,19 @@ Worker 入口
   ├─ 静态资源（SPA）
   ├─ 校验 Cf-Access-Jwt-Assertion → 不通过返回 403
   ├─ /oauth/google/*   Google 授权回调
-  └─ /agents/*         routeAgentRequest
+  └─ /agents/hub[/…]   按 JWT 的 sub 取用户自己的 UserHub，再转发
         ├─ UserHub（Agent，每个用户一个）
-        │    会话索引、项目、偏好、工具开关、记忆、Google 凭据
-        └─ Chat（Think，每个会话一个）
+        │    会话索引（RoutedAgents）、项目、偏好、工具开关、记忆、Google 凭据
+        │    /agents/hub/chats/<id> 由 UserHub 转发到它自己创建的 Chat
+        └─ Chat（Think，每个会话一个，顶层 DO）
              消息、轮次状态、工具循环、恢复
              工具 → UserHub 取 access token → Drive API
 ```
 
 - **Chat** 每个会话一个实例，名称就是会话 ID。消息、流恢复和去重都由 Think 负责，我们不再维护第二份聊天记录。
 - **UserHub** 保存跨会话的数据。Chat 通过 DO RPC 找它要短期 access token，refresh token 不离开 UserHub。
+- 不用 `routeAgentRequest`：它按 URL 中的名字定位 DO，客户端可以访问别人的实例。入口只认 JWT 中的 `sub`，会话只能经过所属 UserHub 访问。
+- Worker 把校验过的邮箱放进内部请求头 `x-gense-email` 转给 UserHub（客户端带来的同名头会被覆盖）。
 - 单用户首版也按用户 ID（Access JWT 中的 `sub`）给 UserHub 命名，以后支持多用户时不用迁移数据。
 
 ## 登录与授权
@@ -48,6 +51,8 @@ Worker 入口
 2. Worker 对每个非静态请求都校验 `Cf-Access-Jwt-Assertion`：签名用团队域名的 certs，`aud` 要匹配应用的 AUD tag。不能只信任“请求经过了 Access”，这样可以防止有人绕过 Access 直接访问 Worker。
 3. 首次使用时，界面提示“连接 Google Drive”，走 OAuth 授权码流程（`access_type=offline`），拿到 refresh token 后加密保存在 UserHub。加密用 AES-GCM，密钥来自 secret `TOKEN_ENCRYPTION_KEY`。
 4. Google OAuth 应用发布为 Production（未验证）。如果停留在 Testing，refresh token 约 7 天过期。`drive` 是受限 scope：未验证的应用最多 100 个用户，授权页会显示“Google 尚未验证此应用”，个人使用可以接受。以后加日历、Tasks 时增量申请对应 scope。
+
+Access 必须是按主机名（`bot.rayama.site`）配置的自托管应用，而不是 Worker 上的 Access 开关：后者不保护 WebSocket 和静态资源。
 
 Access 登录和 Google OAuth 是两次授权：前者证明“你是谁”，后者授权“助手可以访问你的 Drive”。暂时不合并，因为 Access 不会把 Google 的 API token 交给我们的应用。
 
@@ -71,6 +76,7 @@ getModel() {
 ```
 
 - **模型列表**：UserHub 分别调用两个端点的 `GET /v1/models`（处理分页），缓存 1 小时，按供应商分组显示在选择器中。某个端点获取失败时，只显示这个供应商的 `DEFAULT_*_MODEL`，并标注“列表获取失败”。
+  - 多协议代理的两个端点可能返回同一份全量列表（V1 实测如此），且未必包含配置的默认模型。因此 Anthropic 端点只显示 models.dev 认作 Anthropic 的模型，OpenAI 端点全部显示；两个默认模型总是显示。
 - **默认模型**：新会话使用用户上次选择的模型；从未选过时，使用 `DEFAULT_ANTHROPIC_MODEL`，没有配置就用 `DEFAULT_OPENAI_MODEL`。
 - **切换模型**：每个会话记录所选的供应商和模型，可以在会话中切换；每一轮记录实际使用的模型。
 - **模型能力**：从 [models.dev](https://github.com/anomalyco/models.dev) 获取（2026-10-21 确认）。
@@ -106,10 +112,10 @@ getModel() {
 
 | 工具 | 副作用 | 说明 |
 | --- | --- | --- |
-| `files.list` / `files.search` | 无 | 列出 `GenseBot/` 中的资料与 Artifacts；`files.search` 可以搜索整个 Drive（名称和全文） |
-| `files.read` | 无 | 按文件 ID 读取文本，过长时分段读取 |
-| `artifact.save` | 创建新文件 | 只在 `Artifacts/` 中新建文件，不覆盖已有文件，所以可以安全重试（以 `idempotencyKey` 作为 Drive `appProperties` 去重） |
-| `files.update` / `files.delete` | 修改用户数据 | 首版不提供；后续通过 Think Actions 的审批流程加入 |
+| `files_list` / `files_search` | 无 | 列出 `GenseBot/` 中的资料与 Artifacts；`files_search` 可以搜索整个 Drive（名称和全文） |
+| `files_read` | 无 | 按文件 ID 读取文本，过长时分段读取 |
+| `artifact_save` | 创建新文件 | 只在 `Artifacts/` 中新建文件，不覆盖已有文件，所以可以安全重试（以 `idempotencyKey` 作为 Drive `appProperties` 去重） |
+| `files_update` / `files_delete` | 修改用户数据 | 首版不提供；后续通过 Think Actions 的审批流程加入 |
 
 ### 引用
 
@@ -145,6 +151,7 @@ plugins/<id>/
 
 - 每个工具有名称、说明、参数 schema，以及 `execute()`。
 - 返回值与 MCP 的 `CallToolResult` 一致：`content` 给模型看，`structuredContent` 给界面用。
+- 工具名只用字母、数字和下划线（如 `artifact_create`），点号会被部分模型 API 拒绝。
 - 需要界面的工具在元数据中声明 `_meta.ui.resourceUri = 'ui://<插件>/<视图>'`。
 - 声明副作用和重放策略（见“兜底限制的实现”）。
 - 按 MCP Apps 的建议，**取数据**和**显示**分开：数据工具不带界面，显示工具接收模型整理好的数据，再交给界面渲染。
@@ -179,9 +186,9 @@ plugins/<id>/
 
 | 插件 | 工具 | 界面 |
 | --- | --- | --- |
-| files | `files.list`、`files.search`、`files.read` | 无（通用卡片）；引用卡片属于消息本身，不归插件 |
-| artifact | `artifact.create`（显示工具）、`artifact.save` | `ui://artifact/view`：`inline` 时是消息中的卡片，`panel` 时是面板预览，提供保存到 Drive。同一个资源按显示方式切换，与 MCP Apps 一致 |
-| email（后续） | `email.search`、`email.read`、`email.draft`（显示工具）、`email.saveDraft` | `ui://email/draft`：草稿预览，可修改，点“存入草稿箱”时调用 `email.saveDraft` |
+| files | `files_list`、`files_search`、`files_read` | 无（通用卡片）；引用卡片属于消息本身，不归插件 |
+| artifact | `artifact_create`（显示工具）、`artifact_save` | `ui://artifact/view`：`inline` 时是消息中的卡片，`panel` 时是面板预览，提供保存到 Drive。同一个资源按显示方式切换，与 MCP Apps 一致 |
+| email（后续） | `email_search`、`email_read`、`email_draft`（显示工具）、`email_saveDraft` | `ui://email/draft`：草稿预览，可修改，点“存入草稿箱”时调用 `email_saveDraft` |
 | mcp（后续） | 远程 MCP 服务器的工具 | 按上面第 2 条处理 |
 
 ## 后续能力
@@ -213,6 +220,8 @@ plugins/<id>/
 | V5 | 兜底限制 | Spec S9 的操作 |
 | V6 | Free 计划资源 | 记录一天正常使用的 Worker 请求数、DO 请求数和 SQL 读写行数，与免费额度对比 |
 | V7（后续） | smail IMAP | 在 Worker 中登录并列出收件箱的最新 5 封邮件；`APPEND` 一封草稿后，在 App 中能看到 |
+
+V1 记录（2026-10-21，本地 `vite dev`）：依赖锁定为 `@cloudflare/think` 0.21.0、`agents` 0.29.0、`ai` 7.0.148；compatibility date `2026-10-01`。OpenAI（Responses API）完成一轮带 `artifact_create` 的对话；Anthropic 链路已打通，但端点返回 503 “No available accounts”，待端点恢复后重测。部署前 `cf deploy --dry-run` 通过（gzip 后约 1.4 MB）。
 
 测试走真实路径：使用真实模型端点和真实的测试 Drive 账号，不写只测 mock 的测试。
 

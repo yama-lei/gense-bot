@@ -10,7 +10,7 @@ export interface ArtifactInput {
 
 export const artifactTools: PluginTool[] = [
   {
-    name: 'artifact.create',
+    name: 'artifact_create',
     plugin: 'artifact',
     description: '在会话中展示一个产物（显示工具）',
     resourceUri: 'ui://artifact/view',
@@ -18,7 +18,7 @@ export const artifactTools: PluginTool[] = [
     execute: (input: ArtifactInput) => ({ content: `已创建 Artifact「${input.title}」（未保存）`, structuredContent: input }),
   },
   {
-    name: 'artifact.save',
+    name: 'artifact_save',
     plugin: 'artifact',
     description: '把产物保存为 GenseBot/Artifacts/ 下的新文件，不覆盖已有文件',
     sideEffect: false,

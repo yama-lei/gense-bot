@@ -72,7 +72,16 @@ getModel() {
 - **模型列表**：UserHub 分别调用两个端点的 `GET /v1/models`（处理分页），缓存 1 小时，按供应商分组显示在选择器中。某个端点获取失败时，只显示这个供应商的 `DEFAULT_*_MODEL`，并标注“列表获取失败”。
 - **默认模型**：新会话使用用户上次选择的模型；从未选过时，使用 `DEFAULT_ANTHROPIC_MODEL`，没有配置就用 `DEFAULT_OPENAI_MODEL`。
 - **切换模型**：每个会话记录所选的供应商和模型，可以在会话中切换；每一轮记录实际使用的模型。
-- **effort**：映射到各供应商自己的推理强度参数（Anthropic 的 effort / thinking，OpenAI 的 `reasoningEffort`）。具体映射在 V1 中按实际端点确定。
+- **模型能力**：从 [models.dev](https://github.com/anomalyco/models.dev) 获取（2026-10-21 确认）。
+  - UserHub 每天拉取一次 `https://models.dev/api.json`，只保留 `anthropic`、`openai` 两个供应商下、在我们端点模型列表里出现的条目，存进 SQLite。
+  - 用到的字段：
+    - `tool_call`：不支持工具的模型，在选择器中标注“不支持工具”，会话中不提供工具。
+    - `reasoning`、`reasoning_options`：effort 选择器只显示这个模型支持的档位。
+    - `modalities.input`、`attachment`：决定以后能否上传图片或 PDF。
+    - `limit.context`、`limit.output`：用于上下文压缩阈值和 `maxOutputTokens`。
+  - 匹配规则：用 `<供应商>/<端点返回的模型 ID>` 查找，找不到时去掉日期后缀再查。仍然查不到的模型标注“能力未知”，按支持工具、不支持 effort 处理。
+  - `api.json` 约 6 MB，而只有它带 `reasoning_options`（`models.json` 约 0.5 MB，没有这个字段）。拉取放在 UserHub 的定时任务里，不在用户请求路径上；V6 要测量这次解析的 CPU 消耗。models.dev 不可用时，继续使用上一次缓存的数据。
+- **effort**：映射到各供应商自己的参数（Anthropic 的 effort / thinking，OpenAI 的 `reasoningEffort`），档位取自 models.dev 的 `reasoning_options`。
 - **OpenAI 使用 Responses API**（`createOpenAI(...)(model)` 的默认行为）。GPT-6 系列的工具调用要求使用这个 API；用户确认端点支持（2026-10-21）。
 
 ## Drive 存储

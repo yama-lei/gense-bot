@@ -61,7 +61,7 @@
 
 | 能力 | 方向 | 说明 |
 | --- | --- | --- |
-| smail（腾讯企业邮） | IMAP 读取；起草的回复写入草稿箱，由用户在邮箱 App 中检查并发送 | 第一步不让助手直接发信。见 [架构草案](../design/architecture.md#后续能力) |
+| smail（腾讯企业邮） | IMAP 读取；起草的回复写入草稿箱，由用户在邮箱 App 中检查并发送 | 方案已确认。第一步不让助手直接发信。见 [架构草案](../design/architecture.md#后续能力) |
 | 定时任务与提醒 | Think scheduled tasks；提醒推送到 Google Tasks 或 Calendar | 另写 Spec |
 | Google Calendar / Tasks | 共用同一个 Google 授权，增量申请 scope | 另写 Spec |
 | 记忆与偏好 | 用户可在“定制”页查看和编辑 | 先定义哪些内容可以自动保存 |

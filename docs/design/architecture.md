@@ -12,7 +12,7 @@
 | 前端 | React + Vite（沿用 `web/`） | 聊天用 `@cloudflare/ai-chat/react` 的 `useAgentChat` |
 | 宿主 | Workers + SQLite-backed Durable Objects，Free 计划 | `nodejs_compat`；静态资源与 Agent 同一个 Worker |
 | Agent 运行时 | `@cloudflare/think` | 依赖锁定精确版本；`@cloudflare/computer` 只作为 peer dependency 安装 |
-| 模型 | AI SDK `@ai-sdk/anthropic` | 端点、token 和模型名来自 `.env` |
+| 模型 | AI SDK `@ai-sdk/anthropic` | 端点和 token 来自 `.env`，模型列表从端点获取 |
 | 登录 | Cloudflare Access，Google 身份提供方 | Worker 自己再校验 Access JWT |
 | 用户文件 | Google Drive API v3 | OAuth scope 先只申请 `drive.file` |
 | 部署 | `cf deploy --secrets-file .env` | 密钥不进 Git，不经过对话 |
@@ -58,11 +58,14 @@ getModel() {
   return createAnthropic({
     baseURL: base.endsWith('/v1') ? base : `${base}/v1`,
     authToken: this.env.ANTHROPIC_AUTH_TOKEN, // 以 Authorization: Bearer 发送
-  })(this.env.ANTHROPIC_MODEL)
+  })(this.getConfig().model) // 会话创建时选定的模型
 }
 ```
 
-`.env` 需要三个变量：`ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_MODEL`。界面上的模型选择器只显示 `ANTHROPIC_MODEL`。以后要支持多个模型，可以改成用逗号分隔的列表。
+- `.env` 只需要 `ANTHROPIC_BASE_URL` 和 `ANTHROPIC_AUTH_TOKEN`。
+- UserHub 调用 `GET {base}/v1/models` 获取模型列表（处理 `has_more` 分页），缓存 1 小时，界面的模型选择器显示这个列表。用户上次选的模型存在偏好里，作为新会话的默认值。
+- 端点不支持 `/v1/models`，或者返回空列表时，界面提示“无法获取模型列表”，不发送消息。不内置后备模型名，因为写死的名字很可能在这个端点上不存在。
+- 每个会话在创建时记录所选模型，之后可以在会话中切换；轮次记录实际使用的模型。
 
 ## Drive 存储
 
@@ -110,6 +113,8 @@ getModel() {
 
 ### smail（腾讯企业邮）
 
+方案已于 2026-10-21 确认。
+
 腾讯企业邮的开放 API 需要组织管理员权限，学生账号拿不到，所以只能走标准协议：
 
 - **读取**：IMAP `imap.exmail.qq.com:993`（SSL），用邮箱设置里生成的“客户端专用密码”登录，不用主密码。UserHub 用 Think scheduled tasks 定时（例如每 15 分钟）拉取新邮件，按 `UIDVALIDITY + UID` 去重，生成摘要。
@@ -126,7 +131,7 @@ getModel() {
 
 | 阶段 | 验证内容 | 通过证据 |
 | --- | --- | --- |
-| V1 | Think 部署到 Free 计划，并接入用户模型 | 锁定的依赖版本；一轮对话正常返回；记录 compatibility date |
+| V1 | Think 部署到 Free 计划，并接入用户模型 | 锁定的依赖版本；`/v1/models` 返回列表；用其中一个模型完成一轮对话；记录 compatibility date |
 | V2 | Access 与 JWT 校验 | Spec S1 的三个操作全部符合预期 |
 | V3 | Google OAuth 与 Drive | 授权后上传、读取、保存 Artifact；8 天后 refresh token 仍有效（Production 状态） |
 | V4 | 去重、断线、恢复 | Spec S3、S4、S7 的操作 |

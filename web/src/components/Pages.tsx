@@ -19,7 +19,9 @@ function greeting() {
 
 export function HomeView({ store }: { store: Store }) {
   const { prefs, projects } = store.state
-  const [model, setModel] = useState(prefs.model)
+  // Hub state may arrive after mount; until the user picks, follow the current default.
+  const [picked, setModel] = useState('')
+  const model = picked || prefs.model
   const [effort, setEffort] = useState<Effort>(prefs.defaultEffort)
   const [projectId, setProjectId] = useState<string>('')
 
@@ -103,7 +105,8 @@ export function ProjectsView({ store }: { store: Store }) {
 
 export function ProjectView({ store, id }: { store: Store; id: string }) {
   const { prefs } = store.state
-  const [model, setModel] = useState(prefs.model)
+  const [picked, setModel] = useState('')
+  const model = picked || prefs.model
   const [effort, setEffort] = useState<Effort>(prefs.defaultEffort)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const project = store.state.projects.find((p) => p.id === id)

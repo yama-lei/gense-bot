@@ -140,7 +140,7 @@ L0 平台改造  工具注册表与按需加载 · 附件管线 · 会话树存�
 | --- | --- | --- |
 | `web_search` | DeepSeek `/v1/tools/search`，`count` 默认 8，返回 title、url、date、summary | 快速查事实、找链接 |
 | `web_fetch` | DeepSeek `/v1/tools/fetch`，正文按 2 万字分段（与 `files_read` 一致） | 读具体网页 |
-| `web_research` | 用 OpenAI 端点 Responses API + `web_search` 工具，模型取 `.env` 的 `WEB_RESEARCH_MODEL`（缺省为 `DEFAULT_OPENAI_MODEL`），返回综述和来源 URL | 多步检索、对比、调研 |
+| `web_research` | 用 OpenAI 端点 Responses API + `web_search` 工具，模型取 `.env` 的 `DEFAULT_OPENAI_MODEL`，返回综述和来源 URL | 多步检索、对比、调研 |
 
 - “复合使用”写进系统提示：先 `web_search`，需要细节再 `web_fetch`，问题复杂或前两者结果不够时用 `web_research`。
 - 结果的 `structuredContent.sources` 被前端收集成回答下方的来源卡片，与文件引用并列。

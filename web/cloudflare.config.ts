@@ -32,6 +32,7 @@ export const production = {
     GOOGLE_CLIENT_ID: bindings.secret(),
     GOOGLE_CLIENT_SECRET: bindings.secret(),
     TOKEN_ENCRYPTION_KEY: bindings.secret(),
+    DEEPSEEK_API_KEY: bindings.secret(),
   },
   exports: {
     UserHub: exports.durableObject({ storage: 'sqlite' }),

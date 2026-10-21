@@ -4,11 +4,11 @@ import { seed } from './seed'
 import { tools } from '../plugins'
 import type { ToolContext } from '../plugins/types'
 import type { Store } from '../store'
-import type { AppState, Conversation, DriveFile, Effort, ToolCall, ToolResult, Turn } from '../types'
+import type { AppState, Conversation, DriveFile, Effort, ToolCall, ToolResult, Turn, WebSource } from '../types'
 import { uid } from '../util'
 
 // v4: files carry `size`, the account carries `driveError`.
-const KEY = 'gensebot-mock-v4'
+const KEY = 'gensebot-mock-v5'
 /** Upload limit from the spec's circuit-breaker table. */
 export const MAX_UPLOAD = 2 * 1024 * 1024
 
@@ -81,7 +81,12 @@ export function useMockStore(): Store {
         at(step.durationMs + tail, () => {
           const result = exec(step.name, step.input)
           const done: ToolCall = { ...call, status: result.isError ? 'failed' : 'succeeded', result, durationMs: step.durationMs }
-          patch((x) => ({ ...x, toolCalls: x.toolCalls.map((c) => (c.id === call.id ? done : c)) }))
+          const found = (result.structuredContent as { sources?: WebSource[] } | undefined)?.sources ?? []
+          patch((x) => ({
+            ...x,
+            toolCalls: x.toolCalls.map((c) => (c.id === call.id ? done : c)),
+            sources: found.length ? [...new Map([...(x.sources ?? []), ...found].map((s) => [s.url, s])).values()] : x.sources,
+          }))
         })
       }
       if (script.error) {
@@ -102,7 +107,7 @@ export function useMockStore(): Store {
     for (const c of stateRef.current.conversations) {
       for (const t of c.turns) {
         if (t.status === 'queued' || t.status === 'running') {
-          const reset: Turn = { ...t, status: 'queued', assistantMessage: '', toolCalls: [], citations: [] }
+          const reset: Turn = { ...t, status: 'queued', assistantMessage: '', toolCalls: [], citations: [], sources: [] }
           patchTurn(c.id, t.id, () => reset)
           run(c.id, reset)
         }

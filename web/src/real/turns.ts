@@ -1,6 +1,6 @@
 import type { UIMessage } from 'ai'
 import { tools } from '../plugins'
-import type { Citation, Effort, ToolCall, ToolResult, Turn, TurnMetadata } from '../types'
+import type { Citation, Effort, ToolCall, ToolResult, Turn, TurnMetadata, WebSource } from '../types'
 
 export type ChatStatus = 'submitted' | 'streaming' | 'ready' | 'error'
 
@@ -26,6 +26,8 @@ function toolCall(p: ToolPart): ToolCall {
   if (p.state === 'output-error' || p.state === 'output-denied') return { ...base, status: 'failed', result: { content: p.errorText ?? '工具调用失败', isError: true } }
   return { ...base, status: 'running' }
 }
+
+const dedupe = (sources: WebSource[]) => [...new Map(sources.map((s) => [s.url, s])).values()]
 
 const text = (m: UIMessage) =>
   m.parts
@@ -75,6 +77,8 @@ export function toTurns(
       // files_cite only records citations; they show under the answer, not in the process list.
       const cited = call.name === 'files_cite' && (call.result?.structuredContent as { citations?: Citation[] } | undefined)?.citations
       if (cited) t.citations.push(...cited)
+      const found = (call.result?.structuredContent as { sources?: WebSource[] } | undefined)?.sources
+      if (found && call.name.startsWith('web_')) t.sources = dedupe([...(t.sources ?? []), ...found])
       t.toolCalls.push(call)
     }
     if (meta?.model) t.model = meta.model

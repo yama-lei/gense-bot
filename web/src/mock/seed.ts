@@ -1,7 +1,7 @@
 import { pluginCatalog } from '../plugins/catalog'
 import type { AppState, ToolCall } from '../types'
 
-const mockPlugins = ['files', 'artifact', 'email']
+const mockPlugins = ['files', 'artifact', 'email', 'web']
 
 const now = Date.now()
 const min = 60_000

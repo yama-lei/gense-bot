@@ -1,8 +1,10 @@
 import { tool, type ToolSet } from 'ai'
 import { z } from 'zod'
+import type { WorkerEnv } from './env'
 import type { Citation, DriveFile, ToolResult } from '../src/types'
 import { findQuote } from '../src/util'
 import type { Drive, Folders } from './drive'
+import { webAvailable, webFetch, webResearch, webSearch } from './web'
 
 // Server half of the plugins (architecture "插件与界面"). Each execute() returns an MCP-style
 // CallToolResult: `content` goes to the model, `structuredContent` only to the view.
@@ -10,6 +12,7 @@ import type { Drive, Folders } from './drive'
 
 /** What tools need from the chat running them. */
 export interface ToolHost {
+  env: WorkerEnv
   /** Throws when Google Drive is not connected. */
   drive(): Promise<{ drive: Drive; folders: Folders }>
   /** Tells the hub to refresh its file list after a write. */
@@ -153,12 +156,72 @@ export function createTools(host: ToolHost) {
         toModelOutput,
       }),
     },
+    web: webTools(host.env),
   } satisfies Record<string, ToolSet>
+}
+
+/** Web plugin; tools whose backend is not configured are left out. */
+function webTools(env: WorkerEnv): ToolSet {
+  const has = webAvailable(env)
+  const out: ToolSet = {}
+  if (has.search) {
+    out.web_search = tool({
+      description: '搜索公开网页，返回标题、链接、日期和摘要。适合查事实、找最新信息和找链接。支持 site:域名、"精确短语"、-排除词、after:2025 等语法。',
+      inputSchema: z.object({
+        query: z.string().min(1).max(128).describe('搜索词，最多 128 字'),
+        count: z.number().int().min(1).max(20).optional().describe('结果数，默认 8'),
+      }),
+      execute: guarded(async ({ query, count = 8 }) => {
+        const hits = await webSearch(env, query, count)
+        if (!hits.length) return { content: `没有找到「${query}」的结果`, structuredContent: { sources: [] } }
+        const lines = hits.map((h, i) => `[${i + 1}] ${h.title}\n${h.url}${h.date ? `（${h.date.slice(0, 10)}）` : ''}\n${h.summary}`)
+        return { content: lines.join('\n\n'), structuredContent: { sources: hits.map(({ url, title, site }) => ({ url, title, site })) } }
+      }),
+      toModelOutput,
+    })
+    out.web_fetch = tool({
+      description: `读取一个网页的正文（Markdown）。每次最多返回 ${READ_CHUNK} 字，较长的网页用 offset 继续读。`,
+      inputSchema: z.object({
+        url: z.string().url().max(8192),
+        offset: z.number().int().min(0).optional().describe('从第几个字符开始，默认 0'),
+      }),
+      execute: guarded(async ({ url, offset = 0 }) => {
+        if (!/^https?:\/\//i.test(url) || new URL(url).username) return { content: '只能读取 http(s) 网页', isError: true }
+        const page = await webFetch(env, url)
+        const part = page.content.slice(offset, offset + READ_CHUNK)
+        const end = offset + part.length
+        const more = end < page.content.length ? `\n\n[第 ${offset}–${end} 字，共 ${page.content.length} 字；用 offset=${end} 继续读]` : ''
+        return {
+          content: `网页：${page.title}\n${url}\n\n${part || '（没有正文）'}${more}`,
+          structuredContent: { sources: [{ url, title: page.title, site: new URL(url).hostname.replace(/^www\./, '') }] },
+        }
+      }),
+      toModelOutput,
+    })
+  }
+  if (has.research) {
+    out.web_research = tool({
+      description: '深度搜索：由另一个模型多次搜索、打开网页并交叉核对，返回带来源的研究结论。耗时较长（约半分钟到两分钟），只在问题复杂、需要多方对比，或 web_search 结果不够时使用。',
+      inputSchema: z.object({ question: z.string().min(1).max(2000).describe('完整的研究问题，写明背景和需要的细节') }),
+      execute: guarded(async ({ question }, { abortSignal }) => {
+        const r = await webResearch(env, question, abortSignal)
+        const refs = r.sources.map((s, i) => `[${i + 1}] ${s.title} ${s.url}`).join('\n')
+        return { content: `${r.text}${refs ? `\n\n来源：\n${refs}` : ''}`, structuredContent: { sources: r.sources } }
+      }),
+      toModelOutput,
+    })
+  }
+  return out
 }
 
 export type PluginId = keyof ReturnType<typeof createTools>
 /** Plugins this server implements; the hub offers only these. */
-export const pluginIds: PluginId[] = ['files', 'artifact']
+export const pluginIds: PluginId[] = ['files', 'artifact', 'web']
+/** Plugins this deployment can offer, given which backends `.env` configures. */
+export function availablePlugins(env: WorkerEnv): PluginId[] {
+  const web = webAvailable(env)
+  return pluginIds.filter((id) => id !== 'web' || web.search || web.research)
+}
 /** Plugin of each tool, for checking calls made by views. */
 export const toolPlugin = (all: ReturnType<typeof createTools>, name: string) => (Object.entries(all) as [PluginId, ToolSet][]).find(([, set]) => name in set)?.[0]
 

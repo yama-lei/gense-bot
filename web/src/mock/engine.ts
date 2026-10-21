@@ -83,6 +83,19 @@ export function planReply(message: string, state: AppState): Script {
     }
   }
 
+  if (/搜索|最新|网页|网上|https?:\/\//.test(message)) {
+    if (!enabled('web')) return unavailable('网页')
+    return {
+      summary: '搜索网页，读取 1 个页面',
+      steps: [
+        { name: 'web_search', input: { query: message.replace(/\s+/g, ' ').slice(0, 40) }, durationMs: 380 },
+        { name: 'web_fetch', input: { url: 'https://blog.cloudflare.com/project-think/' }, durationMs: 520 },
+      ],
+      text: `我先搜索了网页，又打开了最相关的一篇读正文：\n\n- **Think** 是构建在 Agents SDK 之上的智能体运行时，负责消息树、断线恢复和 Skills（[Cloudflare 博客](https://blog.cloudflare.com/project-think/)）。\n- **Agents SDK** 把每个智能体放在一个 Durable Object 里，自带持久化和调度（[官方文档](https://developers.cloudflare.com/agents/)）。\n\n下方“来源”列出了本轮用到的全部网页。（Mock 演示，结果是固定的）`,
+      citations: [],
+    }
+  }
+
   const wantsFile = mentioned || /资料|文档|通知|周报|提纲|整理/.test(message)
   if (wantsFile && !state.account.driveConnected) {
     return {

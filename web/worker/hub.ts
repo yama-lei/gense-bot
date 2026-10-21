@@ -7,7 +7,7 @@ import type { Chat } from './chat'
 import { Drive, MAX_TEXT_BYTES, isText, type Folders } from './drive'
 import { DRIVE_SCOPE, GrantRevokedError, authUrl, decrypt, encrypt, exchangeCode, refreshAccessToken, revoke } from './google'
 import { defaultModel, listEndpointModels, pickCapabilities, providers } from './models'
-import { pluginIds } from './tools'
+import { availablePlugins, pluginIds } from './tools'
 
 /** Header the Worker sets from the verified Access JWT; any client-supplied value is stripped. */
 export const EMAIL_HEADER = 'x-gense-email'
@@ -82,7 +82,12 @@ export class UserHub extends Agent<WorkerEnv, HubState> {
     // The deployed code decides which plugins exist.
     // State saved by an older deployment may lack newer fields.
     const account = { ...this.state.account, driveConnected: !!this.grant(), driveError: this.state.account.driveError ?? null }
-    this.setState({ ...this.state, prefs, account, files: this.state.files ?? [], availablePlugins: [...pluginIds] })
+    // A plugin this user has never seen starts enabled; one they turned off stays off.
+    const available = availablePlugins(this.env)
+    const seen = this.ctx.storage.kv.get<string[]>('seenPlugins') ?? ['files', 'artifact']
+    const enabledPlugins = [...this.state.enabledPlugins, ...available.filter((id) => !seen.includes(id) && !this.state.enabledPlugins.includes(id))]
+    this.ctx.storage.kv.put('seenPlugins', [...new Set([...seen, ...available])])
+    this.setState({ ...this.state, prefs, account, files: this.state.files ?? [], availablePlugins: available, enabledPlugins })
     await this.syncChats()
     if (this.grant()) void this.refreshFiles()
     if (Date.now() - (this.ctx.storage.kv.get<number>('modelsAt') ?? 0) > MODELS_TTL) void this.refreshModels()

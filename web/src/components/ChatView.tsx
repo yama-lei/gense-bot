@@ -3,7 +3,7 @@ import { tools, views } from '../plugins'
 import type { DisplayMode, ViewHost } from '../plugins/types'
 import { href, navigate } from '../router'
 import type { Store } from '../store'
-import type { Conversation, DriveFile, Effort, ToolCall, Turn } from '../types'
+import type { Conversation, DriveFile, Effort, ToolCall, Turn, WebSource } from '../types'
 import { modelName, useModels } from '../models'
 import { Composer, effortLabel } from './Composer'
 import { IconAlert, IconArrowDown, IconCheck, IconChevronDown, IconChevronRight, IconCopy, IconDoc, IconInfo, IconRetry, IconTool, IconX } from './Icons'
@@ -20,7 +20,9 @@ const statusLabel: Record<Turn['status'], string> = {
 
 export function ChatView({ store, conv }: { store: Store; conv: Conversation }) {
   const last = conv.turns.at(-1)
-  const [model, setModel] = useState(last?.model ?? store.state.prefs.model)
+  // Hub state may arrive after mount; until the user picks, follow the current default.
+  const [picked, setModel] = useState(last?.model ?? '')
+  const model = picked || store.state.prefs.model
   const [effort, setEffort] = useState<Effort>(last?.effort ?? store.state.prefs.defaultEffort)
   const [showDetails, setShowDetails] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
@@ -139,6 +141,48 @@ function PluginSlot({ call, displayMode, host }: { call: ToolCall; displayMode: 
     )
   }
   return <View toolInput={call.input} toolResult={call.result} displayMode={displayMode} viewState={call.viewState} host={host} />
+}
+
+/** Web pages the turn used, like ChatGPT's "Sources" pill: stacked site badges that open a list. */
+function Sources({ sources }: { sources: WebSource[] }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="sources">
+      <button className="sources-pill" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span className="site-stack">
+          {sources.slice(0, 3).map((s) => (
+            <SiteBadge key={s.url} site={s.site} />
+          ))}
+        </span>
+        来源 · {sources.length}
+      </button>
+      {open && (
+        <ol className="source-list">
+          {sources.map((s) => (
+            <li key={s.url}>
+              <a href={s.url} target="_blank" rel="noreferrer noopener">
+                <span className="source-site">
+                  <SiteBadge site={s.site} /> {s.site}
+                </span>
+                <span className="source-title">{s.title}</span>
+              </a>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  )
+}
+
+/** First letter of the site on a colour derived from its name; no favicon requests leave the page. */
+function SiteBadge({ site }: { site: string }) {
+  let h = 0
+  for (const ch of site) h = (h * 31 + ch.charCodeAt(0)) % 360
+  return (
+    <span className="site-badge" style={{ background: `hsl(${h} 45% 45%)` }} aria-hidden>
+      {site.replace(/^www\./, '').charAt(0).toUpperCase()}
+    </span>
+  )
 }
 
 /** The quote is checked against the file's current text when the citation is opened. */
@@ -343,6 +387,8 @@ function TurnView({
               <PluginSlot call={c} displayMode="inline" host={hostFor(turn, c)} />
             </div>
           ))}
+
+        {turn.sources && turn.sources.length > 0 && <Sources sources={turn.sources} />}
 
         {turn.citations.length > 0 && (
           <div className="citations">

@@ -13,6 +13,14 @@ export interface Project {
 }
 
 /** A source excerpt; resolved against the file's current content when opened. */
+/** A web page the answer drew on (web plugin). */
+export interface WebSource {
+  url: string
+  title: string
+  /** Site name or host, shown on the source card. */
+  site: string
+}
+
 export interface Citation {
   fileId: string
   name: string
@@ -50,6 +58,8 @@ export interface Turn {
   assistantMessage: string
   toolCalls: ToolCall[]
   citations: Citation[]
+  /** Web pages found by web tools in this turn, deduplicated by URL. */
+  sources?: WebSource[]
   error?: string
   model: string
   effort: Effort

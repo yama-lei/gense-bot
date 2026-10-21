@@ -1,9 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { tools, views } from '../plugins'
+import type { DisplayMode, ViewHost } from '../plugins/types'
 import { href, navigate } from '../router'
 import type { Store } from '../store'
-import type { Confirmation, Conversation, Effort, Turn } from '../types'
+import type { Conversation, DriveFile, Effort, ToolCall, Turn } from '../types'
+import { findQuote } from '../util'
+import { modelName } from '../models'
 import { Composer, effortLabel } from './Composer'
-import { IconAlert, IconArrowDown, IconCheck, IconChevronDown, IconChevronRight, IconInfo, IconMail, IconRetry, IconTool, IconX } from './Icons'
+import { IconAlert, IconArrowDown, IconCheck, IconChevronDown, IconChevronRight, IconDoc, IconInfo, IconRetry, IconTool, IconX } from './Icons'
 import { Markdown } from './Markdown'
 import { TopBar } from './TopBar'
 
@@ -23,65 +27,140 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
   const scroller = useRef<HTMLDivElement>(null)
   const [atBottom, setAtBottom] = useState(true)
   const busy = last?.status === 'queued' || last?.status === 'running'
+  const [panel, setPanel] = useState<{ turnId: string; callId: string } | null>(null)
+  const panelTurn = panel && conv.turns.find((t) => t.id === panel.turnId)
+  const panelCall = panelTurn?.toolCalls.find((c) => c.id === panel!.callId)
 
-  const scrollToBottom = (smooth = true) => scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
+  // Host side of the MCP Apps bridge for one rendered tool call.
+  const hostFor = (turn: Turn, call: ToolCall): ViewHost => ({
+    callTool: async (name, args) => {
+      if (tools[name]?.plugin !== tools[call.name]?.plugin)
+        return {
+          content: `界面只能调用本插件的工具，${name} 被拒绝`,
+          isError: true,
+        }
+      return store.callToolFromView(conv.id, turn.id, name, args)
+    },
+    sendMessage: (text) => store.reply(conv.id, text, model, effort),
+    requestDisplayMode: (mode) => setPanel(mode === 'inline' ? null : { turnId: turn.id, callId: call.id }),
+    setViewState: (state) => store.setViewState(conv.id, turn.id, call.id, state),
+  })
 
-  useLayoutEffect(() => scrollToBottom(false), [conv.id])
+  const scrollToBottom = (smooth = true) =>
+    scroller.current?.scrollTo({
+      top: scroller.current.scrollHeight,
+      behavior: smooth ? 'smooth' : 'auto',
+    })
+
+  useLayoutEffect(() => {
+    scrollToBottom(false)
+  }, [conv.id])
   useEffect(() => {
     if (atBottom) scrollToBottom(false)
     // Follow streamed output only while the reader is already at the bottom.
   }, [last?.assistantMessage, last?.toolCalls.length, last?.status, conv.turns.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="page chat">
-      <TopBar
-        right={
-          <button className={'pill-btn' + (showDetails ? ' on' : '')} onClick={() => setShowDetails(!showDetails)}>
-            任务详情
-          </button>
-        }
-      >
-        <TitleMenu store={store} conv={conv} />
-      </TopBar>
+    <div className={'chat-layout' + (panelCall ? ' with-panel' : '')}>
+      <div className="page chat">
+        <TopBar
+          right={
+            <button className={'pill-btn' + (showDetails ? ' on' : '')} onClick={() => setShowDetails(!showDetails)}>
+              任务详情
+            </button>
+          }
+        >
+          <TitleMenu store={store} conv={conv} />
+        </TopBar>
 
-      <div
-        className="chat-scroll"
-        ref={scroller}
-        onScroll={(e) => {
-          const el = e.currentTarget
-          setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80)
-        }}
-      >
-        <div className="thread">
-          {conv.turns.map((t) => (
-            <TurnView key={t.id} turn={t} store={store} conv={conv} showDetails={showDetails} />
-          ))}
+        <div
+          className="chat-scroll"
+          ref={scroller}
+          onScroll={(e) => {
+            const el = e.currentTarget
+            setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80)
+          }}
+        >
+          <div className="thread">
+            {conv.turns.map((t) => (
+              <TurnView key={t.id} turn={t} store={store} conv={conv} showDetails={showDetails} hostFor={hostFor} />
+            ))}
+          </div>
+        </div>
+
+        {!atBottom && (
+          <button className="to-bottom" aria-label="回到底部" onClick={() => scrollToBottom()}>
+            <IconArrowDown />
+          </button>
+        )}
+
+        <div className="chat-composer">
+          <Composer
+            placeholder="回复…"
+            model={model}
+            effort={effort}
+            onModel={setModel}
+            onEffort={setEffort}
+            busy={busy}
+            onStop={() => last && store.stop(conv.id, last.id)}
+            onSend={(text) => {
+              store.reply(conv.id, text, model, effort)
+              setAtBottom(true)
+            }}
+            footnote
+          />
         </div>
       </div>
-
-      {!atBottom && (
-        <button className="to-bottom" aria-label="回到底部" onClick={() => scrollToBottom()}>
-          <IconArrowDown />
-        </button>
+      {panelCall && panelTurn && (
+        <aside className="side-panel" aria-label="插件面板">
+          <div className="side-panel-head">
+            <strong className="ellipsis">{(panelCall.input as { title?: string }).title ?? panelCall.name}</strong>
+            <button className="icon-btn" aria-label="关闭面板" onClick={() => setPanel(null)}>
+              <IconX />
+            </button>
+          </div>
+          <div className="side-panel-body">
+            <PluginSlot call={panelCall} displayMode="panel" host={hostFor(panelTurn, panelCall)} />
+          </div>
+        </aside>
       )}
-
-      <div className="chat-composer">
-        <Composer
-          placeholder="回复…"
-          model={model}
-          effort={effort}
-          onModel={setModel}
-          onEffort={setEffort}
-          busy={busy}
-          onStop={() => last && store.stop(conv.id, last.id)}
-          onSend={(text) => {
-            store.reply(conv.id, text, model, effort)
-            setAtBottom(true)
-          }}
-          footnote
-        />
-      </div>
     </div>
+  )
+}
+
+/** Render selection: built-in React view → (later) MCP Apps iframe → generic card. */
+function PluginSlot({ call, displayMode, host }: { call: ToolCall; displayMode: DisplayMode; host: ViewHost }) {
+  const View = call.resourceUri ? views[call.resourceUri] : undefined
+  if (!View) {
+    return (
+      <div className="generic-card">
+        <IconTool width={15} height={15} /> <code>{call.name}</code>
+        <p className="muted small">此工具声明了界面 {call.resourceUri}，MCP Apps 界面将在后续版本中以沙箱 iframe 显示。</p>
+        {call.result && <p>{call.result.content}</p>}
+      </div>
+    )
+  }
+  return <View toolInput={call.input} toolResult={call.result} displayMode={displayMode} viewState={call.viewState} host={host} />
+}
+
+function CitationCard({ c, file }: { c: Turn['citations'][number]; file?: DriveFile }) {
+  const changed = !file || !findQuote(file.content, c.quote)
+  return (
+    <a
+      className="cite-card"
+      href={href({
+        name: 'files',
+        tab: file?.kind ?? 'source',
+        id: c.fileId,
+        quote: c.quote,
+      })}
+    >
+      <span className="cite-name">
+        <IconDoc width={14} height={14} /> <span className="ellipsis">{c.name}</span>
+        {changed && <span className="tag warn">{file ? '原文已变化' : '文件不存在'}</span>}
+      </span>
+      <span className="cite-quote">“{c.quote}”</span>
+    </a>
   )
 }
 
@@ -105,7 +184,11 @@ function TitleMenu({ store, conv }: { store: Store; conv: Conversation }) {
             <button
               onClick={() => {
                 const title = window.prompt('重命名会话', conv.title)
-                if (title?.trim()) store.patchConv(conv.id, (c) => ({ ...c, title: title.trim() }))
+                if (title?.trim())
+                  store.patchConv(conv.id, (c) => ({
+                    ...c,
+                    title: title.trim(),
+                  }))
                 close()
               }}
             >
@@ -125,7 +208,10 @@ function TitleMenu({ store, conv }: { store: Store; conv: Conversation }) {
                 key={p.id ?? 'none'}
                 className={conv.projectId === p.id ? 'checked' : ''}
                 onClick={() => {
-                  store.patchConv(conv.id, (c) => ({ ...c, projectId: p.id }))
+                  store.patchConv(conv.id, (c) => ({
+                    ...c,
+                    projectId: p.id,
+                  }))
                   close()
                 }}
               >
@@ -138,7 +224,10 @@ function TitleMenu({ store, conv }: { store: Store; conv: Conversation }) {
               <button
                 className="danger"
                 onClick={() => {
-                  store.setState((s) => ({ ...s, conversations: s.conversations.filter((c) => c.id !== conv.id) }))
+                  store.setState((s) => ({
+                    ...s,
+                    conversations: s.conversations.filter((c) => c.id !== conv.id),
+                  }))
                   navigate({ name: 'home' })
                 }}
               >
@@ -156,7 +245,19 @@ function TitleMenu({ store, conv }: { store: Store; conv: Conversation }) {
   )
 }
 
-function TurnView({ turn, store, conv, showDetails }: { turn: Turn; store: Store; conv: Conversation; showDetails: boolean }) {
+function TurnView({
+  turn,
+  store,
+  conv,
+  showDetails,
+  hostFor,
+}: {
+  turn: Turn
+  store: Store
+  conv: Conversation
+  showDetails: boolean
+  hostFor: (t: Turn, c: ToolCall) => ViewHost
+}) {
   const [processOpen, setProcessOpen] = useState(false)
   const active = turn.status === 'queued' || turn.status === 'running'
 
@@ -167,7 +268,7 @@ function TurnView({ turn, store, conv, showDetails }: { turn: Turn; store: Store
       {showDetails && (
         <div className="turn-details">
           <span>请求 {turn.requestId}</span>
-          <span>{turn.model}</span>
+          <span>{modelName(turn.model)}</span>
           <span>Effort {effortLabel[turn.effort]}</span>
           <span>{new Date(turn.createdAt).toLocaleString('zh-CN')}</span>
           <span className={'status-chip ' + turn.status}>{statusLabel[turn.status]}</span>
@@ -186,7 +287,13 @@ function TurnView({ turn, store, conv, showDetails }: { turn: Turn; store: Store
             {turn.toolCalls.length > 0 && (
               <>
                 <span className="muted">· {turn.toolCalls.length} 次工具调用</span>
-                <IconChevronRight width={14} height={14} style={{ transform: processOpen ? 'rotate(90deg)' : undefined }} />
+                <IconChevronRight
+                  width={14}
+                  height={14}
+                  style={{
+                    transform: processOpen ? 'rotate(90deg)' : undefined,
+                  }}
+                />
               </>
             )}
           </button>
@@ -200,15 +307,16 @@ function TurnView({ turn, store, conv, showDetails }: { turn: Turn; store: Store
                   <IconTool width={15} height={15} />
                   <code>{c.name}</code>
                   <span className={'status-chip ' + c.status}>{c.status === 'running' ? '执行中' : c.status === 'succeeded' ? '成功' : '失败'}</span>
+                  {c.origin === 'view' && <span className="tag">界面调用</span>}
                   {c.durationMs != null && c.status !== 'running' && <span className="muted small">{c.durationMs} ms</span>}
                 </div>
                 <div className="tool-body">
                   <div>
-                    <span className="muted">参数</span> <code>{c.args}</code>
+                    <span className="muted">参数</span> <code className="args">{JSON.stringify(c.input)}</code>
                   </div>
-                  {c.output && (
+                  {c.result && (
                     <div>
-                      <span className="muted">输出</span> {c.output}
+                      <span className="muted">结果</span> {c.result.content}
                     </div>
                   )}
                 </div>
@@ -219,22 +327,21 @@ function TurnView({ turn, store, conv, showDetails }: { turn: Turn; store: Store
 
         {turn.assistantMessage && <Markdown text={turn.assistantMessage + (turn.status === 'running' ? ' ▍' : '')} />}
 
+        {turn.toolCalls
+          .filter((c) => c.resourceUri && c.origin === 'model' && c.status === 'succeeded')
+          .map((c) => (
+            <div key={c.id} className="plugin-slot">
+              <PluginSlot call={c} displayMode="inline" host={hostFor(turn, c)} />
+            </div>
+          ))}
+
         {turn.citations.length > 0 && (
           <div className="citations">
             <span className="muted small">引用</span>
             {turn.citations.map((c, i) => (
-              <a key={i} className="cite" href={href({ name: 'docs', path: c.path, line: c.line })}>
-                {c.path}:{c.line}
-              </a>
+              <CitationCard key={i} c={c} file={store.state.files.find((f) => f.id === c.fileId)} />
             ))}
           </div>
-        )}
-
-        {turn.confirmation && (
-          <ConfirmCard
-            confirmation={turn.confirmation}
-            onChange={(confirmation) => store.patchTurn(conv.id, turn.id, (t) => ({ ...t, confirmation }))}
-          />
         )}
 
         {turn.status === 'failed' && (
@@ -285,76 +392,6 @@ function UserBubble({ text }: { text: string }) {
           </button>
         )}
       </div>
-    </div>
-  )
-}
-
-function ConfirmCard({ confirmation, onChange }: { confirmation: Confirmation; onChange: (c: Confirmation) => void }) {
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(confirmation.fields)
-  const { state } = confirmation
-
-  return (
-    <div className={'confirm-card ' + state}>
-      <div className="confirm-head">
-        <IconMail />
-        <strong>发送邮件前请确认</strong>
-        {state !== 'pending' && <span className={'status-chip ' + (state === 'confirmed' ? 'succeeded' : 'interrupted')}>{state === 'confirmed' ? '已确认（Mock 未发送）' : '已取消'}</span>}
-      </div>
-      <dl>
-        {(editing ? draft : confirmation.fields).map((f, i) => (
-          <div key={f.label} className="confirm-field">
-            <dt>{f.label}</dt>
-            <dd>
-              {editing ? (
-                <textarea
-                  value={f.value}
-                  rows={f.label === '正文' ? 6 : 1}
-                  onChange={(e) => setDraft(draft.map((d, j) => (j === i ? { ...d, value: e.target.value } : d)))}
-                />
-              ) : (
-                <span className="pre">{f.value}</span>
-              )}
-            </dd>
-          </div>
-        ))}
-      </dl>
-      <p className="confirm-consequence">
-        <IconAlert width={15} height={15} /> {confirmation.consequence}
-      </p>
-      {state === 'pending' && (
-        <div className="confirm-actions">
-          {editing ? (
-            <>
-              <button
-                className="btn primary"
-                onClick={() => {
-                  // Edited content invalidates any earlier confirmation: user must confirm again.
-                  onChange({ ...confirmation, fields: draft, state: 'pending' })
-                  setEditing(false)
-                }}
-              >
-                保存修改
-              </button>
-              <button className="btn" onClick={() => (setDraft(confirmation.fields), setEditing(false))}>
-                放弃修改
-              </button>
-            </>
-          ) : (
-            <>
-              <button className="btn primary" onClick={() => onChange({ ...confirmation, state: 'confirmed' })}>
-                <IconCheck width={15} height={15} /> 确认发送
-              </button>
-              <button className="btn" onClick={() => (setDraft(confirmation.fields), setEditing(true))}>
-                修改
-              </button>
-              <button className="btn ghost" onClick={() => onChange({ ...confirmation, state: 'cancelled' })}>
-                <IconX width={15} height={15} /> 取消
-              </button>
-            </>
-          )}
-        </div>
-      )}
     </div>
   )
 }

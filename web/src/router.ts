@@ -5,7 +5,7 @@ export type Route =
   | { name: 'chat'; id: string }
   | { name: 'projects' }
   | { name: 'project'; id: string }
-  | { name: 'docs'; path?: string; line?: number }
+  | { name: 'files'; tab?: 'source' | 'artifact'; id?: string; quote?: string }
   | { name: 'scheduled' }
   | { name: 'customize' }
 
@@ -17,10 +17,13 @@ function parse(hash: string): Route {
       return parts[1] ? { name: 'chat', id: parts[1] } : { name: 'home' }
     case 'projects':
       return parts[1] ? { name: 'project', id: parts[1] } : { name: 'projects' }
-    case 'docs': {
-      const line = Number(new URLSearchParams(query).get('line'))
-      return { name: 'docs', path: parts.slice(1).join('/') || undefined, line: line || undefined }
-    }
+    case 'files':
+      return {
+        name: 'files',
+        tab: parts[1] === 'artifact' ? 'artifact' : 'source',
+        id: parts[2],
+        quote: new URLSearchParams(query).get('q') ?? undefined,
+      }
     case 'scheduled':
       return { name: 'scheduled' }
     case 'customize':
@@ -40,8 +43,8 @@ export function href(route: Route): string {
       return '#/projects'
     case 'project':
       return `#/projects/${route.id}`
-    case 'docs':
-      return `#/docs${route.path ? '/' + route.path.split('/').map(encodeURIComponent).join('/') : ''}${route.line ? `?line=${route.line}` : ''}`
+    case 'files':
+      return `#/files/${route.tab ?? 'source'}${route.id ? '/' + encodeURIComponent(route.id) : ''}${route.quote ? '?q=' + encodeURIComponent(route.quote) : ''}`
     case 'scheduled':
       return '#/scheduled'
     case 'customize':

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ChatView } from './components/ChatView'
-import { CustomizeView, DocsView, HomeView, NotFound, ProjectView, ProjectsView, ScheduledView } from './components/Pages'
+import { CustomizeView, FilesView, HomeView, NotFound, ProjectView, ProjectsView, ScheduledView } from './components/Pages'
 import { Sidebar } from './components/Sidebar'
 import { SidebarContext } from './components/TopBar'
 import { navigate, useRoute } from './router'
@@ -33,8 +33,8 @@ export default function App() {
     case 'project':
       view = <ProjectView store={store} id={route.id} />
       break
-    case 'docs':
-      view = <DocsView store={store} path={route.path} line={route.line} />
+    case 'files':
+      view = <FilesView store={store} tab={route.tab} id={route.id} quote={route.quote} />
       break
     case 'scheduled':
       view = <ScheduledView store={store} />

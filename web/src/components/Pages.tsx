@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { href, navigate } from '../router'
 import type { Store } from '../store'
-import type { Effort, Project } from '../types'
+import type { DriveFile, Effort, Project } from '../types'
+import { findQuote } from '../util'
 import { Composer, Picker, effortLabel } from './Composer'
-import { IconDoc, IconPin, IconProject, IconTrash, Spark } from './Icons'
+import { IconAlert, IconDoc, IconPin, IconPlus, IconProject, IconTrash, Spark } from './Icons'
 import { TopBar } from './TopBar'
 
 function greeting() {
@@ -24,6 +25,7 @@ export function HomeView({ store }: { store: Store }) {
     <div className="page home">
       <TopBar />
       <div className="home-center">
+        {!store.state.account.driveConnected && <DriveBanner store={store} />}
         <h1 className="hero">
           <Spark /> {greeting()}
         </h1>
@@ -44,7 +46,7 @@ export function HomeView({ store }: { store: Store }) {
           }
         />
         <div className="suggestions">
-          {['读一下奖学金通知，整理时间点', '帮我写封邮件给王老师', '模拟额度失败'].map((s) => (
+          {['读一下奖学金通知，整理时间点', '把周报整理成组会汇报提纲', '帮我给王老师写封邮件', '模拟模型端点错误'].map((s) => (
             <button key={s} className="chip" onClick={() => navigate({ name: 'chat', id: store.startConversation(s, projectId || null, model, effort) })}>
               {s}
             </button>
@@ -137,51 +139,143 @@ export function ProjectView({ store, id }: { store: Store; id: string }) {
   )
 }
 
-export function DocsView({ store, path, line }: { store: Store; path?: string; line?: number }) {
-  const docs = store.state.docs
-  const doc = docs.find((d) => d.path === path)
-  const lineRef = useRef<HTMLDivElement>(null)
-  useEffect(() => lineRef.current?.scrollIntoView({ block: 'center' }), [path, line])
+function DriveBanner({ store }: { store: Store }) {
+  return (
+    <div className="banner warn drive-banner">
+      <IconAlert />
+      <div>
+        <strong>连接 Google Drive</strong>
+        <p>资料和 Artifacts 保存在你的 Drive 中（GenseBot/ 文件夹）。连接前，助手不能读取或保存文件。</p>
+      </div>
+      <button className="pill-btn" onClick={() => store.setDrive(true)}>
+        连接
+      </button>
+    </div>
+  )
+}
+
+const tabLabel = { source: '资料', artifact: 'Artifacts' } as const
+
+export function FilesView({ store, tab = 'source', id, quote }: { store: Store; tab?: DriveFile['kind']; id?: string; quote?: string }) {
+  const { files, account } = store.state
+  const list = files.filter((f) => f.kind === tab)
+  const file = files.find((f) => f.id === id)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const input = useRef<HTMLInputElement>(null)
 
   return (
     <div className="page">
       <TopBar>
-        <h2 className="page-title">文档</h2>
+        <h2 className="page-title">资料</h2>
       </TopBar>
-      <div className="page-body docs">
-        <ul className={'list doc-list' + (doc ? ' has-preview' : '')}>
-          {docs.map((d) => (
-            <li key={d.path} className={d.path === path ? 'active' : ''}>
-              <a href={href({ name: 'docs', path: d.path })}>
-                <IconDoc width={16} height={16} />
-                <span className="ellipsis">{d.path}</span>
-                <span className="muted small">{new Blob([d.content]).size} B · {relTime(d.updatedAt)}</span>
-              </a>
-            </li>
-          ))}
-          <li className="muted small hint">上传、编辑和删除将在接入后端后提供。</li>
-        </ul>
-        {doc && (
-          <div className="doc-preview">
-            <div className="doc-preview-head">
-              <a className="link-btn back" href={href({ name: 'docs' })}>
-                ← 全部文档
-              </a>
-              <code>{doc.path}</code>
-            </div>
-            <div className="doc-lines">
-              {doc.content.split('\n').map((text, i) => (
-                <div key={i} ref={i + 1 === line ? lineRef : undefined} className={'doc-line' + (i + 1 === line ? ' hl' : '')}>
-                  <span className="ln">{i + 1}</span>
-                  <span className="lt">{text || ' '}</span>
-                </div>
+      <div className="page-body files">
+        {!account.driveConnected && <DriveBanner store={store} />}
+        <div className={'files-split' + (file ? ' has-preview' : '')}>
+          <div className="files-list">
+            <div className="tabs" role="tablist">
+              {(['source', 'artifact'] as const).map((t) => (
+                <a key={t} role="tab" aria-selected={t === tab} className={'tab' + (t === tab ? ' on' : '')} href={href({ name: 'files', tab: t })}>
+                  {tabLabel[t]} <span className="muted small">{files.filter((f) => f.kind === t).length}</span>
+                </a>
               ))}
             </div>
+            {tab === 'source' ? (
+              <div className="files-actions">
+                <button className="btn primary" disabled={!account.driveConnected || busy} onClick={() => input.current?.click()}>
+                  <IconPlus width={15} height={15} /> 上传
+                </button>
+                <button
+                  className="btn"
+                  disabled={!account.driveConnected}
+                  title="真实版本会打开 Google Picker，只授权你选中的文件"
+                  onClick={() => setError('Mock：真实版本会在这里打开 Google Picker。选中的文件只授权给本应用（drive.file）。')}
+                >
+                  从 Drive 选择
+                </button>
+                <input
+                  ref={input}
+                  type="file"
+                  accept=".md,.txt,.csv,.json,text/*"
+                  hidden
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0]
+                    e.target.value = ''
+                    if (!f) return
+                    setBusy(true)
+                    setError(await store.upload(f))
+                    setBusy(false)
+                  }}
+                />
+              </div>
+            ) : (
+              <p className="muted small">助手生成的产物，保存在 GenseBot/Artifacts/。在会话中点“保存到 Drive”后出现在这里。</p>
+            )}
+            {error && <p className="notice">{error}</p>}
+            <ul className="list doc-list">
+              {list.length === 0 && <li className="muted small hint">还没有文件。</li>}
+              {list.map((f) => (
+                <li key={f.id} className={f.id === id ? 'active' : ''}>
+                  <a href={href({ name: 'files', tab, id: f.id })}>
+                    <IconDoc width={16} height={16} />
+                    <span className="ellipsis">{f.name}</span>
+                    <span className="muted small">
+                      {formatSize(new Blob([f.content]).size)} · {relTime(f.modifiedTime)}
+                    </span>
+                  </a>
+                </li>
+              ))}
+            </ul>
           </div>
-        )}
+          {file && <FilePreview file={file} quote={quote} />}
+        </div>
       </div>
     </div>
   )
+}
+
+function FilePreview({ file, quote }: { file: DriveFile; quote?: string }) {
+  const mark = useRef<HTMLElement>(null)
+  const range = quote ? findQuote(file.content, quote) : null
+  useEffect(() => {
+    mark.current?.scrollIntoView({ block: 'center' })
+  }, [file.id, quote])
+
+  return (
+    <div className="doc-preview">
+      <div className="doc-preview-head">
+        <a className="link-btn back" href={href({ name: 'files', tab: file.kind })}>
+          ← 全部{tabLabel[file.kind]}
+        </a>
+        <code className="ellipsis">GenseBot/{file.kind === 'source' ? '资料' : 'Artifacts'}/{file.name}</code>
+      </div>
+      {quote && !range && (
+        <div className="banner warn quote-missing">
+          <IconAlert />
+          <div>
+            <strong>原文已变化</strong>
+            <p>文件中找不到当时引用的内容。引用时保存的摘录：</p>
+            <blockquote>{quote}</blockquote>
+          </div>
+        </div>
+      )}
+      <pre className="doc-text">
+        {range ? (
+          <>
+            {file.content.slice(0, range[0])}
+            <mark ref={mark}>{file.content.slice(range[0], range[1])}</mark>
+            {file.content.slice(range[1])}
+          </>
+        ) : (
+          file.content
+        )}
+      </pre>
+    </div>
+  )
+}
+
+function formatSize(n: number) {
+  return n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`
 }
 
 export function ScheduledView({ store }: { store: Store }) {
@@ -216,7 +310,7 @@ export function ScheduledView({ store }: { store: Store }) {
 }
 
 export function CustomizeView({ store }: { store: Store }) {
-  const { tools, memories, prefs } = store.state
+  const { plugins, memories, prefs, account } = store.state
   const [memo, setMemo] = useState('')
   return (
     <div className="page">
@@ -224,13 +318,29 @@ export function CustomizeView({ store }: { store: Store }) {
         <h2 className="page-title">定制</h2>
       </TopBar>
       <div className="page-body">
-        <h3 className="section-title">工具</h3>
+        <h3 className="section-title">Google 账号</h3>
         <ul className="list rows">
-          {tools.map((t) => (
+          <li className="row">
+            <div className="row-main">
+              <strong>{account.email}</strong>
+              <span className="muted small">
+                {account.driveConnected ? 'Google Drive 已连接 · 只能访问本应用创建或你选择的文件（drive.file）' : 'Google Drive 未连接'}
+              </span>
+            </div>
+            <button className="btn" onClick={() => store.setDrive(!account.driveConnected)}>
+              {account.driveConnected ? '断开' : '连接'}
+            </button>
+          </li>
+        </ul>
+
+        <h3 className="section-title">插件</h3>
+        <p className="muted small">每个插件提供一组工具，也可以提供自己的界面。关闭后，助手不能调用它的工具。</p>
+        <ul className="list rows">
+          {plugins.map((t) => (
             <li key={t.id} className="row">
               <div className="row-main">
                 <strong>
-                  {t.name} {t.sideEffect && <span className="tag warn">外部写操作</span>} {!t.available && <span className="tag">未部署</span>}
+                  {t.name} {t.sideEffect && <span className="tag warn">外部写操作</span>} {!t.available && <span className="tag">后续</span>}
                 </strong>
                 <span className="muted small">{t.description}</span>
               </div>
@@ -238,7 +348,7 @@ export function CustomizeView({ store }: { store: Store }) {
                 checked={t.enabled}
                 disabled={!t.available}
                 label={t.name}
-                onChange={(v) => store.setState((s) => ({ ...s, tools: s.tools.map((x) => (x.id === t.id ? { ...x, enabled: v } : x)) }))}
+                onChange={(v) => store.setState((s) => ({ ...s, plugins: s.plugins.map((x) => (x.id === t.id ? { ...x, enabled: v } : x)) }))}
               />
             </li>
           ))}

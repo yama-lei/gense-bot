@@ -3,6 +3,7 @@
 export type TurnStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'interrupted'
 export type ToolStatus = 'running' | 'succeeded' | 'failed'
 export type Effort = 'low' | 'medium' | 'high'
+export type Provider = 'anthropic' | 'openai'
 
 export interface Project {
   id: string
@@ -11,25 +12,33 @@ export interface Project {
   pinned: boolean
 }
 
+/** A source excerpt; resolved against the file's current content when opened. */
 export interface Citation {
-  path: string
-  line: number
+  fileId: string
+  name: string
+  quote: string
+}
+
+/** Mirrors MCP CallToolResult: `content` is for the model, `structuredContent` for views. */
+export interface ToolResult {
+  content: string
+  structuredContent?: unknown
+  isError?: boolean
 }
 
 export interface ToolCall {
   id: string
   name: string
   status: ToolStatus
-  args: string
-  output?: string
+  input: unknown
+  result?: ToolResult
+  /** `_meta.ui.resourceUri` of the tool, when it renders a view. */
+  resourceUri?: string
+  /** Calls made by a view through host.callTool rather than by the model. */
+  origin: 'model' | 'view'
+  /** Persisted view state (MCP Apps has no standard field; mirrors ChatGPT's widgetState). */
+  viewState?: unknown
   durationMs?: number
-}
-
-export interface Confirmation {
-  kind: 'email'
-  fields: { label: string; value: string }[]
-  consequence: string
-  state: 'pending' | 'confirmed' | 'cancelled'
 }
 
 export interface Turn {
@@ -41,7 +50,6 @@ export interface Turn {
   assistantMessage: string
   toolCalls: ToolCall[]
   citations: Citation[]
-  confirmation?: Confirmation
   error?: string
   model: string
   effort: Effort
@@ -57,10 +65,14 @@ export interface Conversation {
   turns: Turn[]
 }
 
-export interface Doc {
-  path: string
+/** A Drive file under GenseBot/资料 (`source`) or GenseBot/Artifacts (`artifact`). */
+export interface DriveFile {
+  id: string
+  name: string
+  kind: 'source' | 'artifact'
+  mimeType: string
   content: string
-  updatedAt: number
+  modifiedTime: number
 }
 
 export interface Schedule {
@@ -72,7 +84,8 @@ export interface Schedule {
   lastResult: string
 }
 
-export interface Tool {
+/** A plugin as listed on the customize page. */
+export interface PluginInfo {
   id: string
   name: string
   description: string
@@ -86,18 +99,38 @@ export interface Memory {
   text: string
 }
 
+/** A model served by one of the endpoints; capabilities come from models.dev (null when unknown). */
+export interface ModelOption {
+  provider: Provider
+  id: string
+  name: string
+  capabilities: {
+    toolCall: boolean
+    efforts: Effort[]
+    context: number
+  } | null
+}
+
 export interface Preferences {
   language: string
   defaultEffort: Effort
+  /** `provider:id` of the model last chosen. */
   model: string
+}
+
+export interface Account {
+  name: string
+  email: string
+  driveConnected: boolean
 }
 
 export interface AppState {
   projects: Project[]
   conversations: Conversation[]
-  docs: Doc[]
+  files: DriveFile[]
   schedules: Schedule[]
-  tools: Tool[]
+  plugins: PluginInfo[]
   memories: Memory[]
   prefs: Preferences
+  account: Account
 }

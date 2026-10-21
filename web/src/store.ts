@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { planReply, uid } from './mock/engine'
+import { planReply } from './mock/engine'
 import { seed } from './mock/seed'
-import type { AppState, Conversation, Effort, Turn } from './types'
+import { tools } from './plugins'
+import type { ToolContext } from './plugins/types'
+import type { AppState, Conversation, DriveFile, Effort, ToolCall, ToolResult, Turn } from './types'
+import { uid } from './util'
 
-const KEY = 'gensebot-mock-v1'
+const KEY = 'gensebot-mock-v2'
+/** Upload limit from the spec's circuit-breaker table. */
+export const MAX_UPLOAD = 2 * 1024 * 1024
 
 function load(): AppState {
   try {
@@ -44,9 +49,21 @@ export function useStore() {
     [patchConv],
   )
 
+  const addFile = useCallback((file: DriveFile) => setState((s) => ({ ...s, files: [file, ...s.files] })), [])
+
+  const exec = useCallback(
+    (name: string, input: unknown): ToolResult => {
+      const tool = tools[name]
+      if (!tool) return { content: `工具 ${name} 未注册`, isError: true }
+      const ctx: ToolContext = { files: stateRef.current.files, addFile }
+      return tool.execute(input as never, ctx)
+    },
+    [addFile],
+  )
+
   const run = useCallback(
     (convId: string, turn: Turn) => {
-      const script = planReply(turn.userMessage, stateRef.current.docs)
+      const script = planReply(turn.userMessage, stateRef.current)
       const ids: number[] = []
       timers.current.set(turn.id, ids)
       let t = 0
@@ -55,13 +72,17 @@ export function useStore() {
         ids.push(window.setTimeout(fn, t))
       }
       const patch = (fn: (t: Turn) => Turn) => patchTurn(convId, turn.id, fn)
+      const [gap, tail] = script.fast ? [40, 60] : [300, 500]
 
       at(700, () => patch((x) => ({ ...x, status: 'running', summary: script.summary })))
-      for (const tool of script.tools) {
-        at(300, () => patch((x) => ({ ...x, toolCalls: [...x.toolCalls, { ...tool, status: 'running', output: undefined }] })))
-        at((tool.durationMs ?? 200) + 500, () =>
-          patch((x) => ({ ...x, toolCalls: x.toolCalls.map((c) => (c.id === tool.id ? { ...tool, status: 'succeeded' } : c)) })),
-        )
+      for (const step of script.steps) {
+        const call: ToolCall = { id: uid(), name: step.name, status: 'running', input: step.input, resourceUri: tools[step.name]?.resourceUri, origin: 'model' }
+        at(gap, () => patch((x) => ({ ...x, toolCalls: [...x.toolCalls, call] })))
+        at(step.durationMs + tail, () => {
+          const result = exec(step.name, step.input)
+          const done: ToolCall = { ...call, status: result.isError ? 'failed' : 'succeeded', result, durationMs: step.durationMs }
+          patch((x) => ({ ...x, toolCalls: x.toolCalls.map((c) => (c.id === call.id ? done : c)) }))
+        })
       }
       if (script.error) {
         at(900, () => patch((x) => ({ ...x, status: 'failed', error: script.error })))
@@ -69,13 +90,11 @@ export function useStore() {
         const chunks = script.text.match(/[\s\S]{1,4}/g) ?? []
         at(300, () => {})
         chunks.forEach((chunk) => at(18, () => patch((x) => ({ ...x, assistantMessage: x.assistantMessage + chunk }))))
-        at(200, () =>
-          patch((x) => ({ ...x, status: 'succeeded', citations: script.citations, confirmation: script.confirmation })),
-        )
+        at(200, () => patch((x) => ({ ...x, status: 'succeeded', citations: script.citations })))
       }
       at(0, () => timers.current.delete(turn.id))
     },
-    [patchTurn],
+    [patchTurn, exec],
   )
 
   // Accepted work survives a page reload (spec S4): restart scripted turns that were in flight.
@@ -93,18 +112,22 @@ export function useStore() {
     return () => all.forEach((ids) => ids.forEach(clearTimeout))
   }, [patchTurn, run])
 
-  const newTurn = (message: string, model: string, effort: Effort): Turn => ({
-    id: uid(),
-    requestId: uid(),
-    status: 'queued',
-    userMessage: message,
-    assistantMessage: '',
-    toolCalls: [],
-    citations: [],
-    model,
-    effort,
-    createdAt: Date.now(),
-  })
+  const newTurn = (message: string, model: string, effort: Effort): Turn => {
+    // The last model chosen becomes the default for new conversations.
+    setState((s) => (s.prefs.model === model ? s : { ...s, prefs: { ...s.prefs, model } }))
+    return {
+      id: uid(),
+      requestId: uid(),
+      status: 'queued',
+      userMessage: message,
+      assistantMessage: '',
+      toolCalls: [],
+      citations: [],
+      model,
+      effort,
+      createdAt: Date.now(),
+    }
+  }
 
   const startConversation = (message: string, projectId: string | null, model: string, effort: Effort) => {
     const turn = newTurn(message, model, effort)
@@ -129,13 +152,44 @@ export function useStore() {
 
   const retry = (convId: string, turn: Turn) => reply(convId, turn.userMessage, turn.model, turn.effort)
 
+  /** `tools/call` from a view: recorded on the turn so the process list shows it. */
+  const callToolFromView = async (convId: string, turnId: string, name: string, input: unknown): Promise<ToolResult> => {
+    const start = Date.now()
+    await new Promise((r) => setTimeout(r, 500))
+    const result = exec(name, input)
+    const call: ToolCall = {
+      id: uid(),
+      name,
+      status: result.isError ? 'failed' : 'succeeded',
+      input,
+      result,
+      origin: 'view',
+      durationMs: Date.now() - start,
+    }
+    patchTurn(convId, turnId, (t) => ({ ...t, toolCalls: [...t.toolCalls, call] }))
+    return result
+  }
+
+  const setViewState = (convId: string, turnId: string, callId: string, viewState: unknown) =>
+    patchTurn(convId, turnId, (t) => ({ ...t, toolCalls: t.toolCalls.map((c) => (c.id === callId ? { ...c, viewState } : c)) }))
+
+  /** Returns an error message, or null when the file was added. */
+  const upload = async (file: File): Promise<string | null> => {
+    if (file.size > MAX_UPLOAD) return `「${file.name}」超过 2 MB 上限，未上传。`
+    if (!/^text\/|json|xml/.test(file.type) && !/\.(md|txt|csv|json)$/i.test(file.name)) return `「${file.name}」不是文本文件。首版只支持文本资料。`
+    addFile({ id: 'f-' + uid(), name: file.name, kind: 'source', mimeType: file.type || 'text/plain', content: await file.text(), modifiedTime: Date.now() })
+    return null
+  }
+
+  const setDrive = (driveConnected: boolean) => setState((s) => ({ ...s, account: { ...s.account, driveConnected } }))
+
   const stop = (convId: string, turnId: string) => {
     timers.current.get(turnId)?.forEach(clearTimeout)
     timers.current.delete(turnId)
     patchTurn(convId, turnId, (t) => ({
       ...t,
       status: 'interrupted',
-      toolCalls: t.toolCalls.map((c) => (c.status === 'running' ? { ...c, status: 'failed', output: '已被你停止' } : c)),
+      toolCalls: t.toolCalls.map((c) => (c.status === 'running' ? { ...c, status: 'failed', result: { content: '已被你停止', isError: true } } : c)),
     }))
   }
 
@@ -145,5 +199,5 @@ export function useStore() {
     setState(structuredClone(seed))
   }
 
-  return { state, setState, patchConv, patchTurn, startConversation, reply, retry, stop, reset }
+  return { state, setState, patchConv, patchTurn, startConversation, reply, retry, stop, reset, addFile, callToolFromView, setViewState, upload, setDrive }
 }

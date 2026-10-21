@@ -155,6 +155,8 @@ plugins/<id>/
 | `host.callTool(name, args)` | `tools/call` | 界面直接调用本插件的工具，例如“重新生成” |
 | `host.sendMessage(text)` | `ui/message` | 以用户身份发一条后续消息 |
 | `displayMode` | `inline` / `fullscreen` | 另加 `panel`（右侧面板，手机上全屏），给 Artifact 使用 |
+| `host.requestDisplayMode(mode)` | `ui/request-display-mode` | 界面请求切换显示方式，例如卡片请求打开面板 |
+| `viewState` / `host.setViewState(state)` | 无标准字段（对应 ChatGPT 的 `widgetState`） | 保存界面状态（如“已保存到 Drive”），重开页面后恢复；随该工具调用一起存储 |
 
 渲染一个工具调用时，按以下顺序选择：
 
@@ -173,7 +175,7 @@ plugins/<id>/
 | 插件 | 工具 | 界面 |
 | --- | --- | --- |
 | files | `files.list`、`files.search`、`files.read` | 无（通用卡片）；引用卡片属于消息本身，不归插件 |
-| artifact | `artifact.create`（显示工具）、`artifact.save` | `ui://artifact/card`（消息中的卡片）、`ui://artifact/panel`（面板预览，提供保存到 Drive） |
+| artifact | `artifact.create`（显示工具）、`artifact.save` | `ui://artifact/view`：`inline` 时是消息中的卡片，`panel` 时是面板预览，提供保存到 Drive。同一个资源按显示方式切换，与 MCP Apps 一致 |
 | email（后续） | `email.search`、`email.read`、`email.draft`（显示工具）、`email.saveDraft` | `ui://email/draft`：草稿预览，可修改，点“存入草稿箱”时调用 `email.saveDraft` |
 | mcp（后续） | 远程 MCP 服务器的工具 | 按上面第 2 条处理 |
 

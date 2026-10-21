@@ -26,7 +26,7 @@ export function Sidebar({ state, route, open, onClose, onReset }: Props) {
 
   const nav = [
     { label: '项目', icon: <IconProject />, to: href({ name: 'projects' }), active: route.name === 'projects' || route.name === 'project' },
-    { label: '文档', icon: <IconDoc />, to: href({ name: 'docs' }), active: route.name === 'docs' },
+    { label: '资料', icon: <IconDoc />, to: href({ name: 'files' }), active: route.name === 'files' },
     { label: '定时任务', icon: <IconClock />, to: href({ name: 'scheduled' }), active: route.name === 'scheduled' },
     { label: '定制', icon: <IconSliders />, to: href({ name: 'customize' }), active: route.name === 'customize' },
   ]
@@ -116,9 +116,11 @@ export function Sidebar({ state, route, open, onClose, onReset }: Props) {
         </div>
 
         <div className="sb-foot">
-          <span className="avatar">R</span>
-          <span className="ellipsis">Rayama</span>
-          <span className="muted small">· 免费额度 62%</span>
+          <span className="avatar">{state.account.name[0]}</span>
+          <span className="ellipsis">{state.account.name}</span>
+          <a className={'muted small drive-status' + (state.account.driveConnected ? '' : ' off')} href={href({ name: 'customize' })}>
+            · Drive {state.account.driveConnected ? '已连接' : '未连接'}
+          </a>
         </div>
       </aside>
     </>

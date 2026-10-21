@@ -1,4 +1,4 @@
-import type { AppState } from '../types'
+import type { AppState, ModelOption, ToolCall } from '../types'
 
 const now = Date.now()
 const min = 60_000
@@ -53,6 +53,43 @@ const weekly = `# 周报 2026-10-13
 - 准备组会汇报
 `
 
+const draft = {
+  to: 'grad-office@example.edu.cn',
+  subject: '咨询：学业奖学金科研成果证明材料',
+  body: '王老师您好：\n\n我是2025级硕士生 Rayama。想咨询一下，Workshop 录用的论文是否可以作为本次学业奖学金评定的科研成果证明？如可以，提交录用通知是否足够？\n\n谢谢老师！\nRayama',
+}
+
+const outline = {
+  title: '组会汇报提纲',
+  type: 'markdown' as const,
+  content: `# 组会汇报提纲（10-13 周）
+
+## 已完成
+
+1. RoPE 实现的单元测试
+2. 精读 FlashAttention-3 第 3 节
+
+## 下周计划
+
+- 跑通 8 卡 all-reduce 基准
+- 准备组会汇报
+
+## 待讨论
+
+- all-reduce 基准用哪种拓扑
+`,
+}
+
+const read = (id: string, fileId: string, name: string, text: string, durationMs: number): ToolCall => ({
+  id,
+  name: 'files.read',
+  status: 'succeeded',
+  input: { fileId },
+  result: { content: `读取 ${name}，${text.length} 字`, structuredContent: { id: fileId, name, text } },
+  origin: 'model',
+  durationMs,
+})
+
 export const seed: AppState = {
   projects: [
     { id: 'p-assistant', name: '个人助手', description: '日常事务、通知整理和邮件草稿。', pinned: true },
@@ -79,8 +116,8 @@ export const seed: AppState = {
 
 | 事项 | 时间 | 来源 |
 | --- | --- | --- |
-| 报名截止 | 2026-10-30 17:00 | 通知第 6 行 |
-| 答辩活动 | 2026-11-06 14:00，仙Ⅱ-302 | 通知第 7 行 |
+| 报名截止 | 2026-10-30 17:00 | 通知第 2 条 |
+| 答辩活动 | 2026-11-06 14:00，仙Ⅱ-302 | 通知第 3 条 |
 
 **需要准备的材料**
 
@@ -88,17 +125,17 @@ export const seed: AppState = {
 2. 从教务系统导出成绩单
 3. 科研成果证明：你的 Workshop 论文 *Efficient KV Cache Offloading* 可以作为成果，需要论文首页或录用通知
 
-你符合申请对象（2025级硕士）。要我起草一封给王老师的确认邮件吗？`,
+你符合申请对象（2025级硕士）。要我起草一封给王老师的咨询邮件吗？`,
           toolCalls: [
-            { id: 'tc1', name: 'workspace.read', status: 'succeeded', args: '{ "path": "inbox/奖学金通知.md" }', output: '读取 16 行', durationMs: 42 },
-            { id: 'tc2', name: 'workspace.read', status: 'succeeded', args: '{ "path": "profile.md" }', output: '读取 17 行', durationMs: 31 },
+            read('tc1', 'f-notice', '奖学金通知.md', notice, 42),
+            read('tc2', 'f-profile', '个人资料.md', profile, 31),
           ],
           citations: [
-            { path: 'inbox/奖学金通知.md', line: 6 },
-            { path: 'inbox/奖学金通知.md', line: 7 },
-            { path: 'profile.md', line: 10 },
+            { fileId: 'f-notice', name: '奖学金通知.md', quote: '报名截止时间：2026年10月30日 17:00。' },
+            { fileId: 'f-notice', name: '奖学金通知.md', quote: '答辩活动时间：2026年11月6日 14:00，地点仙Ⅱ-302。' },
+            { fileId: 'f-profile', name: '个人资料.md', quote: '2026-09 论文 "Efficient KV Cache Offloading" 被 Workshop 录用' },
           ],
-          model: 'Workers AI · Llama 4 Scout',
+          model: 'anthropic:claude-haiku-5-5',
           effort: 'medium',
           createdAt: now - 25 * min,
         },
@@ -107,23 +144,22 @@ export const seed: AppState = {
           requestId: 'r-s2',
           status: 'succeeded',
           userMessage: '好的，起草一封邮件问王老师成果证明是否接受 Workshop 论文。',
-          summary: '根据通知联系人起草邮件，等待你确认',
-          assistantMessage: '草稿已经准备好。确认前请核对收件人和正文；修改后需要重新确认。',
+          summary: '根据通知联系人起草邮件，等待你检查',
+          assistantMessage: '草稿已经准备好，请核对收件人和正文。点“存入草稿箱”后，由你在邮箱 App 中发送。',
           toolCalls: [
-            { id: 'tc3', name: 'email.draft', status: 'succeeded', args: '{ "to": "grad-office@example.edu.cn" }', output: '已生成草稿（未发送）', durationMs: 880 },
+            {
+              id: 'tc3',
+              name: 'email.draft',
+              status: 'succeeded',
+              input: draft,
+              result: { content: '已生成给 grad-office@example.edu.cn 的草稿，等待用户检查', structuredContent: draft },
+              resourceUri: 'ui://email/draft',
+              origin: 'model',
+              durationMs: 880,
+            },
           ],
-          citations: [{ path: 'inbox/奖学金通知.md', line: 12 }],
-          confirmation: {
-            kind: 'email',
-            fields: [
-              { label: '收件人', value: 'grad-office@example.edu.cn（王老师）' },
-              { label: '主题', value: '咨询：学业奖学金科研成果证明材料' },
-              { label: '正文', value: '王老师您好：\n\n我是2025级硕士生 Rayama。想咨询一下，Workshop 录用的论文是否可以作为本次学业奖学金评定的科研成果证明？如可以，提交录用通知是否足够？\n\n谢谢老师！\nRayama' },
-            ],
-            consequence: '确认后将以你的邮箱发送这封邮件，发送后无法撤回。（Mock：不会真正发送）',
-            state: 'pending',
-          },
-          model: 'Workers AI · Llama 4 Scout',
+          citations: [{ fileId: 'f-notice', name: '奖学金通知.md', quote: '联系人：研究生秘书 王老师，grad-office@example.edu.cn' }],
+          model: 'anthropic:claude-haiku-5-5',
           effort: 'medium',
           createdAt: now - 21 * min,
         },
@@ -175,7 +211,7 @@ torch.cat([half_cos, half_cos], dim=-1)   # shape (5, 4)
 \`\`\``,
           toolCalls: [],
           citations: [],
-          model: 'Workers AI · Llama 4 Scout',
+          model: 'anthropic:claude-haiku-5-5',
           effort: 'medium',
           createdAt: now - 3 * hour,
         },
@@ -191,18 +227,54 @@ torch.cat([half_cos, half_cos], dim=-1)   # shape (5, 4)
         {
           id: 't-w1',
           requestId: 'r-w1',
-          status: 'failed',
-          userMessage: '根据 notes/周报-2026-10-13.md 写一份组会汇报提纲。',
-          summary: '读取周报',
-          assistantMessage: '',
+          status: 'succeeded',
+          userMessage: '根据周报-2026-10-13 写一份组会汇报提纲。',
+          summary: '读取周报，生成提纲',
+          assistantMessage: '我读了 **周报-2026-10-13.md**，整理成了提纲，并按你的要求保存到了 `GenseBot/Artifacts/`。原文没有改动。',
           toolCalls: [
-            { id: 'tc4', name: 'workspace.read', status: 'succeeded', args: '{ "path": "notes/周报-2026-10-13.md" }', output: '读取 12 行', durationMs: 28 },
+            read('tc4', 'f-weekly', '周报-2026-10-13.md', weekly, 28),
+            {
+              id: 'tc4b',
+              name: 'artifact.create',
+              status: 'succeeded',
+              input: outline,
+              result: { content: '已创建 Artifact「组会汇报提纲」（未保存）', structuredContent: outline },
+              resourceUri: 'ui://artifact/view',
+              origin: 'model',
+              viewState: { saved: { fileId: 'f-outline', name: '组会汇报提纲.md' } },
+              durationMs: 310,
+            },
+            {
+              id: 'tc4c',
+              name: 'artifact.save',
+              status: 'succeeded',
+              input: outline,
+              result: { content: '已保存到 GenseBot/Artifacts/组会汇报提纲.md', structuredContent: { fileId: 'f-outline', name: '组会汇报提纲.md' } },
+              origin: 'view',
+              durationMs: 520,
+            },
           ],
-          citations: [],
-          error: '今日免费模型额度已用完，任务已停止，没有自动切换到付费模型。额度通常在 UTC 0 点恢复，届时可以重试。',
-          model: 'Workers AI · Llama 4 Scout',
+          citations: [
+            { fileId: 'f-weekly', name: '周报-2026-10-13.md', quote: '完成 RoPE 实现的单元测试' },
+            { fileId: 'f-weekly', name: '周报-2026-10-13.md', quote: '跑通 8 卡 all-reduce 基准' },
+          ],
+          model: 'anthropic:claude-haiku-5-5',
           effort: 'high',
           createdAt: now - day,
+        },
+        {
+          id: 't-w2',
+          requestId: 'r-w2',
+          status: 'failed',
+          userMessage: '再加一页实验进度的表格。',
+          summary: '调用模型',
+          assistantMessage: '',
+          toolCalls: [],
+          citations: [],
+          error: '模型端点返回 529 Overloaded，已重试 3 次后停止。可以稍后重试，或在下方切换到另一个模型。',
+          model: 'openai:gpt-6.1-sol',
+          effort: 'high',
+          createdAt: now - day + 5 * min,
         },
       ],
     },
@@ -221,39 +293,49 @@ torch.cat([half_cos, half_cos], dim=-1)   # shape (5, 4)
           summary: '搜索论文',
           assistantMessage: '我先从你的资料里确认了导师信息，正在检索',
           toolCalls: [
-            { id: 'tc5', name: 'workspace.read', status: 'succeeded', args: '{ "path": "profile.md" }', output: '读取 17 行', durationMs: 30 },
-            { id: 'tc6', name: 'web.search', status: 'failed', args: '{ "query": "陈 大模型推理 2024..2026" }', output: '已被你停止', durationMs: 4100 },
+            read('tc5', 'f-profile', '个人资料.md', profile, 30),
+            { id: 'tc6', name: 'web.search', status: 'failed', input: { query: '陈 大模型推理 2024..2026' }, result: { content: '已被你停止', isError: true }, origin: 'model', durationMs: 4100 },
           ],
-          citations: [{ path: 'profile.md', line: 6 }],
-          model: 'Workers AI · Llama 4 Scout',
+          citations: [{ fileId: 'f-profile', name: '个人资料.md', quote: '导师：陈老师' }],
+          model: 'anthropic:claude-haiku-5-5',
           effort: 'high',
           createdAt: now - 2 * day,
         },
       ],
     },
   ],
-  docs: [
-    { path: 'inbox/奖学金通知.md', content: notice, updatedAt: now - 2 * day },
-    { path: 'profile.md', content: profile, updatedAt: now - 7 * day },
-    { path: 'notes/周报-2026-10-13.md', content: weekly, updatedAt: now - 8 * day },
+  files: [
+    { id: 'f-notice', name: '奖学金通知.md', kind: 'source', mimeType: 'text/markdown', content: notice, modifiedTime: now - 2 * day },
+    { id: 'f-profile', name: '个人资料.md', kind: 'source', mimeType: 'text/markdown', content: profile, modifiedTime: now - 7 * day },
+    { id: 'f-weekly', name: '周报-2026-10-13.md', kind: 'source', mimeType: 'text/markdown', content: weekly, modifiedTime: now - 8 * day },
+    { id: 'f-outline', name: '组会汇报提纲.md', kind: 'artifact', mimeType: 'text/markdown', content: outline.content, modifiedTime: now - day },
   ],
   schedules: [
     { id: 's1', name: '每日邮件摘要', rule: '每天 08:00', nextRunAt: now + 9 * hour, enabled: true, lastResult: '昨天 08:00 · 3 封新邮件，已生成摘要' },
     { id: 's2', name: '奖学金报名截止提醒', rule: '2026-10-29 20:00 一次', nextRunAt: now + 8 * day, enabled: true, lastResult: '尚未执行' },
     { id: 's3', name: '周报草稿', rule: '每周五 18:00', nextRunAt: now + 3 * day, enabled: false, lastResult: '上周五 · 失败：免费额度耗尽' },
   ],
-  tools: [
-    { id: 'workspace', name: '工作区文件', description: '读取、列出、保存小型文本文档。', sideEffect: false, enabled: true, available: true },
-    { id: 'web.search', name: '网页搜索', description: '通过免费搜索接口检索公开网页。', sideEffect: false, enabled: true, available: true },
-    { id: 'email', name: '邮件', description: '读取 smail 邮件并起草回复。发送前必须确认。', sideEffect: true, enabled: false, available: false },
-    { id: 'ehall', name: 'ehall 办事大厅', description: '查询信息、填写表单。提交前必须确认。', sideEffect: true, enabled: false, available: false },
+  plugins: [
+    { id: 'files', name: '资料', description: '列出、搜索、读取 Drive 中的资料和 Artifacts。只读。', sideEffect: false, enabled: true, available: true },
+    { id: 'artifact', name: 'Artifact', description: '在会话中展示产物，并另存到 GenseBot/Artifacts/。不会覆盖已有文件。', sideEffect: false, enabled: true, available: true },
+    { id: 'email', name: '邮件', description: '起草 smail 邮件并写入草稿箱，由你在邮箱 App 中发送。', sideEffect: true, enabled: true, available: true },
+    { id: 'web.search', name: '网页搜索', description: '检索公开网页。', sideEffect: false, enabled: false, available: false },
+    { id: 'mcp', name: 'MCP 服务器', description: '接入外部 MCP 工具及其界面（MCP Apps）。已预留接口。', sideEffect: true, enabled: false, available: false },
   ],
   memories: [
     { id: 'm1', text: '不要把报名截止时间当成活动开始时间。' },
     { id: 'm2', text: '邮件署名使用中文全名。' },
     { id: 'm3', text: '回答技术问题时附上可运行的最小代码。' },
   ],
-  prefs: { language: '中文', defaultEffort: 'medium', model: 'Workers AI · Llama 4 Scout' },
+  prefs: { language: '中文', defaultEffort: 'medium', model: 'anthropic:claude-haiku-5-5' },
+  account: { name: 'Rayama', email: 'rayama@gmail.com', driveConnected: true },
 }
 
-export const models = ['Workers AI · Llama 4 Scout', 'Workers AI · Qwen3 30B', 'Workers AI · Gemma 3 12B']
+/** Stand-in for GET /v1/models on both endpoints, joined with models.dev capabilities. */
+export const models: ModelOption[] = [
+  { provider: 'anthropic', id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5', capabilities: { toolCall: true, efforts: ['low', 'medium', 'high'], context: 1_000_000 } },
+  { provider: 'anthropic', id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', capabilities: { toolCall: true, efforts: ['low', 'medium', 'high'], context: 1_000_000 } },
+  { provider: 'openai', id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol', capabilities: { toolCall: true, efforts: ['low', 'medium', 'high'], context: 400_000 } },
+  { provider: 'openai', id: 'gpt-6.1-mini', name: 'GPT-6.1 Mini', capabilities: { toolCall: true, efforts: [], context: 400_000 } },
+  { provider: 'openai', id: 'my-proxy-model', name: 'my-proxy-model', capabilities: null },
+]

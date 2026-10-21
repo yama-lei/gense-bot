@@ -10,6 +10,7 @@
 4. [Cloudflare 托管决策](adr/0001-cloudflare-free-tier.md) 与 [Think + Google Drive 决策](adr/0002-think-google-drive.md)：已确认的方向及取舍。
 5. [免费额度与依赖核查](research/cloudflare-free-tier.md)：Workers / DO 额度依据（Pi 相关部分已过时）。
 6. [网页界面 Spec](specs/web-ui.md)：页面、组件、移动端行为和交付阶段；M0 Mock 前端在 [`web/`](../web/)。
+7. [路线图 2](plans/roadmap-2.md) 与 [ADR-0003](adr/0003-free-plan-agent-features.md)：网页搜索、文件、会话树、命令、Skills、生成式界面的分层计划和开发顺序。
 
 原始课程材料保留在 [实验 1](intents/lab1.md) 和 [实验 2](intents/lab2.md)。它们提供长期方向，不代表其中每项功能都属于第一版交付范围。
 

@@ -12,12 +12,15 @@ export function ArtifactView({ toolInput, displayMode, viewState, host }: ViewPr
   const saved = viewState?.saved
   const [saving, setSaving] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const save = async () => {
     setSaving(true)
+    setError(null)
     const r = await host.callTool('artifact_save', a)
     setSaving(false)
-    if (!r.isError) host.setViewState({ saved: r.structuredContent as Saved })
+    if (r.isError) setError(r.content)
+    else host.setViewState({ saved: r.structuredContent as Saved })
   }
 
   if (displayMode === 'inline') {
@@ -58,6 +61,7 @@ export function ArtifactView({ toolInput, displayMode, viewState, host }: ViewPr
           <IconCopy width={15} height={15} /> {copied ? '已复制' : '复制'}
         </button>
       </div>
+      {error && <p className="notice artifact-error">{error}</p>}
       <div className="artifact-body">
         <Markdown text={a.type === 'code' ? '```' + (a.language ?? '') + '\n' + a.content + '\n```' : a.content} />
       </div>

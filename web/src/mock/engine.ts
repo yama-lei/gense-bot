@@ -22,7 +22,7 @@ const MAX_STEPS = 20
 
 /** Lines worth quoting: body text without list markers, so each quote is a verbatim substring. */
 function excerpts(file: DriveFile, n: number): Citation[] {
-  return file.content
+  return (file.content ?? '')
     .split('\n')
     .map((l) => l.trim().replace(/^(\d+\.|-)\s*/, ''))
     .filter((l) => l.length > 6 && !l.startsWith('#') && !l.endsWith('：'))

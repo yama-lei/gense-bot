@@ -7,8 +7,8 @@ import type { Store } from '../store'
 import type { AppState, Conversation, DriveFile, Effort, ToolCall, ToolResult, Turn } from '../types'
 import { uid } from '../util'
 
-// v3: tool names changed from `files.list` to `files_list`, and models moved into the state.
-const KEY = 'gensebot-mock-v3'
+// v4: files carry `size`, the account carries `driveError`.
+const KEY = 'gensebot-mock-v4'
 /** Upload limit from the spec's circuit-breaker table. */
 export const MAX_UPLOAD = 2 * 1024 * 1024
 
@@ -153,7 +153,7 @@ export function useMockStore(): Store {
   const retry = (convId: string, turn: Turn) => reply(convId, turn.userMessage, turn.model, turn.effort)
 
   /** `tools/call` from a view: recorded on the turn so the process list shows it. */
-  const callToolFromView = async (convId: string, turnId: string, name: string, input: unknown): Promise<ToolResult> => {
+  const callToolFromView = async (convId: string, turnId: string, _callId: string, name: string, input: unknown): Promise<ToolResult> => {
     const start = Date.now()
     await new Promise((r) => setTimeout(r, 500))
     const result = exec(name, input)
@@ -177,11 +177,22 @@ export function useMockStore(): Store {
   const upload = async (file: File): Promise<string | null> => {
     if (file.size > MAX_UPLOAD) return `「${file.name}」超过 2 MB 上限，未上传。`
     if (!/^text\/|json|xml/.test(file.type) && !/\.(md|txt|csv|json)$/i.test(file.name)) return `「${file.name}」不是文本文件。首版只支持文本资料。`
-    addFile({ id: 'f-' + uid(), name: file.name, kind: 'source', mimeType: file.type || 'text/plain', content: await file.text(), modifiedTime: Date.now() })
+    addFile({ id: 'f-' + uid(), name: file.name, kind: 'source', mimeType: file.type || 'text/plain', size: file.size, content: await file.text(), modifiedTime: Date.now() })
     return null
   }
 
-  const setDrive = (driveConnected: boolean) => setState((s) => ({ ...s, account: { ...s.account, driveConnected } }))
+  const setDrive = (driveConnected: boolean) => setState((s) => ({ ...s, account: { ...s.account, driveConnected, driveError: null } }))
+
+  const readFile = async (id: string) => {
+    const file = stateRef.current.files.find((f) => f.id === id)
+    if (!file) throw new Error('文件不存在，或你的 Google 账号无权访问')
+    return { file, text: file.content ?? '' }
+  }
+
+  const searchDrive = async (query: string) => {
+    await new Promise((r) => setTimeout(r, 300))
+    return stateRef.current.files.filter((f) => f.name.includes(query) || f.content?.includes(query))
+  }
 
   const stop = (convId: string, turnId: string) => {
     timers.current.get(turnId)?.forEach(clearTimeout)
@@ -199,5 +210,5 @@ export function useMockStore(): Store {
     setState(structuredClone(seed))
   }
 
-  return { state, setState, patchConv, startConversation, reply, retry, stop, reset, callToolFromView, setViewState, upload, setDrive, bridge: null }
+  return { state, setState, patchConv, startConversation, reply, retry, stop, reset, callToolFromView, setViewState, upload, setDrive, refreshFiles: () => {}, readFile, searchDrive, bridge: null }
 }

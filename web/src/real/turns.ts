@@ -1,6 +1,6 @@
 import type { UIMessage } from 'ai'
 import { tools } from '../plugins'
-import type { Effort, ToolCall, ToolResult, Turn, TurnMetadata } from '../types'
+import type { Citation, Effort, ToolCall, ToolResult, Turn, TurnMetadata } from '../types'
 
 export type ChatStatus = 'submitted' | 'streaming' | 'ready' | 'error'
 
@@ -39,7 +39,15 @@ const text = (m: UIMessage) =>
  */
 export function toTurns(
   messages: UIMessage[],
-  opts: { status: ChatStatus; streaming: boolean; error?: string; stopped: ReadonlySet<string>; defaultEffort: Effort; defaultModel: string },
+  opts: {
+    status: ChatStatus
+    streaming: boolean
+    error?: string
+    stopped: ReadonlySet<string>
+    viewStates: Record<string, unknown>
+    defaultEffort: Effort
+    defaultModel: string
+  },
 ): Turn[] {
   const turns: Turn[] = []
   for (const m of messages) {
@@ -62,7 +70,13 @@ export function toTurns(
     const t = turns.at(-1)!
     const meta = m.metadata as Partial<TurnMetadata> | undefined
     t.assistantMessage += text(m)
-    t.toolCalls.push(...m.parts.filter(isToolPart).map(toolCall))
+    for (const call of m.parts.filter(isToolPart).map(toolCall)) {
+      if (call.id in opts.viewStates) call.viewState = opts.viewStates[call.id]
+      // files_cite only records citations; they show under the answer, not in the process list.
+      const cited = call.name === 'files_cite' && (call.result?.structuredContent as { citations?: Citation[] } | undefined)?.citations
+      if (cited) t.citations.push(...cited)
+      t.toolCalls.push(call)
+    }
     if (meta?.model) t.model = meta.model
     if (meta?.effort) t.effort = meta.effort
     if (meta?.createdAt) t.createdAt = meta.createdAt

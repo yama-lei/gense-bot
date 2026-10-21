@@ -1,7 +1,7 @@
 import type { DriveFile } from '../../types'
 import type { PluginTool } from '../types'
 
-const summary = (f: DriveFile) => ({ id: f.id, name: f.name, kind: f.kind, size: new Blob([f.content]).size, modifiedTime: f.modifiedTime })
+const summary = (f: DriveFile) => ({ id: f.id, name: f.name, kind: f.kind, size: f.size, modifiedTime: f.modifiedTime })
 
 export const filesTools: PluginTool[] = [
   {
@@ -31,8 +31,9 @@ export const filesTools: PluginTool[] = [
     sideEffect: false,
     execute: ({ fileId }: { fileId: string }, { files }) => {
       const f = files.find((x) => x.id === fileId)
+      const text = f?.content ?? ''
       if (!f) return { content: `文件 ${fileId} 不存在或无权访问`, isError: true }
-      return { content: `读取 ${f.name}，${f.content.length} 字`, structuredContent: { id: f.id, name: f.name, text: f.content } }
+      return { content: `读取 ${f.name}，${text.length} 字`, structuredContent: { id: f.id, name: f.name, text } }
     },
   },
 ]

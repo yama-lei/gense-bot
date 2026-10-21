@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { pluginCatalog } from '../plugins/catalog'
 import { useRoute } from '../router'
 import type { Store } from '../store'
-import type { AppState, Conversation, Effort, HubState, ToolResult, Turn } from '../types'
+import type { AppState, Conversation, DriveFile, Effort, HubState, Turn } from '../types'
 import { ChatBridge, type ChatControls } from './ChatBridge'
 import { pending } from './pending'
 
@@ -14,12 +14,15 @@ const emptyHub: HubState = {
   prefs: { language: 'zh-CN', defaultEffort: 'medium', model: '' },
   enabledPlugins: [],
   availablePlugins: [],
-  account: { name: '', email: '', driveConnected: false },
+  account: { name: '', email: '', driveConnected: false, driveError: null },
   models: [],
   modelsError: null,
+  files: [],
 }
 
-const notYet = (what: string): ToolResult => ({ content: `${what}尚未接入（V3：Google Drive）。`, isError: true })
+/** Spec "兜底限制": text files up to 2 MB; the hub checks again. */
+const MAX_UPLOAD = 2 * 1024 * 1024
+const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 /** Store backed by the user's UserHub (state) and the open chat's Think agent (turns). */
 export function useRealStore(): Store {
@@ -35,7 +38,7 @@ export function useRealStore(): Store {
     () => ({
       projects: hub.projects,
       conversations: hub.chats.map((c): Conversation => ({ ...c, turns: turns[c.id] ?? [] })),
-      files: [],
+      files: hub.files,
       schedules: [],
       plugins: pluginCatalog.map((p) => ({ ...p, enabled: hub.enabledPlugins.includes(p.id), available: hub.availablePlugins.includes(p.id) })),
       memories: hub.memories,
@@ -115,10 +118,29 @@ export function useRealStore(): Store {
     retry: (convId, turn) => reply(convId, turn.userMessage, turn.model, turn.effort),
     stop: (convId) => controls.current.get(convId)?.stop(),
     reset: () => {},
-    callToolFromView: async () => notYet('界面调用工具'),
-    setViewState: () => {},
-    upload: async () => '上传需要先连接 Google Drive（V3 接入）。',
-    setDrive: () => {},
+    callToolFromView: async (convId, _turnId, callId, name, input) => {
+      const c = controls.current.get(convId)
+      if (!c) return { content: '会话未连接，请稍后重试', isError: true }
+      return c.callTool(name, input, callId).catch((e: unknown) => ({ content: errorText(e), isError: true }))
+    },
+    setViewState: (convId, _turnId, callId, viewState) => controls.current.get(convId)?.setViewState(callId, viewState),
+    upload: async (file) => {
+      if (file.size > MAX_UPLOAD) return `「${file.name}」超过 2 MB 上限，未上传。`
+      try {
+        await hubAgent.call<DriveFile>('uploadFile', [file.name, await file.text()])
+        return null
+      } catch (e) {
+        return errorText(e)
+      }
+    },
+    setDrive: (connected) => {
+      // OAuth needs a top-level navigation; the callback returns to the customize page.
+      if (connected) location.href = '/oauth/google/start'
+      else void call('disconnectDrive', [])
+    },
+    refreshFiles: () => void call('refreshFiles', []),
+    readFile: (id) => hubAgent.call<{ file: DriveFile; text: string }>('readFile', [id]),
+    searchDrive: (query) => hubAgent.call<DriveFile[]>('searchDrive', [query]),
     bridge: chatId && hub.chats.some((c) => c.id === chatId) ? <ChatBridge key={chatId} id={chatId} defaults={hub.prefs} onTurns={onTurns} register={register} /> : null,
   }
 }

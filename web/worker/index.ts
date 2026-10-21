@@ -1,6 +1,7 @@
 import type { WorkerEnv } from './env'
 import { getAgentByName } from 'agents'
 import { authenticate } from './auth'
+import { CALLBACK_PATH } from './google'
 import { EMAIL_HEADER } from './hub'
 
 export { Chat } from './chat'
@@ -16,12 +17,23 @@ export default {
     const url = new URL(request.url)
     const user = await authenticate(request, env)
     if (!user) return new Response('Unauthorized', { status: 401 })
+    const hub = () => getAgentByName(env.UserHub, user.sub)
 
     if (url.pathname === '/agents/hub' || url.pathname.startsWith('/agents/hub/')) {
       const headers = new Headers(request.headers)
       headers.set(EMAIL_HEADER, user.email)
-      const hub = await getAgentByName(env.UserHub, user.sub)
-      return hub.fetch(new Request(request, { headers }))
+      return (await hub()).fetch(new Request(request, { headers }))
+    }
+
+    // Google OAuth for Drive. Both legs run behind Access, so the state is bound to this user's hub.
+    const redirectUri = `${url.origin}${CALLBACK_PATH}`
+    if (url.pathname === '/oauth/google/start' && request.method === 'GET') {
+      return Response.redirect(await (await hub()).beginGoogleAuth(redirectUri), 302)
+    }
+    if (url.pathname === CALLBACK_PATH && request.method === 'GET') {
+      const p = url.searchParams
+      await (await hub()).finishGoogleAuth({ code: p.get('code') ?? undefined, state: p.get('state') ?? undefined, error: p.get('error') ?? undefined }, redirectUri)
+      return Response.redirect(`${url.origin}/#/customize`, 302)
     }
     return new Response('Not found', { status: 404 })
   },

@@ -2,10 +2,12 @@ import type { WorkerEnv } from './env'
 import { Agent, callable, type Connection, type ConnectionContext } from 'agents'
 import { RoutedAgents } from 'agents/routing'
 import { z } from 'zod'
-import type { ChatMeta, HubState, Provider, TurnSettings } from '../src/types'
+import type { ChatMeta, DriveFile, HubState, Provider, TurnSettings } from '../src/types'
 import type { Chat } from './chat'
+import { Drive, MAX_TEXT_BYTES, isText, type Folders } from './drive'
+import { DRIVE_SCOPE, GrantRevokedError, authUrl, decrypt, encrypt, exchangeCode, refreshAccessToken, revoke } from './google'
 import { defaultModel, listEndpointModels, pickCapabilities, providers } from './models'
-import { pluginTools } from './tools'
+import { pluginIds } from './tools'
 
 /** Header the Worker sets from the verified Access JWT; any client-supplied value is stripped. */
 export const EMAIL_HEADER = 'x-gense-email'
@@ -13,6 +15,20 @@ export const EMAIL_HEADER = 'x-gense-email'
 const MODELS_TTL = 60 * 60 * 1000
 const CAPS_TTL = 24 * 60 * 60 * 1000
 const MODELS_DEV = 'https://models.dev/api.json'
+const OAUTH_STATE_TTL = 10 * 60 * 1000
+
+/** What UserHub keeps about the Google grant; never part of the broadcast state. */
+interface GoogleGrant {
+  /** Refresh token, AES-GCM sealed. */
+  refresh: string
+  folders: Folders
+}
+
+/** Access token handed to a chat for one tool call. */
+export interface DriveAccess {
+  token: string
+  folders: Folders
+}
 
 type Meta = Omit<ChatMeta, 'id' | 'updatedAt'>
 
@@ -45,12 +61,16 @@ export class UserHub extends Agent<WorkerEnv, HubState> {
     projects: [],
     memories: [],
     prefs: { language: 'zh-CN', defaultEffort: 'medium', model: '' },
-    enabledPlugins: Object.keys(pluginTools),
-    availablePlugins: Object.keys(pluginTools),
-    account: { name: '', email: '', driveConnected: false },
+    enabledPlugins: [...pluginIds],
+    availablePlugins: [...pluginIds],
+    account: { name: '', email: '', driveConnected: false, driveError: null },
+    files: [],
     models: [],
     modelsError: null,
   }
+
+  /** Short-lived Google access token; lost on eviction, which only costs one refresh. */
+  private access: { token: string; exp: number } | undefined
 
   constructor(ctx: DurableObjectState, env: WorkerEnv) {
     super(ctx, env)
@@ -60,8 +80,11 @@ export class UserHub extends Agent<WorkerEnv, HubState> {
   async onStart() {
     const prefs = this.state.prefs.model ? this.state.prefs : { ...this.state.prefs, model: defaultModel(this.env) ?? '' }
     // The deployed code decides which plugins exist.
-    this.setState({ ...this.state, prefs, availablePlugins: Object.keys(pluginTools) })
+    // State saved by an older deployment may lack newer fields.
+    const account = { ...this.state.account, driveConnected: !!this.grant(), driveError: this.state.account.driveError ?? null }
+    this.setState({ ...this.state, prefs, account, files: this.state.files ?? [], availablePlugins: [...pluginIds] })
     await this.syncChats()
+    if (this.grant()) void this.refreshFiles()
     if (Date.now() - (this.ctx.storage.kv.get<number>('modelsAt') ?? 0) > MODELS_TTL) void this.refreshModels()
   }
 
@@ -154,12 +177,139 @@ export class UserHub extends Agent<WorkerEnv, HubState> {
     }
   }
 
+  // ---- Google Drive ----
+
+  private grant() {
+    return this.ctx.storage.kv.get<GoogleGrant>('google')
+  }
+
+  private setAccount(patch: Partial<HubState['account']>) {
+    this.setState({ ...this.state, account: { ...this.state.account, ...patch } })
+  }
+
+  /** A valid access token, refreshed when it is about to expire. */
+  async driveAccess(): Promise<DriveAccess> {
+    const grant = this.grant()
+    if (!grant) throw new Error('还没有连接 Google Drive。请先在“定制”页连接。')
+    if (!this.access || this.access.exp < Date.now() + 60_000) {
+      try {
+        const t = await refreshAccessToken(this.env, await decrypt(this.env, grant.refresh))
+        this.access = { token: t.access_token, exp: Date.now() + t.expires_in * 1000 }
+      } catch (e) {
+        if (e instanceof GrantRevokedError) this.dropGrant(e.message)
+        throw e
+      }
+    }
+    return { token: this.access.token, folders: grant.folders }
+  }
+
+  private async drive() {
+    const { token, folders } = await this.driveAccess()
+    return { drive: new Drive(token), folders }
+  }
+
+  private dropGrant(reason: string | null) {
+    this.ctx.storage.kv.delete('google')
+    this.access = undefined
+    this.setState({ ...this.state, files: [], account: { ...this.state.account, driveConnected: false, driveError: reason } })
+  }
+
+  /** Called by the Worker for `/oauth/google/start`; the state is single-use. */
+  beginGoogleAuth(redirectUri: string): string {
+    const state = crypto.randomUUID()
+    this.ctx.storage.kv.put('oauthState', { state, exp: Date.now() + OAUTH_STATE_TTL })
+    return authUrl(this.env, redirectUri, state, this.state.account.email)
+  }
+
+  /** Called by the Worker for the OAuth callback; a failure is shown on the customize page via `driveError`. */
+  async finishGoogleAuth(params: { code?: string; state?: string; error?: string }, redirectUri: string) {
+    const error = await this.completeGoogleAuth(params, redirectUri)
+    if (error) this.setAccount({ driveError: error })
+  }
+
+  private async completeGoogleAuth({ code, state, error }: { code?: string; state?: string; error?: string }, redirectUri: string): Promise<string | null> {
+    const kv = this.ctx.storage.kv
+    const saved = kv.get<{ state: string; exp: number }>('oauthState')
+    kv.delete('oauthState')
+    if (!saved || saved.state !== state || saved.exp < Date.now()) return '授权请求已过期，请重新连接。'
+    if (error) return error === 'access_denied' ? '你取消了 Google 授权。' : `Google 授权失败：${error}`
+    if (!code) return 'Google 没有返回授权码，请重新连接。'
+    try {
+      const t = await exchangeCode(this.env, code, redirectUri)
+      if (!t.scope?.split(' ').includes(DRIVE_SCOPE)) return '没有获得 Drive 权限。请在 Google 授权页勾选“查看、修改、创建和删除您的所有 Google 云端硬盘文件”。'
+      if (!t.refresh_token) return 'Google 没有返回 refresh token，请重新连接。'
+      const old = this.grant()
+      if (old) await revoke(await decrypt(this.env, old.refresh).catch(() => ''))
+      const folders = await new Drive(t.access_token).ensureFolders()
+      kv.put('google', { refresh: await encrypt(this.env, t.refresh_token), folders } satisfies GoogleGrant)
+      this.access = { token: t.access_token, exp: Date.now() + t.expires_in * 1000 }
+      this.setAccount({ driveConnected: true, driveError: null })
+      await this.refreshFiles()
+      return null
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e)
+    }
+  }
+
+  @callable()
+  async disconnectDrive() {
+    const grant = this.grant()
+    if (grant) await revoke(await decrypt(this.env, grant.refresh).catch(() => ''))
+    this.dropGrant(null)
+  }
+
+  /** Re-reads GenseBot/资料 and GenseBot/Artifacts into the broadcast file list. */
+  @callable()
+  async refreshFiles() {
+    if (!this.grant()) return
+    try {
+      const { drive, folders } = await this.drive()
+      const [sources, artifacts] = await Promise.all([drive.list(folders.sources, 'source'), drive.list(folders.artifacts, 'artifact')])
+      this.setState({ ...this.state, files: [...sources, ...artifacts], account: { ...this.state.account, driveError: null } })
+    } catch (e) {
+      if (this.grant()) this.setAccount({ driveError: e instanceof Error ? e.message : String(e) })
+    }
+  }
+
+  @callable()
+  async readFile(id: string): Promise<{ file: DriveFile; text: string }> {
+    const { drive, folders } = await this.drive()
+    return drive.readText(z.string().min(1).max(200).parse(id), folders)
+  }
+
+  @callable()
+  async searchDrive(query: string): Promise<DriveFile[]> {
+    const { drive, folders } = await this.drive()
+    return drive.search(z.string().min(1).max(200).parse(query), folders, 30)
+  }
+
+  /** Uploads a text file into GenseBot/资料 (Spec S5: text only, at most 2 MB). */
+  @callable()
+  async uploadFile(name: string, text: string): Promise<DriveFile> {
+    const n = z.string().min(1).max(200).parse(name)
+    const body = z.string().parse(text)
+    if (!isText('', n)) throw new Error(`「${n}」不是文本文件。首版只支持 .md、.txt、.csv、.json 等文本资料。`)
+    if (new TextEncoder().encode(body).length > MAX_TEXT_BYTES) throw new Error(`「${n}」超过 2 MB 上限，未上传。`)
+    const { drive, folders } = await this.drive()
+    const file = await drive.create(folders, folders.sources, await drive.freeName(folders.sources, n), body)
+    await this.refreshFiles()
+    return file
+  }
+
   // ---- RPC from Chat (not callable from clients) ----
 
+  /** A chat wrote to Drive; refresh the list in the background. */
+  filesChanged() {
+    void this.refreshFiles()
+  }
+
   /** Settings a chat needs to run one turn. */
-  turnSettings(): TurnSettings {
-    const { enabledPlugins, memories, prefs, models } = this.state
-    return { enabledPlugins, memories: memories.map((m) => m.text), language: prefs.language, models }
+  turnSettings(chatId?: string): TurnSettings {
+    const { enabledPlugins, memories, prefs, models, account, chats, projects } = this.state
+    const projectId = chats.find((c) => c.id === chatId)?.projectId
+    const project = projects.find((p) => p.id === projectId)
+    const projectContext = project ? [`项目：${project.name}`, project.description.trim()].filter(Boolean).join('\n') : ''
+    return { enabledPlugins, memories: memories.map((m) => m.text), language: prefs.language, models, driveConnected: account.driveConnected, projectContext }
   }
 
   /** Bumps the chat to the top of the list after a turn and remembers the model chosen. */

@@ -106,20 +106,21 @@ getModel() {
   - 修改或删除 `资料/` 中已有的文件，仍然要经过确认（Spec“外部操作”）；新建 Artifact 不需要确认。
   - Google 的 OAuth scope 本身不能限制到某个文件夹，所以“只写 `GenseBot/`”完全靠我们的代码保证，这一点要有测试覆盖。
 - 文件 ID 是唯一标识，路径只用于显示。UserHub 缓存文件列表（ID、名称、修改时间），Drive 才是数据源。
-- 首版只处理文本：`.md`、`.txt`、`.csv`、`.json` 和 Google 文档（导出为 Markdown 或纯文本）。PDF 和图片放到后续阶段。
+- 首版只处理文本：`.md`、`.txt`、`.csv`、`.json` 等文本文件，以及 Google 文档（导出为 Markdown）、表格（CSV）、幻灯片（纯文本）。单个文件不超过 2 MB。PDF 和图片放到后续阶段。
 
 ### 工具
 
 | 工具 | 副作用 | 说明 |
 | --- | --- | --- |
 | `files_list` / `files_search` | 无 | 列出 `GenseBot/` 中的资料与 Artifacts；`files_search` 可以搜索整个 Drive（名称和全文） |
-| `files_read` | 无 | 按文件 ID 读取文本，过长时分段读取 |
+| `files_read` | 无 | 按文件 ID 读取文本，每次最多 20000 字，用 `offset` 分段读取 |
+| `files_cite` | 无 | 回答末尾记录引用；服务端核对原文后才保留 |
 | `artifact_save` | 创建新文件 | 只在 `Artifacts/` 中新建文件，不覆盖已有文件，所以可以安全重试（以 `idempotencyKey` 作为 Drive `appProperties` 去重） |
 | `files_update` / `files_delete` | 修改用户数据 | 首版不提供；后续通过 Think Actions 的审批流程加入 |
 
 ### 引用
 
-助手回答时，以结构化数据输出引用：`{ fileId, name, quote }`，`quote` 是不超过 200 字的原文。界面打开文件后，先做精确匹配，再做去掉空白后的匹配，找到就高亮，找不到就提示“原文已变化”。服务端在保存这一轮之前检查 `quote` 确实出现在本轮读过的内容中，不在的引用直接丢弃，防止模型编造引用。
+助手回答时，以结构化数据输出引用：`{ fileId, name, quote }`，`quote` 是不超过 200 字的原文。界面打开文件后，先做精确匹配，再做去掉空白后的匹配，找到就高亮，找不到就提示“原文已变化”。引用通过 `files_cite` 工具提交：服务端用同样的匹配规则核对 `quote` 是否出现在文件当前的文本中（优先用本轮 `files_read` 读到的内容，否则重新读取），找不到的引用直接丢弃，并告诉模型丢弃了几条，防止模型编造引用。界面把 `files_cite` 的结果显示为回答下方的引用卡片。
 
 ## 一轮任务的数据流
 
@@ -225,11 +226,16 @@ V1 记录（2026-10-21，本地 `vite dev`）：依赖锁定为 `@cloudflare/thi
 
 部署记录（2026-10-21）：Access 自托管应用 `GenseBot`（`bot.rayama.site`，只放行 owner 邮箱，session 720h）；过渡期登录方式是邮箱一次性 PIN，Google 身份提供方等 OAuth 客户端建好后加上。Google 的 OAuth 同意屏幕和 Web 客户端没有公开的 CLI/API（`gcloud iam oauth-clients` 只用于 Workforce 身份联合，不能申请 Drive scope），只能在控制台创建。`GOOGLE_CLIENT_ID/SECRET` 在 V3 再加回 Worker 配置，否则缺值时 `cf deploy` 会失败。
 
+V3 记录（2026-10-21）：
+- OAuth：`/oauth/google/start` 生成一次性 `state`（10 分钟有效，存 UserHub）后跳转 Google；回调校验 `state`、scope 和 refresh token，撤销旧授权，找到或创建 `GenseBot/资料`、`GenseBot/Artifacts`，再把 refresh token 用 AES-GCM（`TOKEN_ENCRYPTION_KEY`）加密存入 UserHub。refresh 返回 `invalid_grant` 时清除授权，界面提示重新连接。
+- 写入：唯一的写路径是 `Drive.create`，每次写入前沿 `parents` 检查目标在 `GenseBot/` 之内。
+- 界面调用工具：Chat 只放行白名单（目前只有 `artifact_save`），并检查插件开关；幂等键是渲染该界面的工具调用 ID。界面状态（例如“已保存”）按工具调用 ID 存在 Chat 中。
+- 项目说明作为系统提示词的一部分发给模型。
+
 测试走真实路径：使用真实模型端点和真实的测试 Drive 账号，不写只测 mock 的测试。
 
 ## 待定
 
-- Google 文档的导出格式选 Markdown 还是纯文本，取决于 Drive API 的实际导出质量。
 - 是否需要会话全文搜索；Think 的 session search 能否跨会话使用。
 - MCP 界面 iframe 的 sandbox 域名，以及 `@mcp-ui/client` 和官方 AppBridge 选哪个（接入 MCP 时再定）。
 

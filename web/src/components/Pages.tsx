@@ -5,7 +5,7 @@ import type { Store } from '../store'
 import type { DriveFile, Effort, Project } from '../types'
 import { findQuote } from '../util'
 import { Composer, Picker, effortLabel } from './Composer'
-import { IconAlert, IconDoc, IconPin, IconPlus, IconProject, IconTrash, Spark } from './Icons'
+import { IconAlert, IconDoc, IconPin, IconPlus, IconProject, IconRetry, IconSearch, IconTrash, Spark } from './Icons'
 import { TopBar } from './TopBar'
 
 function greeting() {
@@ -26,7 +26,7 @@ export function HomeView({ store }: { store: Store }) {
     <div className="page home">
       <TopBar />
       <div className="home-center">
-        {!store.state.account.driveConnected && <DriveBanner store={store} />}
+        <DriveBanner store={store} />
         <h1 className="hero">
           <Spark /> {greeting()}
         </h1>
@@ -137,29 +137,59 @@ export function ProjectView({ store, id }: { store: Store; id: string }) {
 }
 
 function DriveBanner({ store }: { store: Store }) {
+  const { driveConnected, driveError } = store.state.account
+  if (driveConnected && !driveError) return null
   return (
-    <div className="banner warn drive-banner">
+    <div className={'banner drive-banner ' + (driveError ? 'error' : 'warn')}>
       <IconAlert />
       <div>
-        <strong>连接 Google Drive</strong>
-        <p>资料和 Artifacts 保存在你的 Drive 中（GenseBot/ 文件夹）。连接前，助手不能读取或保存文件。</p>
+        <strong>{driveError ? (driveConnected ? 'Google Drive 暂时不可用' : '需要重新连接 Google Drive') : '连接 Google Drive'}</strong>
+        <p>{driveError ?? '助手可以读取你 Drive 中的文件；上传的资料和保存的 Artifacts 放在 GenseBot/ 文件夹。连接前，助手不能读取或保存文件。'}</p>
       </div>
-      <button className="pill-btn" onClick={() => store.setDrive(true)}>
-        连接
-      </button>
+      {driveConnected ? (
+        <button className="pill-btn" onClick={() => store.refreshFiles()}>
+          <IconRetry width={15} height={15} /> 重试
+        </button>
+      ) : (
+        <button className="pill-btn" onClick={() => store.setDrive(true)}>
+          连接
+        </button>
+      )}
     </div>
   )
 }
 
-const tabLabel = { source: '资料', artifact: 'Artifacts' } as const
+const tabLabel: Record<DriveFile['kind'], string> = { source: '资料', artifact: 'Artifacts', drive: '搜索 Drive' }
 
 export function FilesView({ store, tab = 'source', id, quote }: { store: Store; tab?: DriveFile['kind']; id?: string; quote?: string }) {
   const { files, account } = store.state
   const list = files.filter((f) => f.kind === tab)
-  const file = files.find((f) => f.id === id)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const input = useRef<HTMLInputElement>(null)
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<DriveFile[] | null>(null)
+  const [searching, setSearching] = useState(false)
+  const { refreshFiles } = store
+
+  // Files change in Drive without telling us; reload whenever the page opens.
+  useEffect(() => {
+    if (account.driveConnected) refreshFiles()
+  }, [account.driveConnected]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const search = async (q: string) => {
+    if (!q.trim()) return
+    setSearching(true)
+    setError(null)
+    try {
+      setResults(await store.searchDrive(q.trim()))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+    setSearching(false)
+  }
+
+  const shown = tab === 'drive' ? (results ?? []) : list
 
   return (
     <div className="page">
@@ -167,33 +197,26 @@ export function FilesView({ store, tab = 'source', id, quote }: { store: Store; 
         <h2 className="page-title">资料</h2>
       </TopBar>
       <div className="page-body files">
-        {!account.driveConnected && <DriveBanner store={store} />}
-        <div className={'files-split' + (file ? ' has-preview' : '')}>
+        <DriveBanner store={store} />
+        <div className={'files-split' + (id ? ' has-preview' : '')}>
           <div className="files-list">
             <div className="tabs" role="tablist">
-              {(['source', 'artifact'] as const).map((t) => (
+              {(['source', 'artifact', 'drive'] as const).map((t) => (
                 <a key={t} role="tab" aria-selected={t === tab} className={'tab' + (t === tab ? ' on' : '')} href={href({ name: 'files', tab: t })}>
-                  {tabLabel[t]} <span className="muted small">{files.filter((f) => f.kind === t).length}</span>
+                  {tabLabel[t]} {t !== 'drive' && <span className="muted small">{files.filter((f) => f.kind === t).length}</span>}
                 </a>
               ))}
             </div>
-            {tab === 'source' ? (
+            {tab === 'source' && (
               <div className="files-actions">
                 <button className="btn primary" disabled={!account.driveConnected || busy} onClick={() => input.current?.click()}>
-                  <IconPlus width={15} height={15} /> 上传
+                  {busy ? <span className="spinner" /> : <IconPlus width={15} height={15} />} {busy ? '上传中…' : '上传文本资料'}
                 </button>
-                <button
-                  className="btn"
-                  disabled={!account.driveConnected}
-                  title="真实版本会打开 Google Picker，只授权你选中的文件"
-                  onClick={() => setError('Mock：真实版本会在这里打开 Google Picker。选中的文件只授权给本应用（drive.file）。')}
-                >
-                  从 Drive 选择
-                </button>
+                <span className="muted small">.md .txt .csv .json，单个不超过 2 MB</span>
                 <input
                   ref={input}
                   type="file"
-                  accept=".md,.txt,.csv,.json,text/*"
+                  accept=".md,.markdown,.txt,.csv,.tsv,.json,.yaml,.yml,.xml,.html,text/*"
                   hidden
                   onChange={async (e) => {
                     const f = e.target.files?.[0]
@@ -205,50 +228,108 @@ export function FilesView({ store, tab = 'source', id, quote }: { store: Store; 
                   }}
                 />
               </div>
-            ) : (
-              <p className="muted small">助手生成的产物，保存在 GenseBot/Artifacts/。在会话中点“保存到 Drive”后出现在这里。</p>
+            )}
+            {tab === 'artifact' && <p className="muted small files-hint">助手生成的产物，保存在 GenseBot/Artifacts/。在会话中点“保存到 Drive”后出现在这里。</p>}
+            {tab === 'drive' && (
+              <form
+                className="search-form"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  void search(query)
+                }}
+              >
+                <IconSearch width={16} height={16} />
+                <input placeholder="搜索文件名或内容" value={query} disabled={!account.driveConnected} onChange={(e) => setQuery(e.target.value)} />
+                {searching && <span className="spinner" />}
+              </form>
             )}
             {error && <p className="notice">{error}</p>}
             <ul className="list doc-list">
-              {list.length === 0 && <li className="muted small hint">还没有文件。</li>}
-              {list.map((f) => (
+              {shown.length === 0 && (
+                <li className="muted small hint">
+                  {tab === 'drive'
+                    ? results
+                      ? `没有找到包含「${query}」的文件。`
+                      : '在整个 Google Drive 中按文件名和全文搜索。助手只读取，不会修改 GenseBot/ 以外的文件。'
+                    : tab === 'source'
+                      ? '还没有资料。上传文本文件，或直接在会话里让助手搜索你的 Drive。'
+                      : '还没有保存的 Artifacts。'}
+                </li>
+              )}
+              {shown.map((f) => (
                 <li key={f.id} className={f.id === id ? 'active' : ''}>
                   <a href={href({ name: 'files', tab, id: f.id })}>
                     <IconDoc width={16} height={16} />
                     <span className="ellipsis">{f.name}</span>
-                    <span className="muted small">
-                      {formatSize(new Blob([f.content]).size)} · {relTime(f.modifiedTime)}
-                    </span>
+                    <span className="muted small">{[f.size != null && formatSize(f.size), relTime(f.modifiedTime)].filter(Boolean).join(' · ')}</span>
                   </a>
                 </li>
               ))}
             </ul>
           </div>
-          {file && <FilePreview file={file} quote={quote} />}
+          {id && <FilePreview store={store} id={id} tab={tab} quote={quote} />}
         </div>
       </div>
     </div>
   )
 }
 
-function FilePreview({ file, quote }: { file: DriveFile; quote?: string }) {
+const folderOf: Record<DriveFile['kind'], string> = { source: 'GenseBot/资料/', artifact: 'GenseBot/Artifacts/', drive: '' }
+
+/** Reads the file's current text from Drive; a citation is highlighted only if the text still contains it. */
+function FilePreview({ store, id, tab, quote }: { store: Store; id: string; tab: DriveFile['kind']; quote?: string }) {
   const mark = useRef<HTMLElement>(null)
-  const range = quote ? findQuote(file.content, quote) : null
+  const [loaded, setLoaded] = useState<{ id: string; file?: DriveFile; text?: string; error?: string } | null>(null)
+  const { readFile } = store
+  useEffect(() => {
+    let live = true
+    readFile(id).then(
+      ({ file, text }) => live && setLoaded({ id, file, text }),
+      (e: unknown) => live && setLoaded({ id, error: e instanceof Error ? e.message : String(e) }),
+    )
+    return () => {
+      live = false
+    }
+  }, [id, readFile])
+  const current = loaded?.id === id ? loaded : null
+  const text = current?.text
+  const range = quote && text != null ? findQuote(text, quote) : null
   useEffect(() => {
     mark.current?.scrollIntoView({ block: 'center' })
-  }, [file.id, quote])
+  }, [text, quote])
+  const name = current?.file?.name ?? store.state.files.find((f) => f.id === id)?.name ?? ''
 
   return (
     <div className="doc-preview">
       <div className="doc-preview-head">
-        <a className="link-btn back" href={href({ name: 'files', tab: file.kind })}>
-          ← 全部{tabLabel[file.kind]}
+        <a className="link-btn back" href={href({ name: 'files', tab })}>
+          ← 返回
         </a>
         <code className="ellipsis">
-          GenseBot/{file.kind === 'source' ? '资料' : 'Artifacts'}/{file.name}
+          {current?.file ? folderOf[current.file.kind] : ''}
+          {name}
         </code>
+        {!MOCK && (
+          <a className="pill-btn open-drive" href={`https://drive.google.com/open?id=${encodeURIComponent(id)}`} target="_blank" rel="noreferrer">
+            在 Drive 中打开
+          </a>
+        )}
       </div>
-      {quote && !range && (
+      {!current && (
+        <div className="doc-loading muted">
+          <span className="spinner" /> 正在从 Drive 读取…
+        </div>
+      )}
+      {current?.error && (
+        <div className="banner error doc-error">
+          <IconAlert />
+          <div>
+            <strong>无法预览</strong>
+            <p>{current.error}</p>
+          </div>
+        </div>
+      )}
+      {quote && text != null && !range && (
         <div className="banner warn quote-missing">
           <IconAlert />
           <div>
@@ -258,23 +339,27 @@ function FilePreview({ file, quote }: { file: DriveFile; quote?: string }) {
           </div>
         </div>
       )}
-      <pre className="doc-text">
-        {range ? (
-          <>
-            {file.content.slice(0, range[0])}
-            <mark ref={mark}>{file.content.slice(range[0], range[1])}</mark>
-            {file.content.slice(range[1])}
-          </>
-        ) : (
-          file.content
-        )}
-      </pre>
+      {text != null && (
+        <pre className="doc-text">
+          {range ? (
+            <>
+              {text.slice(0, range[0])}
+              <mark ref={mark}>{text.slice(range[0], range[1])}</mark>
+              {text.slice(range[1])}
+            </>
+          ) : (
+            text || <span className="muted">（空文件）</span>
+          )}
+        </pre>
+      )}
     </div>
   )
 }
 
 function formatSize(n: number) {
-  return n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
 export function ScheduledView({ store }: { store: Store }) {
@@ -322,7 +407,10 @@ export function CustomizeView({ store }: { store: Store }) {
           <li className="row">
             <div className="row-main">
               <strong>{account.email}</strong>
-              <span className="muted small">{account.driveConnected ? 'Google Drive 已连接 · 只能访问本应用创建或你选择的文件（drive.file）' : 'Google Drive 未连接'}</span>
+              <span className="muted small">
+                {account.driveConnected ? '已连接 Google Drive · 可读取你的全部文件，只在 GenseBot/ 文件夹中新建文件' : 'Google Drive 未连接'}
+              </span>
+              {account.driveError && <span className="small error-text">{account.driveError}</span>}
             </div>
             <button className="btn" onClick={() => store.setDrive(!account.driveConnected)}>
               {account.driveConnected ? '断开' : '连接'}

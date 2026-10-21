@@ -65,14 +65,17 @@ export interface Conversation {
   turns: Turn[]
 }
 
-/** A Drive file under GenseBot/资料 (`source`) or GenseBot/Artifacts (`artifact`). */
+/** A Drive file: under GenseBot/资料 (`source`), GenseBot/Artifacts (`artifact`) or elsewhere in Drive (`drive`). */
 export interface DriveFile {
   id: string
   name: string
-  kind: 'source' | 'artifact'
+  kind: 'source' | 'artifact' | 'drive'
   mimeType: string
-  content: string
+  /** Bytes; null for Google Docs, which have no stored size. */
+  size: number | null
   modifiedTime: number
+  /** Only the mock keeps file text in its state; the real store reads it on demand. */
+  content?: string
 }
 
 export interface Schedule {
@@ -122,6 +125,8 @@ export interface Account {
   name: string
   email: string
   driveConnected: boolean
+  /** Why Drive is unavailable (grant revoked, API error); null when fine. */
+  driveError: string | null
 }
 
 export interface AppState {
@@ -159,6 +164,8 @@ export interface HubState {
   account: Account
   models: ModelOption[]
   modelsError: string | null
+  /** GenseBot/资料 and GenseBot/Artifacts, refreshed from Drive. */
+  files: DriveFile[]
 }
 
 /** What a chat asks its hub for before each turn. */
@@ -167,6 +174,9 @@ export interface TurnSettings {
   memories: string[]
   language: string
   models: ModelOption[]
+  driveConnected: boolean
+  /** Name and description of the chat's project, empty when it has none. */
+  projectContext: string
 }
 
 /** Client body fields sent with each chat request. */

@@ -230,6 +230,7 @@ code, pre { font-family: var(--mono); }
 .banner.error { background: var(--err-bg); color: var(--err); }
 .banner.error p { color: var(--text); }
 .banner.warn { background: var(--surface-2); }
+.banner.drive-banner.error { margin: 0 0 16px; }
 .banner svg { flex-shrink: 0; margin-top: 3px; }
 
 /* Confirmation */
@@ -316,6 +317,17 @@ code, pre { font-family: var(--mono); }
 .doc-preview { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); min-width: 0; overflow: hidden; }
 .doc-preview-head { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
 .doc-preview-head .back { display: none; }
+.doc-preview-head code { flex: 1; }
+.open-drive { font-size: 13px; padding: 4px 10px; }
+.doc-loading { display: flex; align-items: center; gap: 10px; padding: 18px 16px; font-size: 14px; }
+.doc-error { margin: 12px 14px; }
+.files-hint { margin: 0 0 12px; }
+.files-actions { align-items: center; }
+.search-form { display: flex; align-items: center; gap: 8px; padding: 8px 12px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--muted); }
+.search-form:focus-within { border-color: var(--muted); }
+.search-form input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); }
+.error-text { color: var(--err); }
+.artifact-error { margin: 12px 18px 0; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse { 50% { opacity: .35; } }

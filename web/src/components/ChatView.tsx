@@ -4,7 +4,6 @@ import type { DisplayMode, ViewHost } from '../plugins/types'
 import { href, navigate } from '../router'
 import type { Store } from '../store'
 import type { Conversation, DriveFile, Effort, ToolCall, Turn } from '../types'
-import { findQuote } from '../util'
 import { modelName, useModels } from '../models'
 import { Composer, effortLabel } from './Composer'
 import { IconAlert, IconArrowDown, IconCheck, IconChevronDown, IconChevronRight, IconDoc, IconInfo, IconRetry, IconTool, IconX } from './Icons'
@@ -39,7 +38,7 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
           content: `界面只能调用本插件的工具，${name} 被拒绝`,
           isError: true,
         }
-      return store.callToolFromView(conv.id, turn.id, name, args)
+      return store.callToolFromView(conv.id, turn.id, call.id, name, args)
     },
     sendMessage: (text) => store.reply(conv.id, text, model, effort),
     requestDisplayMode: (mode) => setPanel(mode === 'inline' ? null : { turnId: turn.id, callId: call.id }),
@@ -143,21 +142,12 @@ function PluginSlot({ call, displayMode, host }: { call: ToolCall; displayMode: 
   return <View toolInput={call.input} toolResult={call.result} displayMode={displayMode} viewState={call.viewState} host={host} />
 }
 
+/** The quote is checked against the file's current text when the citation is opened. */
 function CitationCard({ c, file }: { c: Turn['citations'][number]; file?: DriveFile }) {
-  const changed = !file || !findQuote(file.content, c.quote)
   return (
-    <a
-      className="cite-card"
-      href={href({
-        name: 'files',
-        tab: file?.kind ?? 'source',
-        id: c.fileId,
-        quote: c.quote,
-      })}
-    >
+    <a className="cite-card" href={href({ name: 'files', tab: file?.kind ?? 'drive', id: c.fileId, quote: c.quote })}>
       <span className="cite-name">
         <IconDoc width={14} height={14} /> <span className="ellipsis">{c.name}</span>
-        {changed && <span className="tag warn">{file ? '原文已变化' : '文件不存在'}</span>}
       </span>
       <span className="cite-quote">“{c.quote}”</span>
     </a>

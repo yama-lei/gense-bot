@@ -313,10 +313,10 @@ torch.cat([half_cos, half_cos], dim=-1)   # shape (5, 4)
     },
   ],
   files: [
-    { id: 'f-notice', name: '奖学金通知.md', kind: 'source', mimeType: 'text/markdown', content: notice, modifiedTime: now - 2 * day },
-    { id: 'f-profile', name: '个人资料.md', kind: 'source', mimeType: 'text/markdown', content: profile, modifiedTime: now - 7 * day },
-    { id: 'f-weekly', name: '周报-2026-10-13.md', kind: 'source', mimeType: 'text/markdown', content: weekly, modifiedTime: now - 8 * day },
-    { id: 'f-outline', name: '组会汇报提纲.md', kind: 'artifact', mimeType: 'text/markdown', content: outline.content, modifiedTime: now - day },
+    { id: 'f-notice', name: '奖学金通知.md', kind: 'source', mimeType: 'text/markdown', size: new Blob([notice]).size, content: notice, modifiedTime: now - 2 * day },
+    { id: 'f-profile', name: '个人资料.md', kind: 'source', mimeType: 'text/markdown', size: new Blob([profile]).size, content: profile, modifiedTime: now - 7 * day },
+    { id: 'f-weekly', name: '周报-2026-10-13.md', kind: 'source', mimeType: 'text/markdown', size: new Blob([weekly]).size, content: weekly, modifiedTime: now - 8 * day },
+    { id: 'f-outline', name: '组会汇报提纲.md', kind: 'artifact', mimeType: 'text/markdown', size: new Blob([outline.content]).size, content: outline.content, modifiedTime: now - day },
   ],
   schedules: [
     { id: 's1', name: '每日邮件摘要', rule: '每天 08:00', nextRunAt: now + 9 * hour, enabled: true, lastResult: '昨天 08:00 · 3 封新邮件，已生成摘要' },
@@ -330,7 +330,7 @@ torch.cat([half_cos, half_cos], dim=-1)   # shape (5, 4)
     { id: 'm3', text: '回答技术问题时附上可运行的最小代码。' },
   ],
   prefs: { language: '中文', defaultEffort: 'medium', model: 'anthropic:claude-haiku-5-5' },
-  account: { name: 'Rayama', email: 'rayama@gmail.com', driveConnected: true },
+  account: { name: 'Rayama', email: 'rayama@gmail.com', driveConnected: true, driveError: null },
   // Stand-in for GET /v1/models on both endpoints, joined with models.dev capabilities.
   models: [
     { provider: 'anthropic', id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5', capabilities: { toolCall: true, efforts: ['low', 'medium', 'high'], context: 1_000_000 } },

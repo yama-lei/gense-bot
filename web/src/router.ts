@@ -5,7 +5,7 @@ export type Route =
   | { name: 'chat'; id: string }
   | { name: 'projects' }
   | { name: 'project'; id: string }
-  | { name: 'files'; tab?: 'source' | 'artifact'; id?: string; quote?: string }
+  | { name: 'files'; tab?: 'source' | 'artifact' | 'drive'; id?: string; quote?: string }
   | { name: 'scheduled' }
   | { name: 'customize' }
 
@@ -20,7 +20,7 @@ function parse(hash: string): Route {
     case 'files':
       return {
         name: 'files',
-        tab: parts[1] === 'artifact' ? 'artifact' : 'source',
+        tab: parts[1] === 'artifact' || parts[1] === 'drive' ? parts[1] : 'source',
         id: parts[2],
         quote: new URLSearchParams(query).get('q') ?? undefined,
       }

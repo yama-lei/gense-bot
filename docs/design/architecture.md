@@ -223,6 +223,8 @@ plugins/<id>/
 
 V1 记录（2026-10-21，本地 `vite dev`）：依赖锁定为 `@cloudflare/think` 0.21.0、`agents` 0.29.0、`ai` 7.0.148；compatibility date `2026-10-01`。OpenAI（Responses API）完成一轮带 `artifact_create` 的对话；Anthropic 链路已打通，但端点返回 503 “No available accounts”，待端点恢复后重测。部署前 `cf deploy --dry-run` 通过（gzip 后约 1.4 MB）。
 
+部署记录（2026-10-21）：Access 自托管应用 `GenseBot`（`bot.rayama.site`，只放行 owner 邮箱，session 720h）；过渡期登录方式是邮箱一次性 PIN，Google 身份提供方等 OAuth 客户端建好后加上。Google 的 OAuth 同意屏幕和 Web 客户端没有公开的 CLI/API（`gcloud iam oauth-clients` 只用于 Workforce 身份联合，不能申请 Drive scope），只能在控制台创建。`GOOGLE_CLIENT_ID/SECRET` 在 V3 再加回 Worker 配置，否则缺值时 `cf deploy` 会失败。
+
 测试走真实路径：使用真实模型端点和真实的测试 Drive 账号，不写只测 mock 的测试。
 
 ## 待定

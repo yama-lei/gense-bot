@@ -29,8 +29,6 @@ export const production = {
     OPENAI_BASE_URL: bindings.secret(),
     OPENAI_AUTH_TOKEN: bindings.secret(),
     DEFAULT_OPENAI_MODEL: bindings.secret(),
-    GOOGLE_CLIENT_ID: bindings.secret(),
-    GOOGLE_CLIENT_SECRET: bindings.secret(),
     TOKEN_ENCRYPTION_KEY: bindings.secret(),
   },
   exports: {

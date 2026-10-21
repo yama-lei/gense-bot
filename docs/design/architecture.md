@@ -73,7 +73,7 @@ getModel() {
 - **默认模型**：新会话使用用户上次选择的模型；从未选过时，使用 `DEFAULT_ANTHROPIC_MODEL`，没有配置就用 `DEFAULT_OPENAI_MODEL`。
 - **切换模型**：每个会话记录所选的供应商和模型，可以在会话中切换；每一轮记录实际使用的模型。
 - **effort**：映射到各供应商自己的推理强度参数（Anthropic 的 effort / thinking，OpenAI 的 `reasoningEffort`）。具体映射在 V1 中按实际端点确定。
-- **待验证**：根据 AI SDK 文档，GPT-6 系列的工具调用要通过 Responses API。如果 OpenAI 兼容端点只支持 Chat Completions，这个供应商就不能用于需要工具的会话，界面要标注出来。
+- **OpenAI 使用 Responses API**（`createOpenAI(...)(model)` 的默认行为）。GPT-6 系列的工具调用要求使用这个 API；用户确认端点支持（2026-10-21）。
 
 ## Drive 存储
 

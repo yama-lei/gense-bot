@@ -14,7 +14,7 @@
 | Agent 运行时 | `@cloudflare/think` | 依赖锁定精确版本；`@cloudflare/computer` 只作为 peer dependency 安装 |
 | 模型 | AI SDK `@ai-sdk/anthropic`、`@ai-sdk/openai` | 两个兼容端点，配置来自 `.env`，模型列表从端点获取 |
 | 登录 | Cloudflare Access，Google 身份提供方 | Worker 自己再校验 Access JWT |
-| 用户文件 | Google Drive API v3 | OAuth scope 先只申请 `drive.file` |
+| 用户文件 | Google Drive API v3 | OAuth scope `drive`（完整访问，2026-10-21 确认）；写入限制在 `GenseBot/` 内，由代码保证 |
 | 部署 | `cf deploy --secrets-file .env` | 密钥不进 Git，不经过对话 |
 
 不使用 Dynamic Workers、Containers、Workers AI、R2 或向量库。
@@ -46,7 +46,7 @@ Worker 入口
 1. Access 应用覆盖整个域名（包括 `workers.dev`），策略：只允许指定的 Google 邮箱。
 2. Worker 对每个非静态请求都校验 `Cf-Access-Jwt-Assertion`：签名用团队域名的 certs，`aud` 要匹配应用的 AUD tag。不能只信任“请求经过了 Access”，这样可以防止有人绕过 Access 直接访问 Worker。
 3. 首次使用时，界面提示“连接 Google Drive”，走 OAuth 授权码流程（`access_type=offline`），拿到 refresh token 后加密保存在 UserHub。加密用 AES-GCM，密钥来自 secret `TOKEN_ENCRYPTION_KEY`。
-4. Google OAuth 应用发布为 Production（未验证）。如果停留在 Testing，refresh token 约 7 天过期。`drive.file` 是非敏感 scope；以后加日历、Tasks 时增量申请对应 scope。
+4. Google OAuth 应用发布为 Production（未验证）。如果停留在 Testing，refresh token 约 7 天过期。`drive` 是受限 scope：未验证的应用最多 100 个用户，授权页会显示“Google 尚未验证此应用”，个人使用可以接受。以后加日历、Tasks 时增量申请对应 scope。
 
 Access 登录和 Google OAuth 是两次授权：前者证明“你是谁”，后者授权“助手可以访问你的 Drive”。暂时不合并，因为 Access 不会把 Google 的 API token 交给我们的应用。
 
@@ -93,7 +93,11 @@ getModel() {
    └─ Artifacts/   助手保存的产物
 ```
 
-- `drive.file` 只能访问本应用创建的文件，以及用户通过 Google Picker 选中的文件。用户自己手动放进 `资料/` 的文件，助手看不到，需要用 Picker 选择一次。这是用权限范围换来的安全性：如果申请完整的 `drive` scope，就属于受限 scope，授权页会出现更严重的警告。（待用户确认，见“待定”）
+- 权限（2026-10-21 确认）：申请完整的 `drive` scope。
+  - **读**：整个 Drive 都可以读取和搜索，用户不需要先把文件移进 `GenseBot/`。
+  - **写**：只能在 `GenseBot/` 之下创建或修改文件。写工具在执行前沿 `parents` 向上检查，目标不在 `GenseBot/` 文件夹树内就拒绝。`GenseBot/` 文件夹的 ID 在首次连接时创建或找到，保存在 UserHub。
+  - 修改或删除 `资料/` 中已有的文件，仍然要经过确认（Spec“外部操作”）；新建 Artifact 不需要确认。
+  - Google 的 OAuth scope 本身不能限制到某个文件夹，所以“只写 `GenseBot/`”完全靠我们的代码保证，这一点要有测试覆盖。
 - 文件 ID 是唯一标识，路径只用于显示。UserHub 缓存文件列表（ID、名称、修改时间），Drive 才是数据源。
 - 首版只处理文本：`.md`、`.txt`、`.csv`、`.json` 和 Google 文档（导出为 Markdown 或纯文本）。PDF 和图片放到后续阶段。
 
@@ -101,7 +105,7 @@ getModel() {
 
 | 工具 | 副作用 | 说明 |
 | --- | --- | --- |
-| `files.list` / `files.search` | 无 | 列出或按名称搜索资料与 Artifacts |
+| `files.list` / `files.search` | 无 | 列出 `GenseBot/` 中的资料与 Artifacts；`files.search` 可以搜索整个 Drive（名称和全文） |
 | `files.read` | 无 | 按文件 ID 读取文本，过长时分段读取 |
 | `artifact.save` | 创建新文件 | 只在 `Artifacts/` 中新建文件，不覆盖已有文件，所以可以安全重试（以 `idempotencyKey` 作为 Drive `appProperties` 去重） |
 | `files.update` / `files.delete` | 修改用户数据 | 首版不提供；后续通过 Think Actions 的审批流程加入 |
@@ -213,7 +217,6 @@ plugins/<id>/
 
 ## 待定
 
-- 用 `drive.file` + Picker，还是申请完整的 `drive` scope（见“Drive 存储”）。
 - Google 文档的导出格式选 Markdown 还是纯文本，取决于 Drive API 的实际导出质量。
 - 是否需要会话全文搜索；Think 的 session search 能否跨会话使用。
 - MCP 界面 iframe 的 sandbox 域名，以及 `@mcp-ui/client` 和官方 AppBridge 选哪个（接入 MCP 时再定）。

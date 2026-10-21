@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { WorkerEnv } from './env'
 import type { Citation, DriveFile, ToolResult } from '../src/types'
 import { findQuote } from '../src/util'
-import type { Drive, Folders } from './drive'
+import { isImage, toFile, type Drive, type Folders, type TextCache } from './drive'
 import { webAvailable, webFetch, webResearch, webSearch } from './web'
 
 // Server half of the plugins (architecture "插件与界面"). Each execute() returns an MCP-style
@@ -19,6 +19,10 @@ export interface ToolHost {
   filesChanged(): void
   /** Texts read in this chat instance, so citations can be checked without another download. */
   readCache: Map<string, { name: string; text: string }>
+  /** Converted Office/PDF text, kept by the hub across chats. */
+  textCache: TextCache
+  /** Whether this turn's model accepts images; unknown models are assumed to. */
+  seesImages: boolean
 }
 
 /** Characters per `files_read` call; longer files are read in parts. */
@@ -71,9 +75,21 @@ function extension(language = '') {
 export function createTools(host: ToolHost) {
   const read = async (fileId: string) => {
     const { drive, folders } = await host.drive()
-    const { file, text } = await drive.readText(fileId, folders)
+    const { file, text } = await drive.readText(fileId, folders, host.textCache)
     host.readCache.set(file.id, { name: file.name, text })
     return { file, text }
+  }
+
+  // Every model step converts the whole history again; keep recent images instead of downloading them each time.
+  const images = new Map<string, { mediaType: string; data: string }>()
+  const seeImage = async (id: string) => {
+    const hit = images.get(id)
+    if (hit) return hit
+    const { drive } = await host.drive()
+    const { mediaType, data } = await drive.image(id)
+    images.set(id, { mediaType, data })
+    if (images.size > 8) images.delete(images.keys().next().value!)
+    return { mediaType, data }
   }
 
   return {
@@ -104,9 +120,13 @@ export function createTools(host: ToolHost) {
         toModelOutput,
       }),
       files_read: tool({
-        description: `按文件 ID 读取文本（Google 文档导出为 Markdown）。每次最多返回 ${READ_CHUNK} 字，较长的文件用 offset 继续读。`,
+        description: `按文件 ID 读取内容。文本、Google 文档、PDF（含扫描件 OCR）、Word、Excel、PowerPoint 读成文字，每次最多 ${READ_CHUNK} 字，较长的文件用 offset 继续读；图片会直接给你看。`,
         inputSchema: z.object({ fileId: z.string().min(1), offset: z.number().int().min(0).optional().describe('从第几个字符开始，默认 0') }),
         execute: guarded(async ({ fileId, offset = 0 }) => {
+          const { drive } = await host.drive()
+          const meta = await drive.get(fileId)
+          // Only the id is stored; the pixels are fetched when the model reads the result.
+          if (isImage(meta.mimeType)) return { content: `图片：${meta.name}（id: ${meta.id}）`, structuredContent: { file: toFile(meta, 'drive'), image: true } }
           const { file, text } = await read(fileId)
           const part = text.slice(offset, offset + READ_CHUNK)
           const end = offset + part.length
@@ -116,7 +136,17 @@ export function createTools(host: ToolHost) {
             structuredContent: { file, offset, end, total: text.length },
           }
         }),
-        toModelOutput,
+        toModelOutput: async ({ output }: { output: ToolResult }) => {
+          const image = output.structuredContent as { file?: DriveFile; image?: boolean } | undefined
+          if (output.isError || !image?.image || !image.file) return toModelOutput({ output })
+          if (!host.seesImages) return { type: 'text' as const, value: `${output.content}\n\n当前模型不支持图像输入，看不到这张图片。请告诉用户换一个支持图片的模型再试。` }
+          try {
+            const { mediaType, data } = await seeImage(image.file.id)
+            return { type: 'content' as const, value: [{ type: 'text' as const, text: output.content }, { type: 'image-data' as const, data, mediaType }] }
+          } catch (e) {
+            return { type: 'error-text' as const, value: `${output.content}\n\n读取图片失败：${e instanceof Error ? e.message : String(e)}` }
+          }
+        },
       }),
       files_cite: tool({
         description: `回答用到了文件内容时，最后调用一次，记录引用。quote 必须是原文中连续的一段，逐字摘录，不超过 ${QUOTE_MAX} 字；找不到原文的引用会被丢弃。`,

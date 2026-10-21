@@ -4,6 +4,7 @@ import { callable, getAgentByName } from 'agents'
 import { generateText, type UIMessage } from 'ai'
 import { z } from 'zod'
 import type { BranchNote, Effort, ToolResult, TurnBody, TurnMetadata } from '../src/types'
+import { ATTACHMENT_NOTE } from '../src/util'
 import { Drive } from './drive'
 import { defaultModel, effortOptions, languageModel, parseModelKey } from './models'
 import { artifactInput, availablePlugins, createTools, enabledTools, saveArtifact, type ToolHost } from './tools'
@@ -39,6 +40,11 @@ export class Chat extends Think<WorkerEnv> {
     },
     filesChanged: () => void this.hub().then((h) => h.filesChanged()),
     readCache: new Map(),
+    textCache: {
+      get: async (key) => (await this.hub()).cachedText(key),
+      put: async (key, text) => (await this.hub()).cacheText(key, text),
+    },
+    seesImages: true,
   }
   private readonly tools = createTools(this.host)
 
@@ -89,6 +95,7 @@ export class Chat extends Think<WorkerEnv> {
     if (wanted) kv.put('effort', wanted)
     // Files may have changed since the last turn; quotes are checked against fresh reads.
     this.host.readCache.clear()
+    this.host.seesImages = caps?.image ?? true
 
     const tools = Object.keys(enabledTools(this.tools, settings.enabledPlugins))
     const system = [
@@ -181,7 +188,9 @@ export class Chat extends Think<WorkerEnv> {
     const i = path.findIndex((m) => m.id === messageId)
     if (i < 0 || path[i].role !== 'user') throw new Error('只能编辑当前版本里的消息')
     const parentId = i === 0 ? null : path[i - 1].id
-    const message: UIMessage = { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: content }] }
+    // The edit replaces the words; the files attached to the original stay with it.
+    const kept = path[i].parts.flatMap((p) => (p.type === 'text' && p.text?.startsWith(ATTACHMENT_NOTE) ? [{ type: 'text' as const, text: p.text }] : []))
+    const message: UIMessage = { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: content }, ...kept], metadata: path[i].metadata }
     if (parentId === null) {
       const roots = this.ctx.storage.kv.get<string[]>('roots') ?? [path[0].id]
       this.ctx.storage.kv.put('roots', [...roots, message.id])

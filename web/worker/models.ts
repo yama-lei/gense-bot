@@ -74,6 +74,7 @@ interface ModelsDevEntry {
   tool_call?: boolean
   reasoning_options?: { type: string; values?: string[] }[]
   limit?: { context?: number }
+  modalities?: { input?: string[] }
 }
 
 /** Reduces models.dev `api.json` to the capabilities of the given endpoint models. */
@@ -90,6 +91,7 @@ export function pickCapabilities(api: unknown, provider: Provider, ids: string[]
       toolCall: entry.tool_call !== false,
       efforts: EFFORTS.filter((e) => values.includes(e)),
       context: entry.limit?.context ?? 0,
+      image: entry.modalities?.input?.includes('image') ?? false,
     }
   }
   return out

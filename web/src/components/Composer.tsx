@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { MOCK } from '../mode'
 import { findModel, modelKey, modelName, useModels } from '../models'
-import type { Effort, ModelOption } from '../types'
-import { IconArrowUp, IconChevronDown, IconStop } from './Icons'
+import type { Attachment, DriveFile, Effort, ModelOption } from '../types'
+import { IconAlert, IconArrowUp, IconChevronDown, IconDoc, IconPaperclip, IconStop, IconX } from './Icons'
 
 /** Reasoning effort, shown as how hard the model thinks. */
 export const effortLabel: Record<Effort, string> = { low: '轻度思考', medium: '标准思考', high: '深度思考' }
@@ -21,7 +21,9 @@ interface Props {
   effort: Effort
   onModel: (m: string) => void
   onEffort: (e: Effort) => void
-  onSend: (text: string) => void
+  onSend: (text: string, attachments: Attachment[]) => void
+  /** Uploads a file to attach; without it the composer takes no files. */
+  onAttach?: (file: File) => Promise<DriveFile>
   busy?: boolean
   onStop?: () => void
   autoFocus?: boolean
@@ -29,10 +31,35 @@ interface Props {
   footnote?: boolean
 }
 
-export function Composer({ placeholder, model, effort, onModel, onEffort, onSend, busy, onStop, autoFocus, leftSlot, footnote }: Props) {
+/** A file being attached: uploading, uploaded (with its Drive file) or failed. */
+interface Pending {
+  key: string
+  name: string
+  file?: Attachment
+  error?: string
+}
+
+export function Composer({ placeholder, model, effort, onModel, onEffort, onSend, onAttach, busy, onStop, autoFocus, leftSlot, footnote }: Props) {
   const models = useModels()
   const [text, setText] = useState('')
+  const [files, setFiles] = useState<Pending[]>([])
+  const [dragging, setDragging] = useState(false)
   const ref = useRef<HTMLTextAreaElement>(null)
+  const picker = useRef<HTMLInputElement>(null)
+  const uploading = files.some((f) => !f.file && !f.error)
+  const ready = files.flatMap((f) => (f.file ? [f.file] : []))
+
+  const attach = (list: Iterable<File>) => {
+    if (!onAttach) return
+    for (const f of list) {
+      const key = crypto.randomUUID()
+      setFiles((fs) => [...fs, { key, name: f.name }])
+      onAttach(f).then(
+        ({ id, name, mimeType, size }) => setFiles((fs) => fs.map((p) => (p.key === key ? { ...p, file: { id, name, mimeType, size } } : p))),
+        (e: unknown) => setFiles((fs) => fs.map((p) => (p.key === key ? { ...p, error: e instanceof Error ? e.message : String(e) } : p))),
+      )
+    }
+  }
 
   useEffect(() => {
     const el = ref.current
@@ -43,14 +70,42 @@ export function Composer({ placeholder, model, effort, onModel, onEffort, onSend
 
   const send = () => {
     const value = text.trim()
-    if (!value || busy) return
-    onSend(value)
+    if ((!value && !ready.length) || busy || uploading) return
+    onSend(value || '请看附件。', ready)
     setText('')
+    setFiles([])
   }
 
   return (
     <div className="composer-wrap">
-      <div className="composer">
+      <div
+        className={'composer' + (dragging ? ' dragging' : '')}
+        onDragOver={(e) => {
+          if (!onAttach || !e.dataTransfer.types.includes('Files')) return
+          e.preventDefault()
+          setDragging(true)
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          setDragging(false)
+          if (!onAttach || !e.dataTransfer.files.length) return
+          e.preventDefault()
+          attach(e.dataTransfer.files)
+        }}
+      >
+        {files.length > 0 && (
+          <div className="attach-row">
+            {files.map((f) => (
+              <span key={f.key} className={'attach-chip' + (f.error ? ' error' : '')} title={f.error ?? f.name}>
+                {f.error ? <IconAlert width={14} height={14} /> : f.file ? <IconDoc width={14} height={14} /> : <span className="spinner" />}
+                <span className="ellipsis">{f.error ?? f.name}</span>
+                <button className="icon-btn small" aria-label={`移除 ${f.name}`} onClick={() => setFiles((fs) => fs.filter((p) => p.key !== f.key))}>
+                  <IconX width={13} height={13} />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <textarea
           ref={ref}
           rows={1}
@@ -58,6 +113,11 @@ export function Composer({ placeholder, model, effort, onModel, onEffort, onSend
           autoFocus={autoFocus}
           placeholder={placeholder}
           onChange={(e) => setText(e.target.value)}
+          onPaste={(e) => {
+            if (!onAttach || !e.clipboardData.files.length) return
+            e.preventDefault()
+            attach(e.clipboardData.files)
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault()
@@ -66,7 +126,26 @@ export function Composer({ placeholder, model, effort, onModel, onEffort, onSend
           }}
         />
         <div className="composer-row">
-          <div className="composer-left">{leftSlot}</div>
+          <div className="composer-left">
+            {onAttach && (
+              <>
+                <button className="icon-btn" aria-label="添加文件" title="添加文件（也可以拖放或粘贴），单个不超过 20 MB" onClick={() => picker.current?.click()}>
+                  <IconPaperclip width={18} height={18} />
+                </button>
+                <input
+                  ref={picker}
+                  type="file"
+                  multiple
+                  hidden
+                  onChange={(e) => {
+                    attach([...(e.target.files ?? [])])
+                    e.target.value = ''
+                  }}
+                />
+              </>
+            )}
+            {leftSlot}
+          </div>
           <div className="composer-right">
             <ModelPicker
               value={model}
@@ -89,7 +168,7 @@ export function Composer({ placeholder, model, effort, onModel, onEffort, onSend
                 <IconStop />
               </button>
             ) : (
-              <button className="send-btn" aria-label="发送" disabled={!text.trim()} onClick={send}>
+              <button className="send-btn" aria-label="发送" disabled={(!text.trim() && !ready.length) || uploading} onClick={send}>
                 <IconArrowUp />
               </button>
             )}

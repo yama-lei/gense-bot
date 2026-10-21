@@ -1,6 +1,6 @@
 // Scripted stand-in for the backend: turns a user message into status changes,
 // tool calls (executed by the real plugin tools) and streamed text. No model is called.
-import type { AppState, Citation, DriveFile } from '../types'
+import type { AppState, Attachment, Citation, DriveFile } from '../types'
 
 export interface Step {
   name: string
@@ -37,8 +37,17 @@ const unavailable = (what: string): Script => ({
   citations: [],
 })
 
-export function planReply(message: string, state: AppState): Script {
+export function planReply(message: string, state: AppState, attachments: Attachment[] = []): Script {
   const enabled = (id: string) => state.plugins.some((p) => p.id === id && p.enabled && p.available)
+
+  if (attachments.length) {
+    return {
+      summary: `读取 ${attachments.length} 个附件`,
+      steps: attachments.map((a) => ({ name: 'files_read', input: { fileId: a.id }, durationMs: 260 })),
+      text: `我读了你附上的文件：\n\n${attachments.map((a) => `- **${a.name}**`).join('\n')}\n\n文件已保存在 \`GenseBot/资料/\`，之后的对话里也可以继续引用。（Mock 演示，没有真正解析文件内容）`,
+      citations: [],
+    }
+  }
   const sources = state.files.filter((f) => f.kind === 'source')
   const mentioned = sources.find((f) => message.includes(f.name.replace(/\.\w+$/, '')))
 

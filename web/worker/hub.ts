@@ -4,7 +4,7 @@ import { RoutedAgents } from 'agents/routing'
 import { z } from 'zod'
 import type { BranchNote, ChatMeta, DriveFile, HubState, Provider, TurnSettings } from '../src/types'
 import type { Chat } from './chat'
-import { Drive, MAX_TEXT_BYTES, isText, type Folders } from './drive'
+import { Drive, MAX_UPLOAD_BYTES, type Folders, type TextCache } from './drive'
 import { DRIVE_SCOPE, GrantRevokedError, authUrl, decrypt, encrypt, exchangeCode, refreshAccessToken, revoke } from './google'
 import { defaultModel, listEndpointModels, pickCapabilities, providers } from './models'
 import { availablePlugins, pluginIds } from './tools'
@@ -330,7 +330,7 @@ export class UserHub extends Agent<WorkerEnv, HubState> {
   @callable()
   async readFile(id: string): Promise<{ file: DriveFile; text: string }> {
     const { drive, folders } = await this.drive()
-    return drive.readText(z.string().min(1).max(200).parse(id), folders)
+    return drive.readText(z.string().min(1).max(200).parse(id), folders, this.textCache)
   }
 
   @callable()
@@ -339,20 +339,41 @@ export class UserHub extends Agent<WorkerEnv, HubState> {
     return drive.search(z.string().min(1).max(200).parse(query), folders, 30)
   }
 
-  /** Uploads a text file into GenseBot/资料 (Spec S5: text only, at most 2 MB). */
-  @callable()
-  async uploadFile(name: string, text: string): Promise<DriveFile> {
-    const n = z.string().min(1).max(200).parse(name)
-    const body = z.string().parse(text)
-    if (!isText('', n)) throw new Error(`「${n}」不是文本文件。首版只支持 .md、.txt、.csv、.json 等文本资料。`)
-    if (new TextEncoder().encode(body).length > MAX_TEXT_BYTES) throw new Error(`「${n}」超过 2 MB 上限，未上传。`)
+  // ---- RPC from the Worker and from Chat (not callable from clients) ----
+
+  /** `POST /api/files`: any file, unchanged, into GenseBot/资料 (roadmap-2 R7). */
+  async uploadFile(name: string, mimeType: string, bytes: ArrayBuffer): Promise<DriveFile> {
+    const n = z.string().trim().min(1).max(200).parse(name.replace(/[\\/]+/g, ' '))
+    if (bytes.byteLength > MAX_UPLOAD_BYTES) throw new Error(`「${n}」超过 20 MB 上限，未上传。`)
     const { drive, folders } = await this.drive()
-    const file = await drive.create(folders, folders.sources, await drive.freeName(folders.sources, n), body)
+    const file = await drive.upload(folders, folders.sources, await drive.freeName(folders.sources, n), mimeType, bytes)
     await this.refreshFiles()
     return file
   }
 
-  // ---- RPC from Chat (not callable from clients) ----
+  /** Converted file text by `fileId:modifiedTime`; texts too large for one row are not kept. */
+  readonly textCache: TextCache = {
+    get: async (key) => {
+      void this.sql`CREATE TABLE IF NOT EXISTS converted_text (key TEXT PRIMARY KEY, text TEXT NOT NULL, at INTEGER NOT NULL)`
+      return this.sql<{ text: string }>`SELECT text FROM converted_text WHERE key = ${key}`[0]?.text ?? null
+    },
+    put: async (key, text) => {
+      if (text.length > 500_000) return
+      void this.sql`CREATE TABLE IF NOT EXISTS converted_text (key TEXT PRIMARY KEY, text TEXT NOT NULL, at INTEGER NOT NULL)`
+      void this.sql`INSERT OR REPLACE INTO converted_text (key, text, at) VALUES (${key}, ${text}, ${Date.now()})`
+      // Older versions of a file are never read again; keep the table small.
+      void this.sql`DELETE FROM converted_text WHERE key NOT IN (SELECT key FROM converted_text ORDER BY at DESC LIMIT 200)`
+    },
+  }
+
+  cachedText(key: string) {
+    return this.textCache.get(key)
+  }
+
+  cacheText(key: string, text: string) {
+    return this.textCache.put(key, text)
+  }
+
 
   /** A chat wrote to Drive; refresh the list in the background. */
   filesChanged() {

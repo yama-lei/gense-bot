@@ -1,6 +1,7 @@
 import type { UIMessage } from 'ai'
 import { tools } from '../plugins'
-import type { BranchNote, Citation, Effort, ToolCall, ToolResult, Turn, TurnMetadata, Versions, WebSource } from '../types'
+import type { BranchNote, Citation, Effort, ToolCall, ToolResult, Turn, TurnMetadata, UserMetadata, Versions, WebSource } from '../types'
+import { ATTACHMENT_NOTE } from '../util'
 
 export type ChatStatus = 'submitted' | 'streaming' | 'ready' | 'error'
 
@@ -31,7 +32,7 @@ const dedupe = (sources: WebSource[]) => [...new Map(sources.map((s) => [s.url, 
 
 const text = (m: UIMessage) =>
   m.parts
-    .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+    .filter((p): p is { type: 'text'; text: string } => p.type === 'text' && !p.text.startsWith(ATTACHMENT_NOTE))
     .map((p) => p.text)
     .join('')
 
@@ -71,6 +72,7 @@ export function toTurns(
         requestId: m.id,
         status: 'succeeded',
         userMessage: m.role === 'user' ? text(m) : '',
+        attachments: m.role === 'user' ? (m.metadata as UserMetadata | undefined)?.attachments : undefined,
         assistantMessage: '',
         toolCalls: [],
         citations: [],

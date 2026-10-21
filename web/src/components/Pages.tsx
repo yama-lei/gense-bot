@@ -3,7 +3,7 @@ import { MOCK } from '../mode'
 import { href, navigate } from '../router'
 import type { Store } from '../store'
 import { listed, type DriveFile, type Effort, type Project } from '../types'
-import { findQuote } from '../util'
+import { findQuote, formatSize } from '../util'
 import { Composer, Picker, effortLabel } from './Composer'
 import { IconAlert, IconDoc, IconPin, IconPlus, IconProject, IconRetry, IconSearch, IconTrash, Spark } from './Icons'
 import { Markdown } from './Markdown'
@@ -40,7 +40,8 @@ export function HomeView({ store }: { store: Store }) {
           onModel={setModel}
           onEffort={setEffort}
           autoFocus
-          onSend={(text) => void store.startConversation(text, projectId || null, model, effort).then((id) => navigate({ name: 'chat', id }))}
+          onSend={(text, files) => void store.startConversation(text, projectId || null, model, effort, files).then((id) => navigate({ name: 'chat', id }))}
+          onAttach={store.upload}
           leftSlot={<Picker value={projectId} options={[{ value: '', label: '无项目' }, ...projects.map((p) => ({ value: p.id, label: p.name }))]} onChange={setProjectId} />}
         />
         <div className="suggestions">
@@ -157,7 +158,8 @@ export function ProjectView({ store, id }: { store: Store; id: string }) {
           effort={effort}
           onModel={setModel}
           onEffort={setEffort}
-          onSend={(text) => void store.startConversation(text, id, model, effort).then((cid) => navigate({ name: 'chat', id: cid }))}
+          onSend={(text, files) => void store.startConversation(text, id, model, effort, files).then((cid) => navigate({ name: 'chat', id: cid }))}
+          onAttach={store.upload}
         />
         <label className="field project-desc">
           <span>项目说明</span>
@@ -260,20 +262,23 @@ export function FilesView({ store, tab = 'source', id, quote }: { store: Store; 
             {tab === 'source' && (
               <div className="files-actions">
                 <button className="btn primary" disabled={!account.driveConnected || busy} onClick={() => input.current?.click()}>
-                  {busy ? <span className="spinner" /> : <IconPlus width={15} height={15} />} {busy ? '上传中…' : '上传文本资料'}
+                  {busy ? <span className="spinner" /> : <IconPlus width={15} height={15} />} {busy ? '上传中…' : '上传资料'}
                 </button>
-                <span className="muted small">.md .txt .csv .json，单个不超过 2 MB</span>
+                <span className="muted small">PDF、Word、Excel、PPT、图片、文本等，单个不超过 20 MB</span>
                 <input
                   ref={input}
                   type="file"
-                  accept=".md,.markdown,.txt,.csv,.tsv,.json,.yaml,.yml,.xml,.html,text/*"
+                  multiple
                   hidden
                   onChange={async (e) => {
-                    const f = e.target.files?.[0]
+                    const picked = [...(e.target.files ?? [])]
                     e.target.value = ''
-                    if (!f) return
+                    if (!picked.length) return
                     setBusy(true)
-                    setError(await store.upload(f))
+                    setError(null)
+                    const failed: string[] = []
+                    for (const f of picked) await store.upload(f).catch((err: unknown) => failed.push(err instanceof Error ? err.message : String(err)))
+                    setError(failed.join('\n') || null)
                     setBusy(false)
                   }}
                 />
@@ -417,12 +422,6 @@ function FilePreview({ store, id, tab, quote }: { store: Store; id: string; tab:
       )}
     </div>
   )
-}
-
-function formatSize(n: number) {
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
 export function ScheduledView({ store }: { store: Store }) {

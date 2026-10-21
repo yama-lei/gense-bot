@@ -424,3 +424,13 @@ code, pre { font-family: var(--mono); }
 .side-thread .thread { padding: 18px 16px; }
 .side-thread .chat-composer { padding: 0 12px 12px; }
 .side-empty { margin: 24px 4px; line-height: 1.7; }
+
+/* Attachments */
+.composer.dragging { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.attach-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.attach-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 240px; padding: 4px 4px 4px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); font-size: 13px; }
+.attach-chip.error { color: var(--err); background: var(--err-bg); border-color: currentColor; }
+.user-files { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-bottom: 6px; }
+.file-card { display: inline-flex; align-items: center; gap: 8px; max-width: min(100%, 280px); padding: 8px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); font-size: 13.5px; color: var(--text); text-decoration: none; }
+a.file-card:hover { background: var(--hover); }
+.file-card .muted { flex-shrink: 0; font-size: 12px; }

@@ -72,6 +72,16 @@ export interface Turn {
   lastMessageId?: string
   /** A side thread's summary brought back to this chat; such a turn has no user message. */
   note?: BranchNote
+  /** Files sent with the user message (roadmap-2 R8). */
+  attachments?: Attachment[]
+}
+
+/** A Drive file attached to a user message. */
+export type Attachment = Pick<DriveFile, 'id' | 'name' | 'mimeType' | 'size'>
+
+/** Metadata of a user message. */
+export interface UserMetadata {
+  attachments?: Attachment[]
 }
 
 export interface Versions {
@@ -157,6 +167,8 @@ export interface ModelOption {
     toolCall: boolean
     efforts: Effort[]
     context: number
+    /** Accepts images as input (models.dev `modalities.input`). */
+    image: boolean
   } | null
 }
 

@@ -3,12 +3,14 @@ import { tools, views } from '../plugins'
 import type { DisplayMode, ViewHost } from '../plugins/types'
 import { href, navigate } from '../router'
 import type { Store } from '../store'
-import type { BranchNote, Conversation, DriveFile, Effort, ToolCall, Turn, Versions, WebSource } from '../types'
+import type { Attachment, BranchNote, Conversation, DriveFile, Effort, ToolCall, Turn, Versions, WebSource } from '../types'
 import { modelName, useModels } from '../models'
 import { Composer, effortLabel } from './Composer'
 import { IconAlert, IconArrowDown, IconBranch, IconCheck, IconChevronDown, IconChevronLeft, IconChevronRight, IconCopy, IconDoc, IconEdit, IconInfo, IconMore, IconRetry, IconSide, IconTool, IconX } from './Icons'
 import { Markdown } from './Markdown'
 import { TopBar } from './TopBar'
+import { MOCK } from '../mode'
+import { formatSize } from '../util'
 
 const statusLabel: Record<Turn['status'], string> = {
   queued: '已接收，排队中',
@@ -168,10 +170,11 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
             onEffort={setEffort}
             busy={busy}
             onStop={() => last && store.stop(conv.id, last.id)}
-            onSend={(text) => {
-              store.reply(conv.id, text, model, effort)
+            onSend={(text, files) => {
+              store.reply(conv.id, text, model, effort, files)
               setAtBottom(true)
             }}
+            onAttach={store.upload}
             footnote
           />
           )}
@@ -401,6 +404,7 @@ function TurnView({
 
   return (
     <section className="turn">
+      {turn.attachments?.length ? <AttachmentCards files={turn.attachments} /> : null}
       <UserBubble
         text={turn.userMessage}
         versions={actions && turn.userVersions}
@@ -691,10 +695,11 @@ function SideThread({ store, side, onClose }: { store: Store; side: Conversation
           onEffort={setEffort}
           busy={busy}
           onStop={() => last && store.stop(side.id, last.id)}
-          onSend={(text) => {
+          onSend={(text, files) => {
             if (turns.length === 0) store.patchConv(side.id, (c) => ({ ...c, title: text.replace(/\s+/g, ' ').slice(0, 30) }))
-            store.reply(side.id, text, model, effort)
+            store.reply(side.id, text, model, effort, files)
           }}
+          onAttach={store.upload}
         />
       </div>
     </aside>
@@ -732,6 +737,32 @@ function CopyButton({ text }: { text: string }) {
     >
       {copied ? <IconCheck width={15} height={15} /> : <IconCopy width={15} height={15} />}
     </button>
+  )
+}
+
+/** Files sent with a user message, shown above its bubble; each opens in Drive. */
+function AttachmentCards({ files }: { files: Attachment[] }) {
+  return (
+    <div className="user-files">
+      {files.map((f) => {
+        const body = (
+          <>
+            <IconDoc width={18} height={18} />
+            <span className="ellipsis">{f.name}</span>
+            {f.size != null && <span className="muted">{formatSize(f.size)}</span>}
+          </>
+        )
+        return MOCK ? (
+          <span key={f.id} className="file-card" title={f.name}>
+            {body}
+          </span>
+        ) : (
+          <a key={f.id} className="file-card" title={f.name} href={`https://drive.google.com/file/d/${f.id}/view`} target="_blank" rel="noreferrer noopener">
+            {body}
+          </a>
+        )
+      })}
+    </div>
   )
 }
 

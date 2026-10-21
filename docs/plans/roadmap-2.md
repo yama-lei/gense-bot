@@ -1,6 +1,6 @@
 # 路线图 2：从首个闭环到日常可用
 
-状态：2026-10-21 制定，按阶段开发中（阶段 1、2 已完成）。来源是仓库根目录的 `goal.md`（用户的新功能清单），这里把它整理成 Intent → Spec → Design，并给出分层和开发顺序。所有取舍由开发者决定，理由写在各节；有长期成本的决定另见 [ADR-0003](../adr/0003-free-plan-agent-features.md)。
+状态：2026-10-21 制定，按阶段开发中（阶段 1–3 已完成）。来源是仓库根目录的 `goal.md`（用户的新功能清单），这里把它整理成 Intent → Spec → Design，并给出分层和开发顺序。所有取舍由开发者决定，理由写在各节；有长期成本的决定另见 [ADR-0003](../adr/0003-free-plan-agent-features.md)。
 
 依据：[首版 Spec](../specs/personal-assistant.md)、[网页界面 Spec](../specs/web-ui.md)、[架构](../design/architecture.md)。
 
@@ -110,13 +110,14 @@ L0 平台改造  工具注册表与按需加载 · 附件管线 · 会话树存�
 
 ### L0-2 附件管线
 
-- 上传走 `POST /api/files`（`multipart/form-data`，Worker 校验 Access 后转给 UserHub），比通过 WebSocket 传大文件更稳；单文件上限 20 MB，类型不限，原样写入 `GenseBot/资料/`（`Drive.create` 改为接受二进制）。
+- 上传走 `POST /api/files`（`multipart/form-data`，Worker 校验 Access 后经 RPC 交给 UserHub 的 `uploadFile`），比通过 WebSocket 传大文件更稳；原来只收文本的 `uploadFile` callable 已删除。单文件上限 20 MB（前后端共用 `MAX_UPLOAD_BYTES`），类型不限，原样写入 `GenseBot/资料/`。Drive 的 multipart 上传只到 5 MB，所以统一用 resumable 上传（先 POST 拿上传地址，再一次 PUT 全部字节）。
+- 输入框：回形针、拖放、粘贴都能附加文件，文件先上传，上传中显示进度、失败显示原因，上传完才能发送；只有附件没有文字时用“请看附件。”作为正文。资料页的上传按钮同样接受任意类型、可多选。
 - 读取 `files_read` 按类型分流：
-  - 文本类：直接下载（沿用 2 MB 上限）。
+  - 文本类（含 HTML、Markdown、CSV、JSON）：直接下载，沿用 2 MB 上限。
   - Google 文档/表格/幻灯片：导出（已实现）。
-  - Word、Excel、PPT、ODF、RTF、HTML、PDF：`files.copy` 到 `GenseBot/.cache/` 并转换成 Google 文档（PDF 带 `ocrLanguage`），导出文本后删除副本。转换结果按 `fileId + modifiedTime` 缓存在 UserHub 的 SQLite 中，同一文件不重复转换。删除只针对我们刚创建的副本，仍在 `GenseBot/` 内。
-  - 图片：返回 AI SDK 的 `content` 输出（`media` 部分），模型能直接看到；模型不支持图像输入时返回文字说明。能力来自 models.dev 的 `modalities.input`。
-- 消息中的附件：用户消息 `metadata.attachments = [{id,name,mimeType,size}]` 供界面显示；同时追加一个以 `[附件]` 开头的文本部分告诉模型文件 ID，界面渲染时隐藏这部分。这样历史消息里的附件在任何模型下都能被重新读取，而不依赖 Think 的媒体逐出。
+  - PDF、Word、Excel、PowerPoint、OpenDocument、RTF：`files.copy` 到 `GenseBot/.cache/` 并转换成对应的 Google 文件（PDF 带 `ocrLanguage=zh`，扫描件也能读），导出文本后在 `finally` 中删除副本，原文件不变。表格只能导出第一个工作表，结果里会注明。转换结果按 `fileId:modifiedTime` 缓存在 UserHub 的 SQLite 表 `converted_text`（单条超过 50 万字不缓存，只保留最近 200 条），同一文件不重复转换。
+  - 图片：工具结果只带文件信息，异步的 `toModelOutput` 再取图片，作为 `image-data` 内容部分交给模型。图片取 Drive 缩略图（长边 1024 像素）；没有缩略图时下载原图，限 4 MB。每个对话实例在内存里保留最近 8 张，避免每轮重复下载。模型不支持图像输入时（models.dev 的 `modalities.input`，即 `capabilities.image`）只返回文字说明，提示换模型。
+- 消息中的附件：用户消息 `metadata.attachments = [{id,name,mimeType,size}]`，界面据此在气泡上方显示文件卡片（点击在 Drive 中打开）；同时追加一个以 `[附件]` 开头的文本部分告诉模型文件 ID，界面渲染时隐藏这部分。这样历史消息里的附件在任何模型下都能被重新读取，而不依赖 Think 的媒体逐出。编辑带附件的消息时保留附件。
 
 ### L0-3 会话树
 
@@ -177,7 +178,7 @@ L0 平台改造  工具注册表与按需加载 · 附件管线 · 会话树存�
 | --- | --- | --- | --- |
 | 1 | 网页插件（含来源卡片）+ 工具注册表元数据 | — | R1–R6 本地实测通过；部署 |
 | 2 | 会话树：重新生成、编辑、版本、分支、支线与总结回主线 | — | R11–R16 |
-| 3 | 附件管线与任意文件上传 | — | R7–R10（需要用户连接 Drive 后验证） |
+| 3 | 附件管线与任意文件上传 | — | R7–R10（Mock 已验证；真实环境需要用户连接 Drive 后验证） |
 | 4 | `/` 命令、`@` 提及、Skills | 1、3 | R17–R19 |
 | 5 | 按需加载、生成式界面 | 1 | R20–R22 |
 | 6 | 图片生成 | 端点开通 | R23 |

@@ -2,12 +2,13 @@ import { useAgentChat } from '@cloudflare/think/react'
 import { useAgent } from 'agents/react'
 import type { UIMessage } from 'ai'
 import { useEffect, useState } from 'react'
-import type { Effort, HubState, ToolResult, Turn, TurnBody } from '../types'
+import type { Attachment, Effort, HubState, ToolResult, Turn, TurnBody, UserMetadata } from '../types'
+import { attachmentNote } from '../util'
 import { pending } from './pending'
 import { toTurns, type ChatStatus } from './turns'
 
 export interface ChatControls {
-  send: (text: string, model: string, effort: Effort) => void
+  send: (text: string, model: string, effort: Effort, attachments?: Attachment[]) => void
   stop: () => void
   regenerate: (turn: Turn, body: TurnBody) => void
   edit: (turn: Turn, text: string, body: TurnBody) => void
@@ -19,6 +20,13 @@ export interface ChatControls {
 }
 
 type Siblings = Record<string, string[]>
+
+/** Attachments go in the metadata for the UI and in a hidden text part for the model. */
+function userMessage(text: string, attachments: Attachment[] = []) {
+  if (!attachments.length) return { text }
+  const metadata: UserMetadata = { attachments }
+  return { parts: [{ type: 'text' as const, text }, { type: 'text' as const, text: attachmentNote(attachments) }], metadata }
+}
 
 /** Keeps a chat's WebSocket and projects its messages onto turns. Renders nothing. */
 export function ChatBridge({
@@ -49,10 +57,10 @@ export function ChatBridge({
         return next
       })
     register(id, {
-      send: (text, model, effort) => {
+      send: (text, model, effort, attachments) => {
         setViewing(null)
         const body: TurnBody = { model, effort }
-        void sendMessage({ text }, { body: { ...body } })
+        void sendMessage(userMessage(text, attachments), { body: { ...body } })
       },
       stop: () => {
         const last = messages.findLast((m) => m.role === 'user')
@@ -109,7 +117,7 @@ export function ChatBridge({
     const first = pending.get(id)
     if (!first) return
     pending.delete(id)
-    void sendMessage({ text: first.text }, { body: { model: first.model, effort: first.effort } })
+    void sendMessage(userMessage(first.text, first.attachments), { body: { model: first.model, effort: first.effort } })
   }, [agent.identified, id, sendMessage])
 
   useEffect(() => {

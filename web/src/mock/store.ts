@@ -4,16 +4,14 @@ import { seed } from './seed'
 import { tools } from '../plugins'
 import type { ToolContext } from '../plugins/types'
 import type { Store } from '../store'
-import type { AppState, BranchNote, Conversation, DriveFile, Effort, ToolCall, ToolResult, Turn, Versions, WebSource } from '../types'
-import { uid } from '../util'
+import type { AppState, Attachment, BranchNote, Conversation, DriveFile, Effort, ToolCall, ToolResult, Turn, Versions, WebSource } from '../types'
+import { MAX_UPLOAD_BYTES, uid } from '../util'
 
 // v4: files carry `size`, the account carries `driveError`.
 const KEY = 'gensebot-mock-v5'
 /** Older versions by the id of the message they replaced: the turns from there on, per chat. */
 const BRANCHES_KEY = 'gensebot-mock-branches-v1'
 type Branches = Record<string, Record<string, Turn[]>>
-/** Upload limit from the spec's circuit-breaker table. */
-export const MAX_UPLOAD = 2 * 1024 * 1024
 
 function load(): AppState {
   try {
@@ -87,7 +85,7 @@ export function useMockStore(): Store {
 
   const run = useCallback(
     (convId: string, turn: Turn) => {
-      const script = planReply(turn.userMessage, stateRef.current)
+      const script = planReply(turn.userMessage, stateRef.current, turn.attachments)
       const ids: number[] = []
       timers.current.set(turn.id, ids)
       let t = 0
@@ -141,7 +139,7 @@ export function useMockStore(): Store {
     return () => all.forEach((ids) => ids.forEach(clearTimeout))
   }, [patchTurn, run])
 
-  const newTurn = (message: string, model: string, effort: Effort): Turn => {
+  const newTurn = (message: string, model: string, effort: Effort, attachments?: Attachment[]): Turn => {
     // The last model chosen becomes the default for new conversations.
     setState((s) => (s.prefs.model === model ? s : { ...s, prefs: { ...s.prefs, model } }))
     return {
@@ -155,11 +153,12 @@ export function useMockStore(): Store {
       model,
       effort,
       createdAt: Date.now(),
+      attachments: attachments?.length ? attachments : undefined,
     }
   }
 
-  const startConversation = (message: string, projectId: string | null, model: string, effort: Effort) => {
-    const turn = newTurn(message, model, effort)
+  const startConversation = (message: string, projectId: string | null, model: string, effort: Effort, attachments?: Attachment[]) => {
+    const turn = newTurn(message, model, effort, attachments)
     const conv: Conversation = {
       id: uid(),
       title: message.replace(/\s+/g, ' ').slice(0, 24),
@@ -173,8 +172,8 @@ export function useMockStore(): Store {
     return Promise.resolve(conv.id)
   }
 
-  const reply = (convId: string, message: string, model: string, effort: Effort) => {
-    const turn = newTurn(message, model, effort)
+  const reply = (convId: string, message: string, model: string, effort: Effort, attachments?: Attachment[]) => {
+    const turn = newTurn(message, model, effort, attachments)
     patchConv(convId, (c) => ({ ...c, updatedAt: Date.now(), turns: [...c.turns, turn] }))
     run(convId, turn)
   }
@@ -280,11 +279,15 @@ export function useMockStore(): Store {
     patchTurn(convId, turnId, (t) => ({ ...t, toolCalls: t.toolCalls.map((c) => (c.id === callId ? { ...c, viewState } : c)) }))
 
   /** Returns an error message, or null when the file was added. */
-  const upload = async (file: File): Promise<string | null> => {
-    if (file.size > MAX_UPLOAD) return `「${file.name}」超过 2 MB 上限，未上传。`
-    if (!/^text\/|json|xml/.test(file.type) && !/\.(md|txt|csv|json)$/i.test(file.name)) return `「${file.name}」不是文本文件。首版只支持文本资料。`
-    addFile({ id: 'f-' + uid(), name: file.name, kind: 'source', mimeType: file.type || 'text/plain', size: file.size, content: await file.text(), modifiedTime: Date.now() })
-    return null
+  const upload = async (file: File): Promise<DriveFile> => {
+    if (!stateRef.current.account.driveConnected) throw new Error('还没有连接 Google Drive。请先在“定制”页连接。')
+    if (file.size > MAX_UPLOAD_BYTES) throw new Error(`「${file.name}」超过 20 MB 上限，未上传。`)
+    const text = /^text\/|json|xml/.test(file.type) || /\.(md|txt|csv|json)$/i.test(file.name)
+    // Only text is kept in the browser; other files get a stand-in for what conversion would read.
+    const content = text ? await file.text() : `（Mock 演示：这里是「${file.name}」转换后的文字。真实版本会把 PDF、Word、Excel、PPT 转成文字，图片直接给模型看。）`
+    const added: DriveFile = { id: 'f-' + uid(), name: file.name, kind: 'source', mimeType: file.type || 'application/octet-stream', size: file.size, content, modifiedTime: Date.now() }
+    addFile(added)
+    return added
   }
 
   const setDrive = (driveConnected: boolean) => setState((s) => ({ ...s, account: { ...s.account, driveConnected, driveError: null } }))

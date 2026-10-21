@@ -3,7 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { pluginCatalog } from '../plugins/catalog'
 import { useRoute } from '../router'
 import type { Store } from '../store'
-import type { AppState, Conversation, DriveFile, Effort, HubState, Turn } from '../types'
+import type { AppState, Attachment, Conversation, DriveFile, Effort, HubState, Turn } from '../types'
+import { MAX_UPLOAD_BYTES } from '../util'
 import { ChatBridge, type ChatControls } from './ChatBridge'
 import { pending } from './pending'
 
@@ -21,7 +22,6 @@ const emptyHub: HubState = {
 }
 
 /** Spec "兜底限制": text files up to 2 MB; the hub checks again. */
-const MAX_UPLOAD = 2 * 1024 * 1024
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 /** Store backed by the user's UserHub (state) and the open chat's Think agent (turns). */
@@ -91,16 +91,16 @@ export function useRealStore(): Store {
 
   const patchConv = (convId: string, fn: (c: Conversation) => Conversation) => setState((s) => ({ ...s, conversations: s.conversations.map((c) => (c.id === convId ? fn(c) : c)) }))
 
-  const startConversation = async (message: string, projectId: string | null, model: string, effort: Effort) => {
+  const startConversation = async (message: string, projectId: string | null, model: string, effort: Effort, attachments?: Attachment[]) => {
     const id = await hubAgent.call<string>('createChat', [message, projectId])
-    pending.set(id, { text: message, model, effort })
+    pending.set(id, { text: message, model, effort, attachments })
     return id
   }
 
-  const reply = (convId: string, message: string, model: string, effort: Effort) => {
+  const reply = (convId: string, message: string, model: string, effort: Effort, attachments?: Attachment[]) => {
     const c = controls.current.get(convId)
-    if (c) c.send(message, model, effort)
-    else pending.set(convId, { text: message, model, effort })
+    if (c) c.send(message, model, effort, attachments)
+    else pending.set(convId, { text: message, model, effort, attachments })
   }
 
   const chatId = route.name === 'chat' ? route.id : null
@@ -135,13 +135,13 @@ export function useRealStore(): Store {
     },
     setViewState: (convId, _turnId, callId, viewState) => controls.current.get(convId)?.setViewState(callId, viewState),
     upload: async (file) => {
-      if (file.size > MAX_UPLOAD) return `「${file.name}」超过 2 MB 上限，未上传。`
-      try {
-        await hubAgent.call<DriveFile>('uploadFile', [file.name, await file.text()])
-        return null
-      } catch (e) {
-        return errorText(e)
-      }
+      if (file.size > MAX_UPLOAD_BYTES) throw new Error(`「${file.name}」超过 20 MB 上限，未上传。`)
+      const form = new FormData()
+      form.set('file', file)
+      const res = await fetch('/api/files', { method: 'POST', body: form }).catch(() => null)
+      const body = (await res?.json().catch(() => null)) as (DriveFile & { error?: string }) | null
+      if (!res?.ok || !body || body.error) throw new Error(body?.error ?? `上传失败${res ? `（HTTP ${res.status}）` : '，请检查网络'}`)
+      return body
     },
     setDrive: (connected) => {
       // OAuth needs a top-level navigation; the callback returns to the customize page.

@@ -1,18 +1,31 @@
 import type { DriveFile } from '../src/types'
+import { MAX_UPLOAD_BYTES } from '../src/util'
+
+export { MAX_UPLOAD_BYTES }
 
 // Minimal Drive v3 client (architecture "Drive 存储"). Reads anywhere in the user's Drive;
 // every write goes through `create`, which only accepts a parent inside GenseBot/.
 
 const API = 'https://www.googleapis.com/drive/v3'
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart'
+const RESUMABLE = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable'
 const FOLDER = 'application/vnd.google-apps.folder'
 const FIELDS = 'id,name,mimeType,size,modifiedTime,parents'
+const DOC = 'application/vnd.google-apps.document'
+const SHEET = 'application/vnd.google-apps.spreadsheet'
+const SLIDES = 'application/vnd.google-apps.presentation'
 
 export const ROOT_NAME = 'GenseBot'
 export const SOURCES_NAME = '资料'
 export const ARTIFACTS_NAME = 'Artifacts'
-/** Spec "兜底限制": uploads and reads are text, at most 2 MB. */
+/** Converted copies live here only while they are read (roadmap-2 "L0-2 附件管线"). */
+export const CACHE_NAME = '.cache'
+/** Text written by the assistant and plain text files read as-is. */
 export const MAX_TEXT_BYTES = 2 * 1024 * 1024
+/** Longest side of an image shown to a model; Drive renders the thumbnail. */
+const IMAGE_SIDE = 1024
+/** Originals up to this size are sent when Drive has no thumbnail. */
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024
 
 export interface Folders {
   root: string
@@ -27,13 +40,38 @@ interface RawFile {
   size?: string
   modifiedTime?: string
   parents?: string[]
+  thumbnailLink?: string
 }
 
 /** Google Workspace types and the text format each is exported as. */
 const EXPORTS: Record<string, string> = {
-  'application/vnd.google-apps.document': 'text/markdown',
-  'application/vnd.google-apps.spreadsheet': 'text/csv',
-  'application/vnd.google-apps.presentation': 'text/plain',
+  [DOC]: 'text/markdown',
+  [SHEET]: 'text/csv',
+  [SLIDES]: 'text/plain',
+}
+
+/** Office, ODF, RTF and PDF files are read by converting a copy into the matching Workspace type. */
+const CONVERTS: Record<string, string> = {
+  'application/pdf': DOC,
+  'application/msword': DOC,
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': DOC,
+  'application/vnd.oasis.opendocument.text': DOC,
+  'application/rtf': DOC,
+  'text/rtf': DOC,
+  'application/vnd.ms-excel': SHEET,
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': SHEET,
+  'application/vnd.oasis.opendocument.spreadsheet': SHEET,
+  'application/vnd.ms-powerpoint': SLIDES,
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': SLIDES,
+  'application/vnd.oasis.opendocument.presentation': SLIDES,
+}
+
+export const isImage = (mimeType: string) => /^image\/(png|jpe?g|gif|webp|heic|heif|bmp)$/.test(mimeType)
+
+/** Converted text kept by `fileId:modifiedTime`, so a file is converted once (UserHub's SQLite). */
+export interface TextCache {
+  get(key: string): Promise<string | null>
+  put(key: string, text: string): Promise<void>
 }
 
 export const isText = (mimeType: string, name = '') =>
@@ -85,20 +123,22 @@ export class Drive {
     return this.json<RawFile>(`${API}/files/${encodeURIComponent(id)}?fields=${FIELDS}`)
   }
 
-  /** Finds or creates GenseBot/{资料,Artifacts}. Folders the user moved into the trash are not reused. */
+  /** Finds or creates a folder by name. Folders the user moved into the trash are not reused. */
+  private async folder(name: string, parent: string): Promise<string> {
+    const [found] = await this.query(`name = ${lit(name)} and mimeType = '${FOLDER}' and ${lit(parent)} in parents and trashed = false`, { pageSize: 1 })
+    if (found) return found.id
+    const created = await this.json<RawFile>(`${API}/files?fields=id`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name, mimeType: FOLDER, parents: [parent] }),
+    })
+    return created.id
+  }
+
+  /** Finds or creates GenseBot/{资料,Artifacts}. */
   async ensureFolders(): Promise<Folders> {
-    const folder = async (name: string, parent: string) => {
-      const [found] = await this.query(`name = ${lit(name)} and mimeType = '${FOLDER}' and ${lit(parent)} in parents and trashed = false`, { pageSize: 1 })
-      if (found) return found.id
-      const created = await this.json<RawFile>(`${API}/files?fields=id`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name, mimeType: FOLDER, parents: [parent] }),
-      })
-      return created.id
-    }
-    const root = await folder(ROOT_NAME, 'root')
-    const [sources, artifacts] = await Promise.all([folder(SOURCES_NAME, root), folder(ARTIFACTS_NAME, root)])
+    const root = await this.folder(ROOT_NAME, 'root')
+    const [sources, artifacts] = await Promise.all([this.folder(SOURCES_NAME, root), this.folder(ARTIFACTS_NAME, root)])
     return { root, sources, artifacts }
   }
 
@@ -114,18 +154,68 @@ export class Drive {
     return files.map((f) => toFile(f, kindOf(f, folders)))
   }
 
-  /** Text of a file: Workspace documents are exported, other text files downloaded as-is. */
-  async readText(id: string, folders: Folders | null): Promise<{ file: DriveFile; text: string }> {
+  /**
+   * Text of a file: Workspace documents are exported, plain text downloaded as-is, and Office,
+   * ODF, RTF and PDF files converted through a temporary copy in GenseBot/.cache (PDFs with OCR).
+   * The original is never modified.
+   */
+  async readText(id: string, folders: Folders | null, cache?: TextCache): Promise<{ file: DriveFile; text: string }> {
     const meta = await this.get(id)
     const file = toFile(meta, kindOf(meta, folders))
-    if (!isText(meta.mimeType, meta.name)) throw new DriveError(`暂不支持读取这种文件（${meta.mimeType}）。首版只读取文本文件和 Google 文档、表格、幻灯片。`, 415)
-    if (Number(meta.size ?? 0) > MAX_TEXT_BYTES) throw new DriveError(`「${meta.name}」超过 2 MB，暂不读取。`, 413)
+    const size = Number(meta.size ?? 0)
     const exportAs = EXPORTS[meta.mimeType]
-    const url = exportAs
-      ? `${API}/files/${encodeURIComponent(id)}/export?mimeType=${encodeURIComponent(exportAs)}`
-      : `${API}/files/${encodeURIComponent(id)}?alt=media`
-    const text = await (await this.request(url)).text()
+    if (exportAs) return { file, text: await this.export(id, exportAs) }
+    if (isText(meta.mimeType, meta.name)) {
+      if (size > MAX_TEXT_BYTES) throw new DriveError(`「${meta.name}」超过 2 MB，暂不读取。`, 413)
+      return { file, text: await (await this.request(`${API}/files/${encodeURIComponent(id)}?alt=media`)).text() }
+    }
+    if (isImage(meta.mimeType)) throw new DriveError(`「${meta.name}」是图片，不能读成文字。`, 415)
+    const target = CONVERTS[meta.mimeType]
+    if (!target) throw new DriveError(`暂不支持读取这种文件（${meta.mimeType}）。支持文本、PDF、Word、Excel、PowerPoint、OpenDocument 和图片。`, 415)
+    if (!folders) throw new DriveError('读取这种文件需要先连接 Google Drive', 401)
+    if (size > MAX_UPLOAD_BYTES) throw new DriveError(`「${meta.name}」超过 20 MB，暂不读取。`, 413)
+    const key = `${id}:${meta.modifiedTime ?? ''}`
+    const cached = await cache?.get(key)
+    if (cached != null) return { file, text: cached }
+    const text = await this.convert(meta, target, folders)
+    await cache?.put(key, text)
     return { file, text }
+  }
+
+  private async export(id: string, mimeType: string) {
+    return (await this.request(`${API}/files/${encodeURIComponent(id)}/export?mimeType=${encodeURIComponent(mimeType)}`)).text()
+  }
+
+  /** Copies `meta` into GenseBot/.cache as a Workspace file, exports its text and deletes the copy. */
+  private async convert(meta: RawFile, target: string, folders: Folders): Promise<string> {
+    const cacheFolder = await this.folder(CACHE_NAME, folders.root)
+    const u = new URL(`${API}/files/${encodeURIComponent(meta.id)}/copy`)
+    u.search = new URLSearchParams({ fields: 'id', ...(meta.mimeType === 'application/pdf' ? { ocrLanguage: 'zh' } : {}) }).toString()
+    const copy = await this.json<RawFile>(u.toString(), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: `${meta.name} (转换副本)`, parents: [cacheFolder], mimeType: target }),
+    })
+    try {
+      const text = await this.export(copy.id, EXPORTS[target])
+      return target === SHEET ? `（表格只导出了第一个工作表）\n\n${text}` : text
+    } finally {
+      // Only the copy made above, which lies in GenseBot/.cache.
+      await this.request(`${API}/files/${encodeURIComponent(copy.id)}`, { method: 'DELETE' }).catch((e: unknown) => console.warn('deleting converted copy failed', e))
+    }
+  }
+
+  /** An image as base64, at most IMAGE_SIDE pixels on its longest side when Drive has a thumbnail. */
+  async image(id: string): Promise<{ file: RawFile; mediaType: string; data: string }> {
+    const meta = await this.json<RawFile>(`${API}/files/${encodeURIComponent(id)}?fields=${FIELDS},thumbnailLink`)
+    if (!isImage(meta.mimeType)) throw new DriveError(`「${meta.name}」不是图片`, 415)
+    if (meta.thumbnailLink) {
+      const res = await this.request(meta.thumbnailLink.replace(/=s\d+$/, '') + `=s${IMAGE_SIDE}`).catch(() => null)
+      if (res) return { file: meta, mediaType: res.headers.get('content-type')?.split(';')[0] || 'image/jpeg', data: base64(await res.arrayBuffer()) }
+    }
+    if (Number(meta.size ?? 0) > MAX_IMAGE_BYTES) throw new DriveError(`「${meta.name}」太大，Drive 也没有生成缩略图，暂时无法查看。`, 413)
+    const res = await this.request(`${API}/files/${encodeURIComponent(id)}?alt=media`)
+    return { file: meta, mediaType: meta.mimeType, data: base64(await res.arrayBuffer()) }
   }
 
   /** True when `id` is `rootId` or lies somewhere below it. */
@@ -149,6 +239,23 @@ export class Drive {
       `--${boundary}\r\ncontent-type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name, parents: [parent], mimeType, appProperties })}\r\n` +
       `--${boundary}\r\ncontent-type: ${mimeType}; charset=UTF-8\r\n\r\n${text}\r\n--${boundary}--`
     const created = await this.json<RawFile>(`${UPLOAD}&fields=${FIELDS}`, { method: 'POST', headers: { 'content-type': `multipart/related; boundary=${boundary}` }, body })
+    return toFile(created, parent === folders.artifacts ? 'artifact' : 'source')
+  }
+
+  /** Uploads any file, unchanged, into a folder inside GenseBot/ (roadmap-2 R7). Never overwrites. */
+  async upload(folders: Folders, parent: string, name: string, mimeType: string, bytes: ArrayBuffer): Promise<DriveFile> {
+    if (bytes.byteLength > MAX_UPLOAD_BYTES) throw new DriveError(`「${name}」超过 20 MB 上限，未上传。`, 413)
+    if (!(await this.isWithin(parent, folders.root))) throw new DriveError('目标文件夹不在 GenseBot/ 内，拒绝写入', 403)
+    // Resumable, because multipart uploads are limited to 5 MB.
+    const type = mimeType || 'application/octet-stream'
+    const start = await this.request(`${RESUMABLE}&fields=${FIELDS}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json; charset=UTF-8', 'x-upload-content-type': type, 'x-upload-content-length': String(bytes.byteLength) },
+      body: JSON.stringify({ name, parents: [parent] }),
+    })
+    const session = start.headers.get('location')
+    if (!session) throw new DriveError('Google Drive 没有返回上传地址', 502)
+    const created = await this.json<RawFile>(session, { method: 'PUT', headers: { 'content-type': type }, body: bytes })
     return toFile(created, parent === folders.artifacts ? 'artifact' : 'source')
   }
 
@@ -186,4 +293,11 @@ function mimeFor(name: string) {
   if (/\.json$/i.test(name)) return 'application/json'
   if (/\.html?$/i.test(name)) return 'text/html'
   return 'text/plain'
+}
+
+function base64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf)
+  let s = ''
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  return btoa(s)
 }

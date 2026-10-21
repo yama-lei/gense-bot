@@ -333,10 +333,10 @@ torch.cat([half_cos, half_cos], dim=-1)   # shape (5, 4)
   account: { name: 'Rayama', email: 'rayama@gmail.com', driveConnected: true, driveError: null },
   // Stand-in for GET /v1/models on both endpoints, joined with models.dev capabilities.
   models: [
-    { provider: 'anthropic', id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5', capabilities: { toolCall: true, efforts: ['low', 'medium', 'high'], context: 1_000_000 } },
-    { provider: 'anthropic', id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', capabilities: { toolCall: true, efforts: ['low', 'medium', 'high'], context: 1_000_000 } },
-    { provider: 'openai', id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol', capabilities: { toolCall: true, efforts: ['low', 'medium', 'high'], context: 400_000 } },
-    { provider: 'openai', id: 'gpt-6.1-mini', name: 'GPT-6.1 Mini', capabilities: { toolCall: true, efforts: [], context: 400_000 } },
+    { provider: 'anthropic', id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5', capabilities: { toolCall: true, efforts: ['low', 'medium', 'high'], context: 1_000_000, image: true } },
+    { provider: 'anthropic', id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', capabilities: { toolCall: true, efforts: ['low', 'medium', 'high'], context: 1_000_000, image: true } },
+    { provider: 'openai', id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol', capabilities: { toolCall: true, efforts: ['low', 'medium', 'high'], context: 400_000, image: true } },
+    { provider: 'openai', id: 'gpt-6.1-mini', name: 'GPT-6.1 Mini', capabilities: { toolCall: true, efforts: [], context: 400_000, image: true } },
     { provider: 'openai', id: 'my-proxy-model', name: 'my-proxy-model', capabilities: null },
   ],
   modelsError: null,

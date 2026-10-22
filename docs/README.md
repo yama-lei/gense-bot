@@ -11,6 +11,7 @@
 5. [免费额度与依赖核查](research/cloudflare-free-tier.md)：Workers / DO 额度依据（Pi 相关部分已过时）。
 6. [网页界面 Spec](specs/web-ui.md)：页面、组件、移动端行为和交付阶段；M0 Mock 前端在 [`web/`](../web/)。
 7. [路线图 2](plans/roadmap-2.md) 与 [ADR-0003](adr/0003-free-plan-agent-features.md)：网页搜索、文件、会话树、命令、Skills、生成式界面的分层计划和开发顺序。
+8. [OpenAI 兼容中转站的已知问题](research/openai-relay.md)：注入的托管工具、`item_reference`、生图参数，以及现有的绕开方式。
 
 原始课程材料保留在 [实验 1](intents/lab1.md) 和 [实验 2](intents/lab2.md)。它们提供长期方向，不代表其中每项功能都属于第一版交付范围。
 

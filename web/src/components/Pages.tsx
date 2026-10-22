@@ -8,6 +8,7 @@ import { Composer, Picker, effortLabel } from './Composer'
 import { IconAlert, IconDoc, IconPin, IconPlus, IconProject, IconRetry, IconSearch, IconTrash, Spark } from './Icons'
 import { Markdown } from './Markdown'
 import { PluginSettings } from './PluginSettings'
+import { Select } from './Select'
 import { suggestions } from './suggest'
 import { TopBar } from './TopBar'
 
@@ -45,7 +46,7 @@ export function HomeView({ store }: { store: Store }) {
           onSend={(message) => void store.startConversation(message, projectId || null, model, effort).then((id) => navigate({ name: 'chat', id }))}
           onAttach={store.upload}
           suggest={suggestions(store)}
-          leftSlot={<Picker value={projectId} options={[{ value: '', label: '无项目' }, ...projects.map((p) => ({ value: p.id, label: p.name }))]} onChange={setProjectId} />}
+          leftSlot={<Picker label="项目" value={projectId} options={[{ value: '', label: '无项目' }, ...projects.map((p) => ({ value: p.id, label: p.name }))]} onChange={setProjectId} />}
         />
         <div className="suggestions">
           {(MOCK
@@ -580,28 +581,25 @@ export function CustomizeView({ store }: { store: Store }) {
 
         <h3 className="section-title">偏好</h3>
         <div className="prefs">
-          <label className="field">
+          <div className="field">
             <span>回答语言</span>
-            <select value={prefs.language} onChange={(e) => store.setState((s) => ({ ...s, prefs: { ...s.prefs, language: e.target.value } }))}>
-              {Object.entries(languages).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-              {!(prefs.language in languages) && <option value={prefs.language}>{prefs.language}</option>}
-            </select>
-          </label>
-          <label className="field">
+            <Select
+              label="回答语言"
+              value={prefs.language}
+              options={[...Object.entries(languages).map(([value, label]) => ({ value, label })), ...(prefs.language in languages ? [] : [{ value: prefs.language, label: prefs.language }])]}
+              onChange={(language) => store.setState((s) => ({ ...s, prefs: { ...s.prefs, language } }))}
+            />
+          </div>
+          <div className="field">
             <span>默认思考强度</span>
             <small className="muted">新会话的初始值；模型不支持时自动忽略</small>
-            <select value={prefs.defaultEffort} onChange={(e) => store.setState((s) => ({ ...s, prefs: { ...s.prefs, defaultEffort: e.target.value as Effort } }))}>
-              {(['low', 'medium', 'high'] as Effort[]).map((e) => (
-                <option key={e} value={e}>
-                  {effortLabel[e]}
-                </option>
-              ))}
-            </select>
-          </label>
+            <Select
+              label="默认思考强度"
+              value={prefs.defaultEffort}
+              options={(['low', 'medium', 'high'] as Effort[]).map((e) => ({ value: e, label: effortLabel[e] }))}
+              onChange={(e) => store.setState((s) => ({ ...s, prefs: { ...s.prefs, defaultEffort: e as Effort } }))}
+            />
+          </div>
         </div>
       </div>
     </div>

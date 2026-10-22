@@ -3,8 +3,9 @@ import { flushSync } from 'react-dom'
 import { toOutgoingCommand, type Command } from '../commands'
 import { MOCK } from '../mode'
 import { findModel, modelKey, modelName, useModels } from '../models'
+import { Select, type SelectOption } from './Select'
 import type { Attachment, DriveFile, Effort, Mention, ModelOption, Outgoing } from '../types'
-import { IconAlert, IconArrowUp, IconChevronDown, IconDoc, IconPaperclip, IconStop, IconX } from './Icons'
+import { IconAlert, IconArrowUp, IconDoc, IconPaperclip, IconStop, IconX } from './Icons'
 import type { MentionOption, Suggestions } from './suggest'
 
 /** Reasoning effort, shown as how hard the model thinks. */
@@ -298,6 +299,7 @@ export function Composer({ placeholder, model, effort, onModel, onEffort, onSend
                 value={effort}
                 options={findModel(models, model)!.capabilities!.efforts.map((e) => ({ value: e, label: effortLabel[e] }))}
                 onChange={(v) => onEffort(v as Effort)}
+                label="思考强度"
               />
             )}
             {busy ? (
@@ -317,43 +319,27 @@ export function Composer({ placeholder, model, effort, onModel, onEffort, onSend
   )
 }
 
-export function Picker({ value, options, onChange, strong }: { value: string; options: { value: string; label: string }[]; onChange: (v: string) => void; strong?: boolean }) {
-  return (
-    <label className={'picker' + (strong ? ' strong' : '')}>
-      <span>{options.find((o) => o.value === value)?.label ?? value}</span>
-      <IconChevronDown width={14} height={14} />
-      <select value={value} onChange={(e) => onChange(e.target.value)}>
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-    </label>
-  )
+export function Picker({ value, options, onChange, label, strong }: { value: string; options: SelectOption[]; onChange: (v: string) => void; label: string; strong?: boolean }) {
+  return <Select variant="picker" strong={strong} label={label} value={value} options={options} onChange={onChange} />
 }
 
 function ModelPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const models = useModels()
   const current = findModel(models, value)
+  const options = models.map((m) => ({ value: modelKey(m), label: m.name, description: modelNote(m), group: providerLabel[m.provider] }))
+  // Grouped by endpoint; a stored model the list no longer has still shows as selected.
+  options.sort((a, b) => (a.group === b.group ? 0 : a.group === providerLabel.anthropic ? -1 : 1))
+  if (!current) options.unshift({ value, label: modelName(models, value), description: '不在当前模型列表中', group: '当前' })
   return (
-    <label className="picker strong" title={current ? modelNote(current) : undefined}>
-      <span>{modelName(models, value)}</span>
-      {current && !current.capabilities && <span className="tag">能力未知</span>}
-      <IconChevronDown width={14} height={14} />
-      <select value={value} onChange={(e) => onChange(e.target.value)}>
-        {(['anthropic', 'openai'] as const).map((p) => (
-          <optgroup key={p} label={providerLabel[p]}>
-            {models
-              .filter((m) => m.provider === p)
-              .map((m) => (
-                <option key={modelKey(m)} value={modelKey(m)}>
-                  {m.name} · {modelNote(m)}
-                </option>
-              ))}
-          </optgroup>
-        ))}
-      </select>
-    </label>
+    <Select
+      variant="picker"
+      strong
+      label="模型"
+      title={current ? modelNote(current) : undefined}
+      extra={current && !current.capabilities && <span className="tag">能力未知</span>}
+      value={value}
+      options={options}
+      onChange={onChange}
+    />
   )
 }

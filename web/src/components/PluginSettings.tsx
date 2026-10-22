@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { validSetting } from '../plugins/catalog'
 import type { Store } from '../store'
+import { Select } from './Select'
 import type { PluginInfo, PluginSetting, PluginValue } from '../types'
 
 // Settings form of one plugin on the customize page (docs/plans/roadmap-2.md "L0-5 插件配置").
@@ -58,26 +59,19 @@ export function PluginSettings({ plugin, store, onClose }: { plugin: PluginInfo;
         )
       }
       case 'select':
-        return (
-          <select value={typeof v === 'string' ? v : String(s.default ?? '')} onChange={(e) => set(s.key, e.target.value)}>
-            {s.options?.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        )
+        return <Select label={s.label} value={typeof v === 'string' ? v : String(s.default ?? '')} options={s.options ?? []} onChange={(x) => set(s.key, x)} />
       case 'model':
         return (
-          <select value={typeof v === 'string' ? v : ''} onChange={(e) => set(s.key, e.target.value)}>
-            <option value="">{fromServer(s.key) ? '使用服务器默认模型' : '不使用'}</option>
-            {models.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
-              </option>
-            ))}
-            {typeof v === 'string' && v && !models.some((m) => m.id === v) && <option value={v}>{v}</option>}
-          </select>
+          <Select
+            label={s.label}
+            value={typeof v === 'string' ? v : ''}
+            options={[
+              { value: '', label: fromServer(s.key) ? '使用服务器默认模型' : '不使用' },
+              ...models.map((m) => ({ value: m.id, label: m.name, description: m.id !== m.name ? m.id : undefined })),
+              ...(typeof v === 'string' && v && !models.some((m) => m.id === v) ? [{ value: v, label: v, description: '不在当前模型列表中' }] : []),
+            ]}
+            onChange={(x) => set(s.key, x)}
+          />
         )
       case 'secret': {
         const d = secrets[s.key]

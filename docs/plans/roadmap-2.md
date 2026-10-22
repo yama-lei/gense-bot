@@ -20,7 +20,7 @@
 | G8 | Skills | 可复用的做事方法，用户可增改 |
 | G9 | 输入框中 `/` 命令和 `@` 插件 / 资料文件 / 其他会话 | 输入框的命令与提及 |
 | G10 | （2026-10-21 追加）生图应该作为插件；插件要提供配置功能；把插件都配置化 | 每个插件可以声明配置项，在定制页填写；密钥加密保存。图片生成是一个可配置的插件 |
-| G11 | （2026-10-21 追加）每个对话都要有 filesystem，最好是一个小 sandbox；Skills 改为让 Agent 自己读取 | 会话工作区。待商量，尚未排期 |
+| G11 | （2026-10-21 追加）每个对话都要有 filesystem，最好是一个小 sandbox；Skills 改为让 Agent 自己读取 | 会话工作区：每个会话一个文件系统；共享 Skills 只读挂载，会话自己的 Skills 可读写。执行能力暂不做（阶段 9） |
 
 ## 分层
 
@@ -28,7 +28,7 @@
 L3 进阶      生成式界面(G5)    Codemode(G6，Free 计划不可用，见 ADR-0003)
 L2 交互      会话树与支线(G4)  / 命令与 @ 提及(G9)   Skills(G8)
 L1 能力插件  网页(G2)          文件格式(G3)          图片(G7)
-L0 平台改造  工具注册表与按需加载 · 附件管线 · 会话树存储 · 输入框扩展点 · 插件配置(G10)
+L0 平台改造  工具注册表与按需加载 · 附件管线 · 会话树存储 · 输入框扩展点 · 插件配置(G10) · 会话工作区(G11)
 横切         UI/UX 对标(G1)
 ```
 
@@ -91,8 +91,8 @@ L0 平台改造  工具注册表与按需加载 · 附件管线 · 会话树存�
 | 编号 | 行为 | 验收操作 → 期望结果 |
 | --- | --- | --- |
 | R17 | `/` 命令 | 输入框行首输入 `/` → 弹出命令列表（键盘上下选择、回车确认、Esc 关闭）；内置命令包括深度搜索、读网页、总结会话、开支线；Skills 也出现在列表中 |
-| R18 | `@` 提及 | 输入 `@` → 弹出插件、资料文件、其他会话三组候选。提及插件 → 本轮优先用该插件；提及文件 → 等同附加该文件；提及会话 → 助手读取该会话内容作为上下文 |
-| R19 | Skills | 定制页列出 Skills（内置 + `GenseBot/Skills/<名称>/SKILL.md`），可开关；助手在合适时激活 Skill，过程摘要中可见；用户可在 Drive 中新增或修改 Skill，刷新后生效 |
+| R18 | `@` 提及 | 输入 `@` → 弹出插件、工作区文件、资料文件、其他会话四组候选。提及插件 → 本轮优先用该插件；提及工作区文件 → 助手用 `read` 读取它；提及资料文件 → 等同附加该文件；提及会话 → 助手读取该会话内容作为上下文 |
+| R19 | Skills | 定制页列出 Skills（内置 + `GenseBot/Skills/<名称>/SKILL.md`），可开关；助手在合适时用 `read` 读取 Skill 的 SKILL.md，过程摘要中显示“使用 Skill：…”；用户可在 Drive 中新增或修改 Skill，刷新后下一轮生效 |
 
 ### 生成式界面（G5）、按需加载（G6）、图片（G7）
 
@@ -104,6 +104,16 @@ L0 平台改造  工具注册表与按需加载 · 附件管线 · 会话树存�
 | R23 | 图片生成 | 让助手画一张图 → 消息中显示图片，可以放大和下载；连接 Drive 且开启“保存到 Drive”时，另存到 `GenseBot/Artifacts/` |
 | R24 | 插件配置 | 定制页每个插件都有“设置”：修改后下一轮对话生效；密钥只显示“已设置”，不回显，可以清除后改用服务器配置 |
 | R25 | 未配置的插件 | 缺少必要配置（例如没有搜索 API Key）的插件不能开启，并写明缺什么；补上后即可开启 |
+
+### 会话工作区（G11）
+
+| 编号 | 行为 | 验收操作 → 期望结果 |
+| --- | --- | --- |
+| R26 | 每个会话一个工作区 | 让助手“把要点记下来，存成文件”→ 助手用 `write` 写到 `/workspace/…`；其他会话看不到这个文件 |
+| R27 | 文件面板 | 会话顶栏的文件夹按钮 → 右侧（手机全屏）列出 `/workspace` 与 `/skills` 的文件；点文件看预览（文本直接显示，二进制提示下载，过长只显示开头）；可以下载；`/workspace` 的文件可以删除（先确认），`/skills` 只读 |
+| R28 | 共享 Skills 只读 | 启用的 Skill 出现在 `/skills/<名字>/SKILL.md`；助手写入 `/skills` 被拒绝（“read-only mount”）；在定制页关掉或在 Drive 改了 Skill → 下一轮 `/skills` 随之变化 |
+| R29 | 会话自己的 Skills | 助手在 `/workspace/skills/<名字>/SKILL.md` 写一个带 `name`、`description` 开头的 Skill → 下一轮它出现在系统提示的 Skill 列表和 `/` 命令里，只对这个会话生效；与共享 Skill 重名时以它为准 |
+| R30 | 分支复制工作区 | 分支到新会话 → 新会话带着主线 `/workspace` 当时的文件（上限 16 MB），之后两边互不影响 |
 
 ## Design
 
@@ -177,6 +187,21 @@ L0 平台改造  工具注册表与按需加载 · 附件管线 · 会话树存�
 | 网页 | DeepSeek API Key（密钥，默认用服务器的）、每次搜索结果数、深度搜索模型 |
 | 图片 | 端点地址、API Key（都默认用服务器的 OpenAI 端点）、模型（默认 `gpt-image-2`）、尺寸、质量、保存到 Drive（默认开） |
 
+### L0-6 会话工作区（G11）
+
+- 用 Think 自带的 `workspace`（`@cloudflare/computer` 0.5 的 `Workspace`，存在会话 DO 自己的 SQLite 里），打开它自带的 `read`、`ls`、`find`、`grep`、`write`、`edit`、`delete` 工具（`worker/workspace.ts` 的 `WORKSPACE_TOOLS`），这些工具始终开启、不参与按需加载。Free 计划没有执行后端，所以没有 `exec`。
+- 目录约定：
+  - `/workspace`：会话自己的读写目录。相对路径也落在这里。
+  - `/skills`：只读挂载（`EagerMount`，kind `gense-skills`），内容是 UserHub `skillBundle()` 给出的启用 Skill：内置 Skill 生成 `<名字>/SKILL.md`；Drive Skill 是 SKILL.md 加同文件夹里能转成文本的参考文件，总量上限 4 MB。
+  - `/workspace/skills/<名字>/SKILL.md`：会话自己的 Skill，开头格式与 Drive 相同，最多 30 个，同名时覆盖共享 Skill。
+- 挂载何时刷新：UserHub 的 `skillsVersion()` 由启用的 Skill 名称和各自 SKILL.md 的 `modifiedTime`（内置为 `builtin`）组成，随 `turnSettings` 交给 Chat。`beforeTurn` 发现版本变了，就等旧的 `Workspace` 实例索引完，再用新版本开一个新实例；计算机包按版本号重新填充挂载。注意：挂载只在 `workspace.ready()` 时索引，普通文件操作不会触发，所以 Chat 的每个文件入口都先 `await ready()`。两个实例同时填充同一个挂载会互相删掉文件，所以换实例前要等旧实例完成。Think 在 `beforeTurn` 之前就建好了工具，Chat 交给 Think 的 `workspace` 是一个 `fs` 取值器，始终指向当前实例。
+- 挂载失败（例如 Drive 暂时不可用）时 `/skills` 里只有一个说明错误的 README，并清掉记下的版本，下一轮重试；不能让一次失败拖垮所有文件操作。只改了 Drive Skill 的参考文件、没改 SKILL.md 时版本不变，要等 SKILL.md 变化或用户刷新。
+- 系统提示列出每个 Skill 的路径（共享的写 `/skills/<名字>/SKILL.md`，会话自己的写其路径并注明“只对本会话生效”），说明 `/skills` 只读、可以在 `/workspace/skills` 新建或修改 Skill。`/` 里的 Skill 命令提示模型先 `read` 它的 SKILL.md；过程摘要从 `read` 的路径认出 Skill，显示“使用 Skill：…”。
+- 文件面板：Chat 的 callable `files()`（`/workspace` 与 `/skills` 广度优先最多 500 个）、`fileText(path)`（开头 200 KB，按 UTF-8 严格解码判断是否二进制）、`deleteFile(path)`（只限 `/workspace` 之内）。下载走 `GET /api/chats/:id/files?path=`，经 UserHub 校验会话归属后取 Chat 的 `fileBytes`，上限 20 MB，以附件形式返回。
+- 分支：`forkChat` 把主线 `/workspace` 的文件（上限 16 MB，超出的跳过）复制进新会话。这是过渡做法。用户设想（2026-10-21）：会话将改成树，一个会话就是一棵树，只有主干能修改文件系统，分支像 git worktree 一样存在。一种可行的设计：分支开始时记下主干工作区的快照（或只记差异），分支里的写入落在自己的覆盖层上；合回主干时按文件比较，由用户确认。怎样合并仍待商量（见[功能清单](../intents/agent-features.md)问题 7）。
+- Mock：`src/mock/workspace.ts` 在 localStorage 里按会话保存文件，“周报整理”会话预置了一个文件和一个会话 Skill；Mock 的 `read`、`write`、`ls` 工具走同一份数据，写 `/skills` 返回只读错误。
+- 不兼容改动：删除了 `skill_activate`、`skill_read` 工具。旧会话里已经发生的这两种工具调用仍按原样显示，新一轮不再提供它们。
+
 ### L1 图片
 
 - 插件 `image`，工具 `image_generate(prompt, size?)`，调用配置端点的 `/images/generations`。`size` 只在用户明确要求形状时由模型填写，否则用设置里的默认尺寸。
@@ -193,6 +218,7 @@ L0 平台改造  工具注册表与按需加载 · 附件管线 · 会话树存�
 - 来源两类：
   - 内置：随代码打包（`src/skills.ts`）：“周报整理”“论文速读”“邮件起草”。
   - Drive：`GenseBot/Skills/<文件夹>/SKILL.md`（YAML 开头写 `name`、`description`）以及同文件夹中的参考文件（最多一层子文件夹）。UserHub 在启动、连接 Drive 和用户点“刷新”时读取，按 SKILL.md 的 `modifiedTime` 缓存解析结果；与内置重名、缺少 SKILL.md 或开头无效的文件夹会跳过，原因显示在定制页。
+- **阶段 9 起不再有 Skill 专用工具**：Skill 是会话工作区里的文件，助手用通用的 `read` 读取（见 L0-6）。下面这条是阶段 4 的做法，保留作为不用 Think `getSkills()` 的理由。
 - **不用 Think 的 `getSkills()`，改用自己的三个工具（`skill_activate`、`skill_read`）和系统提示里的目录。** 实测 Think 0.21 的 skills 会注册自己的上下文块，此后 `getSystemPrompt()` 不再生效，与我们在 `beforeTurn` 拼系统提示（语言、记忆、项目说明）冲突；它还在每轮刷新所有来源（每轮多次 Drive 请求），工具名也是固定的。自己实现只多约一百行，开关、缓存和错误显示都能按我们的需要做。
 - `skill_activate`、`skill_read`、`chats_read` 属于始终开启的核心工具组，不受插件开关影响；关掉的 Skill 不出现在目录里，也不能被激活。激活过的 Skill 显示在过程摘要中（“使用 Skill：…”）。
 - 每个 Skill 也是一条 `/` 命令（命令提示模型先激活它）。
@@ -233,6 +259,7 @@ L0 平台改造  工具注册表与按需加载 · 附件管线 · 会话树存�
 | 6 | 图片生成 | 端点开通 | 并入阶段 8。R23（2026-10-21 复测：`/images/generations` 和显式声明的 Responses `image_generation` 仍返回 `Image generation is not enabled for this group`。端点偶尔会自行注入该工具并返回图片，但这不是受支持的途径，不依赖它；前端只保证这类结果不会导致崩溃） |
 | 7 | 整体 UI/UX 走查 | 全部 | 每个页面的走查记录（见下节） |
 | 8 | 插件配置 + 图片插件 | 1、6 | R23–R25（Mock 浅色/深色/窄屏与本地真实模型已验证：生成图片；设置保存后刷新仍在；用户的无效 API Key 覆盖服务器的值，清除后回退；配置错误时只调用一次就告知用户） |
+| 9 | 会话工作区、Skills 改为读文件 | 4 | R26–R30（Mock 浅色/深色/窄屏与本地真实模型已验证：模型 `read` 共享 Skill 后按格式写文件；写 `/skills` 被拒；面板列出、预览、下载；`@` 工作区文件；`/` 出现会话 Skill；分支带着文件。未做：从界面上传文件到工作区） |
 
 每个阶段单独提交；Mock 模式同步提供演示数据，保持 Mock 部署可用。
 

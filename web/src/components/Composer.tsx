@@ -49,7 +49,7 @@ interface Pending {
 
 /** Items per group in the `@` menu. */
 const GROUP_SIZE = 5
-const groupLabel: Record<MentionOption['kind'], string> = { plugin: '插件', file: '资料文件', chat: '会话' }
+const groupLabel: Record<MentionOption['kind'], string> = { plugin: '插件', workspace: '工作区文件', file: '资料文件', chat: '会话' }
 
 type MenuItem = { kind: 'command'; command: Command } | { kind: 'mention'; option: MentionOption }
 
@@ -67,9 +67,9 @@ function menuItems(suggest: Suggestions, trigger: NonNullable<ReturnType<typeof 
   const q = trigger.query.toLowerCase()
   const hit = (...s: (string | undefined)[]) => !q || s.some((x) => x?.toLowerCase().includes(q))
   if (trigger.kind === '/') return suggest.commands.filter((c) => hit(c.label, c.hint, c.id)).map((command) => ({ kind: 'command', command }))
-  return (['plugin', 'file', 'chat'] as const).flatMap((kind) =>
+  return (['plugin', 'workspace', 'file', 'chat'] as const).flatMap((kind) =>
     suggest.mentions
-      .filter((m) => m.kind === kind && hit(m.label))
+      .filter((m) => m.kind === kind && hit(m.label, m.kind === 'workspace' ? m.hint : undefined))
       .slice(0, GROUP_SIZE)
       .map((option): MenuItem => ({ kind: 'mention', option })),
   )
@@ -197,7 +197,7 @@ export function Composer({ placeholder, model, effort, onModel, onEffort, onSend
               </span>
             )}
             {mentions.map((m) => (
-              <span key={m.kind + m.id} className="attach-chip mention" title={m.kind === 'chat' ? '会话' : '插件'}>
+              <span key={m.kind + m.id} className="attach-chip mention" title={m.kind === 'workspace' ? m.id : groupLabel[m.kind]}>
                 <span className="ellipsis">@{m.label}</span>
                 <button className="icon-btn small" aria-label={`移除提及 ${m.label}`} onClick={() => setMentions((ms) => ms.filter((x) => x !== m))}>
                   <IconX width={13} height={13} />

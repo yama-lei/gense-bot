@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { MOCK } from './mode'
 import { useMockStore } from './mock/store'
 import { useRealStore } from './real/store'
-import type { AppState, Conversation, DriveFile, Effort, Outgoing, PluginValue, ToolResult, Turn } from './types'
+import type { AppState, Conversation, DriveFile, Effort, Outgoing, PluginValue, ToolResult, Turn, WorkspacePreview } from './types'
 
 /** What the views need from the data layer; the mock and the Worker-backed store both provide it. */
 export interface Store {
@@ -46,6 +46,14 @@ export interface Store {
   readFile: (id: string) => Promise<{ file: DriveFile; text: string }>
   /** Name and full-text search across the user's Drive. */
   searchDrive: (query: string) => Promise<DriveFile[]>
+  /** Reloads a connected chat's workspace file list into `Conversation.files`. */
+  refreshWorkspace: (convId: string) => void
+  /** The start of a workspace file; rejects with a message for the user. */
+  workspacePreview: (convId: string, path: string) => Promise<WorkspacePreview>
+  /** Deletes a file or folder under /workspace; rejects with a message for the user. */
+  deleteWorkspaceFile: (convId: string, path: string) => Promise<void>
+  /** Where the browser downloads a workspace file from. */
+  workspaceFileUrl: (convId: string, path: string) => string
   /** Connections the store keeps mounted (the open chat); App renders it. */
   bridge: ReactNode
 }

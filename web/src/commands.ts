@@ -1,4 +1,4 @@
-import type { Outgoing, SkillInfo } from './types'
+import type { Outgoing, SkillInfo, WorkspaceFile } from './types'
 
 /** A `/` command (roadmap-2 R17). A client command runs in the browser and sends nothing. */
 export interface Command {
@@ -40,14 +40,20 @@ export const skillCommand = (s: Pick<SkillInfo, 'name' | 'description'>): Comman
   id: `skill:${s.name}`,
   label: s.name,
   hint: s.description,
-  prompt: `用户要求使用 Skill「${s.name}」：先调用 skill_activate（name 为「${s.name}」），再按其中的说明完成任务。`,
+  prompt: `用户要求使用 Skill「${s.name}」：先用 read 读取它的 SKILL.md（路径见系统提示里的 Skill 列表），再按其中的说明完成任务。`,
 })
 
-/** Commands offered in a composer: built-ins whose plugin is on, then the enabled skills. */
-export function availableCommands(enabledPlugins: string[], skills: SkillInfo[], client: { side: boolean }): Command[] {
+/** A chat's own skills: folders of /workspace/skills holding a SKILL.md (roadmap-2 "L0-6 会话工作区"). */
+export function localSkillNames(files: WorkspaceFile[] = []): string[] {
+  return files.flatMap((f) => /^\/workspace\/skills\/([^/]+)\/SKILL\.md$/.exec(f.path)?.[1] ?? [])
+}
+
+/** Commands offered in a composer: built-ins whose plugin is on, the enabled skills, then the chat's own skills (which win on a name clash). */
+export function availableCommands(enabledPlugins: string[], skills: SkillInfo[], client: { side: boolean }, local: string[] = []): Command[] {
   return [
     ...builtinCommands.filter((c) => (!c.plugin || enabledPlugins.includes(c.plugin)) && (c.id !== 'side' || client.side)),
-    ...skills.filter((s) => s.enabled).map(skillCommand),
+    ...skills.filter((s) => s.enabled && !local.includes(s.name)).map(skillCommand),
+    ...local.map((name) => skillCommand({ name, description: '本会话的 Skill' })),
   ]
 }
 

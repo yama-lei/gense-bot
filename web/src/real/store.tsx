@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { pluginCatalog } from '../plugins/catalog'
 import { useRoute } from '../router'
 import type { Store } from '../store'
-import type { AppState, Conversation, DriveFile, Effort, HubState, Outgoing, Turn } from '../types'
+import type { AppState, Conversation, DriveFile, Effort, HubState, Outgoing, Turn, WorkspaceFile } from '../types'
 import { MAX_UPLOAD_BYTES } from '../util'
 import { ChatBridge, type ChatControls } from './ChatBridge'
 import { pending } from './pending'
@@ -35,6 +35,7 @@ export function useRealStore(): Store {
   const hubAgent = useAgent<HubState>({ agent: 'UserHub', basePath: 'agents/hub' })
   const hub = hubAgent.state ?? emptyHub
   const [turns, setTurns] = useState<Record<string, { turns: Turn[]; viewingOld: boolean }>>({})
+  const [files, setFiles] = useState<Record<string, WorkspaceFile[]>>({})
   const [attached, attach] = useState<string | null>(null)
   // A local edit shows at once and is dropped when the hub broadcasts its own state.
   const [local, setLocal] = useState<{ base: HubState | undefined; state: AppState } | null>(null)
@@ -43,7 +44,7 @@ export function useRealStore(): Store {
   const derived = useMemo<AppState>(
     () => ({
       projects: hub.projects,
-      conversations: hub.chats.map((c): Conversation => ({ ...c, turns: turns[c.id]?.turns ?? [], viewingOld: turns[c.id]?.viewingOld })),
+      conversations: hub.chats.map((c): Conversation => ({ ...c, turns: turns[c.id]?.turns ?? [], viewingOld: turns[c.id]?.viewingOld, files: files[c.id] })),
       files: hub.files,
       schedules: [],
       plugins: pluginCatalog.map((p) => ({
@@ -63,7 +64,7 @@ export function useRealStore(): Store {
       modelsError: hub.modelsError,
       skillsError: hub.skillsError ?? null,
     }),
-    [hub, turns],
+    [hub, turns, files],
   )
   const hubState = hubAgent.state
   const state = useMemo(() => (local && local.base === hubState ? { ...local.state, conversations: derived.conversations } : derived), [local, hubState, derived])
@@ -121,6 +122,12 @@ export function useRealStore(): Store {
 
   const chatId = route.name === 'chat' ? route.id : null
   const onTurns = useCallback((id: string, t: Turn[], viewingOld: boolean) => setTurns((s) => ({ ...s, [id]: { turns: t, viewingOld } })), [])
+  const onFiles = useCallback((id: string, f: WorkspaceFile[]) => setFiles((s) => ({ ...s, [id]: f })), [])
+  const connected = (convId: string) => {
+    const c = controls.current.get(convId)
+    if (!c) throw new Error('会话未连接，请稍后重试')
+    return c
+  }
   const register = useCallback((id: string, c: ChatControls | null) => {
     if (c) controls.current.set(id, c)
     else controls.current.delete(id)
@@ -171,8 +178,12 @@ export function useRealStore(): Store {
     refreshSkills: () => void call('refreshSkills', []),
     readFile: (id) => hubAgent.call<{ file: DriveFile; text: string }>('readFile', [id]),
     searchDrive: (query) => hubAgent.call<DriveFile[]>('searchDrive', [query]),
+    refreshWorkspace: (convId) => controls.current.get(convId)?.refreshFiles(),
+    workspacePreview: async (convId, path) => connected(convId).fileText(path),
+    deleteWorkspaceFile: async (convId, path) => connected(convId).deleteFile(path),
+    workspaceFileUrl: (convId, path) => `/api/chats/${encodeURIComponent(convId)}/files?path=${encodeURIComponent(path)}`,
     bridge: [...new Set([chatId, attached])]
       .filter((id): id is string => !!id && hub.chats.some((c) => c.id === id))
-      .map((id) => <ChatBridge key={id} id={id} defaults={hub.prefs} onTurns={onTurns} register={register} />),
+      .map((id) => <ChatBridge key={id} id={id} defaults={hub.prefs} onTurns={onTurns} onFiles={onFiles} register={register} />),
   }
 }

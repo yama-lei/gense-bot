@@ -21,6 +21,10 @@ const MODELS_DEV = 'https://models.dev/api.json'
 const OAUTH_STATE_TTL = 10 * 60 * 1000
 const MAX_SKILLS = 50
 const SKILL_FILE = 'SKILL.md'
+/** Bumped when skillBundle lays files out differently, so chats refill /skills. */
+const SKILL_BUNDLE_FORMAT = 1
+/** Characters of skill files mounted into each chat. */
+const MAX_SKILL_BUNDLE = 4_000_000
 /** Folders per Drive query when looking for SKILL.md files; keeps the query string short. */
 const QUERY_PARENTS = 25
 
@@ -175,6 +179,9 @@ export class UserHub extends Agent<WorkerEnv, HubState> {
     const stub = await this.chats.get(entry.id)
     await stub?.bind(this.name, entry.id)
     await stub?.importMessages(messages, await src.viewStates())
+    // The new chat starts from a copy of the source's workspace as it is now (a worktree comes later).
+    const { files } = await src.exportFiles()
+    await stub?.importFiles(files)
     await this.syncChats()
     return entry.id
   }
@@ -489,21 +496,52 @@ export class UserHub extends Agent<WorkerEnv, HubState> {
     return [...top.map((f) => ({ path: f.name, id: f.id })), ...nested.flat()].filter((f) => f.path !== SKILL_FILE)
   }
 
-  async loadSkill(name: string): Promise<{ body: string; resources: string[] }> {
-    const entry = this.skill(name)
-    if (!entry) return { body: builtinSkills.find((s) => s.name === name)!.body, resources: [] }
-    const { drive, folders } = await this.drive()
-    const [{ text }, files] = await Promise.all([drive.readText(entry.fileId, folders), this.skillFiles(drive, entry.folderId)])
-    return { body: parseSkill(text)?.body ?? text, resources: files.map((f) => f.path) }
+  private enabledSkills() {
+    return this.state.skills.filter((s) => !this.state.disabledSkills.includes(s.name))
   }
 
-  async readSkillResource(name: string, path: string): Promise<string> {
-    const entry = this.skill(name)
-    if (!entry) throw new Error(`内置 Skill「${name}」没有附带文件`)
-    const { drive, folders } = await this.drive()
-    const file = (await this.skillFiles(drive, entry.folderId)).find((f) => f.path === path.replace(/^\.?\//, ''))
-    if (!file) throw new Error(`Skill「${name}」里没有 ${path}`)
-    return (await drive.readText(file.id, folders, this.textCache)).text
+  /** Changes when a chat's /skills mount must be refilled: skills switched, or a SKILL.md edited. */
+  private skillsVersion() {
+    const driveSkills = Object.values(this.ctx.storage.kv.get<Record<string, DriveSkill>>('driveSkills') ?? {})
+    const parts = this.enabledSkills().map((s) => `${s.name}:${driveSkills.find((d) => d.name === s.name)?.modifiedTime ?? s.source}`)
+    return `${SKILL_BUNDLE_FORMAT}|${parts.join('|')}`
+  }
+
+  /**
+   * Contents of the read-only /skills mount (roadmap-2 "L0-6 会话工作区"): `<name>/SKILL.md` of
+   * every enabled skill and, for Drive skills, the files beside it that convert to text.
+   */
+  async skillBundle(): Promise<{ path: string; text: string }[]> {
+    const out: { path: string; text: string }[] = []
+    let bytes = 0
+    const add = (path: string, text: string) => {
+      if (bytes + text.length > MAX_SKILL_BUNDLE) return
+      bytes += text.length
+      out.push({ path, text })
+    }
+    // A skill or file that cannot be read is left out; the others still reach the chat.
+    const tryAdd = async (path: string, read: () => Promise<string>) => {
+      try {
+        add(path, await read())
+      } catch (e) {
+        console.warn('skill file skipped', path, e)
+      }
+    }
+    for (const info of this.enabledSkills()) {
+      const doc = builtinSkills.find((s) => s.name === info.name)
+      if (info.source === 'builtin' && doc) {
+        add(`${doc.name}/${SKILL_FILE}`, `---\nname: ${doc.name}\ndescription: ${doc.description}\n---\n\n${doc.body}\n`)
+        continue
+      }
+      await tryAdd(`${info.name}/${SKILL_FILE}`, async () => {
+        const entry = this.skill(info.name)!
+        const { drive, folders } = await this.drive()
+        const [{ text }, files] = await Promise.all([drive.readText(entry.fileId, folders), this.skillFiles(drive, entry.folderId)])
+        for (const f of files) await tryAdd(`${info.name}/${f.path}`, async () => (await drive.readText(f.id, folders, this.textCache)).text)
+        return text
+      })
+    }
+    return out
   }
 
   /** Another chat of this user, as text (`chats_read`). */
@@ -544,6 +582,12 @@ export class UserHub extends Agent<WorkerEnv, HubState> {
     return (await this.chats.get(chatId))?.image(imageId) ?? null
   }
 
+  /** A workspace file of one of this user's chats (`GET /api/chats/<id>/files?path=`). */
+  async chatFile(chatId: string, path: string): Promise<{ name: string; bytes: ArrayBuffer } | null> {
+    if (!this.state.chats.some((c) => c.id === chatId)) return null
+    return (await this.chats.get(chatId))?.fileBytes(path) ?? null
+  }
+
   /** Converted file text by `fileId:modifiedTime`; texts too large for one row are not kept. */
   readonly textCache: TextCache = {
     get: async (key) => {
@@ -580,8 +624,8 @@ export class UserHub extends Agent<WorkerEnv, HubState> {
     const projectId = chats.find((c) => c.id === chatId)?.projectId
     const project = projects.find((p) => p.id === projectId)
     const projectContext = project ? [`项目：${project.name}`, project.description.trim()].filter(Boolean).join('\n') : ''
-    const skills = this.state.skills.filter((s) => !this.state.disabledSkills.includes(s.name)).map(({ name, description }) => ({ name, description }))
-    return { enabledPlugins, pluginConfig, memories: memories.map((m) => m.text), language: prefs.language, models, driveConnected: account.driveConnected, projectContext, skills }
+    const skills = this.enabledSkills().map(({ name, description }) => ({ name, description }))
+    return { enabledPlugins, pluginConfig, memories: memories.map((m) => m.text), language: prefs.language, models, driveConnected: account.driveConnected, projectContext, skills, skillsVersion: this.skillsVersion() }
   }
 
   /** Bumps the chat to the top of the list after a turn and remembers the model chosen. */

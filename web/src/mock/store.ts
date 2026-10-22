@@ -5,6 +5,7 @@ import { tools } from '../plugins'
 import type { ToolContext } from '../plugins/types'
 import type { Store } from '../store'
 import type { AppState, BranchNote, Conversation, DriveFile, Effort, Outgoing, ToolCall, ToolResult, Turn, Versions, WebSource } from '../types'
+import { listing, preview, seedWorkspaces, type MockWorkspaces } from './workspace'
 import { MAX_UPLOAD_BYTES, uid } from '../util'
 
 // v6: skills.
@@ -12,6 +13,7 @@ const KEY = 'gensebot-mock-v8'
 /** Older versions by the id of the message they replaced: the turns from there on, per chat. */
 const BRANCHES_KEY = 'gensebot-mock-branches-v1'
 type Branches = Record<string, Record<string, Turn[]>>
+const WORKSPACE_KEY = 'gensebot-mock-workspace-v1'
 
 function load(): AppState {
   try {
@@ -25,6 +27,16 @@ function load(): AppState {
 
 /** A turn's message sent again (regenerate, edit) keeps its attachments, command and mentions. */
 const resend = (t: Turn, text: string): Outgoing => ({ text, attachments: t.attachments, command: t.command && { ...t.command, prompt: '' }, mentions: t.mentions })
+
+function loadWorkspaces(): MockWorkspaces {
+  try {
+    const raw = localStorage.getItem(WORKSPACE_KEY)
+    if (raw) return JSON.parse(raw) as MockWorkspaces
+  } catch {
+    // Fall back to the seed, as for the app state.
+  }
+  return structuredClone(seedWorkspaces)
+}
 
 function loadBranches(): Branches {
   try {
@@ -44,24 +56,31 @@ export function useMockStore(): Store {
   const [branches, setBranches] = useState<Branches>(loadBranches)
   // Chats showing an older version: the turns shown instead of the live ones (not persisted).
   const [views, setViews] = useState<Record<string, Turn[]>>({})
+  const [workspaces, setWorkspaces] = useState<MockWorkspaces>(loadWorkspaces)
   const state = useMemo(
-    () => (Object.keys(views).length ? { ...raw, conversations: raw.conversations.map((c) => (views[c.id] ? { ...c, turns: views[c.id], viewingOld: true } : c)) } : raw),
-    [raw, views],
+    () => ({
+      ...raw,
+      conversations: raw.conversations.map((c) => ({ ...c, files: listing(workspaces[c.id], raw.skills), ...(views[c.id] ? { turns: views[c.id], viewingOld: true } : {}) })),
+    }),
+    [raw, views, workspaces],
   )
+  const workspacesRef = useRef(workspaces)
   const timers = useRef(new Map<string, number[]>())
   const stateRef = useRef(raw)
   useEffect(() => {
     stateRef.current = raw
-  }, [raw])
+    workspacesRef.current = workspaces
+  }, [raw, workspaces])
 
   useEffect(() => {
     try {
       localStorage.setItem(KEY, JSON.stringify(raw))
       localStorage.setItem(BRANCHES_KEY, JSON.stringify(branches))
+      localStorage.setItem(WORKSPACE_KEY, JSON.stringify(workspaces))
     } catch {
       // Ignore quota or privacy-mode errors; the mock still works in memory.
     }
-  }, [raw, branches])
+  }, [raw, branches, workspaces])
 
   const patchConv = useCallback((convId: string, fn: (c: Conversation) => Conversation) => {
     setState((s) => ({ ...s, conversations: s.conversations.map((c) => (c.id === convId ? fn(c) : c)) }))
@@ -76,14 +95,34 @@ export function useMockStore(): Store {
 
   const addFile = useCallback((file: DriveFile) => setState((s) => ({ ...s, files: [file, ...s.files] })), [])
 
+  const writeFile = useCallback((convId: string, path: string, text: string) => {
+    setWorkspaces((w) => {
+      const next = { ...w, [convId]: { ...w[convId], [path]: { text, mtime: Date.now() } } }
+      workspacesRef.current = next
+      return next
+    })
+  }, [])
+
   const exec = useCallback(
-    (name: string, input: unknown): ToolResult => {
+    (convId: string, name: string, input: unknown): ToolResult => {
       const tool = tools[name]
       if (!tool) return { content: `工具 ${name} 未注册`, isError: true }
-      const ctx: ToolContext = { files: stateRef.current.files, addFile, conversations: stateRef.current.conversations }
+      const files = () => workspacesRef.current[convId]
+      const workspace: ToolContext['workspace'] = {
+        list: () => listing(files(), stateRef.current.skills),
+        read: (path) => {
+          try {
+            return preview(files(), stateRef.current.skills, path).text
+          } catch {
+            return null
+          }
+        },
+        write: (path, text) => writeFile(convId, path, text),
+      }
+      const ctx: ToolContext = { files: stateRef.current.files, addFile, conversations: stateRef.current.conversations, workspace }
       return tool.execute(input as never, ctx)
     },
-    [addFile],
+    [addFile, writeFile],
   )
 
   const run = useCallback(
@@ -104,7 +143,7 @@ export function useMockStore(): Store {
         const call: ToolCall = { id: uid(), name: step.name, status: 'running', input: step.input, resourceUri: tools[step.name]?.resourceUri, origin: 'model' }
         at(gap, () => patch((x) => ({ ...x, toolCalls: [...x.toolCalls, call] })))
         at(step.durationMs + tail, () => {
-          const result = exec(step.name, step.input)
+          const result = exec(convId, step.name, step.input)
           const done: ToolCall = { ...call, status: result.isError ? 'failed' : 'succeeded', result, durationMs: step.durationMs }
           const found = (result.structuredContent as { sources?: WebSource[] } | undefined)?.sources ?? []
           patch((x) => ({
@@ -241,6 +280,8 @@ export function useMockStore(): Store {
       parent: { chatId: convId, messageId: turn.id, kind },
     }
     setState((s) => ({ ...s, conversations: [conv, ...s.conversations] }))
+    // Like the server, the new chat starts from a copy of the workspace.
+    setWorkspaces((w) => ({ ...w, [conv.id]: structuredClone(w[convId] ?? {}) }))
     return conv.id
   }
 
@@ -266,7 +307,7 @@ export function useMockStore(): Store {
   const callToolFromView = async (convId: string, turnId: string, _callId: string, name: string, input: unknown): Promise<ToolResult> => {
     const start = Date.now()
     await new Promise((r) => setTimeout(r, 500))
-    const result = exec(name, input)
+    const result = exec(convId, name, input)
     const call: ToolCall = {
       id: uid(),
       name,
@@ -338,9 +379,21 @@ export function useMockStore(): Store {
     timers.current.forEach((ids) => ids.forEach(clearTimeout))
     timers.current.clear()
     setState(structuredClone(seed))
+    setWorkspaces(structuredClone(seedWorkspaces))
     setBranches({})
     setViews({})
   }
 
-  return { state, ready: true, turnsLoaded: () => true, setState, patchConv, startConversation, reply, regenerate, editMessage, showVersion, branch, summarizeSide, attach: () => {}, stop, reset, callToolFromView, setViewState, upload, setDrive, setPluginConfig, refreshFiles: () => {}, refreshSkills: () => {}, readFile, searchDrive, bridge: null }
+  const workspacePreview = async (convId: string, path: string) => preview(workspacesRef.current[convId], stateRef.current.skills, path)
+  const deleteWorkspaceFile = async (convId: string, path: string) => {
+    if (!path.startsWith('/workspace/')) throw new Error('只能删除 /workspace 里的文件')
+    setWorkspaces((w) => ({ ...w, [convId]: Object.fromEntries(Object.entries(w[convId] ?? {}).filter(([p]) => p !== path && !p.startsWith(path + '/'))) }))
+  }
+  // A data URL stands in for the Worker's download route.
+  const workspaceFileUrl = (convId: string, path: string) => {
+    const text = workspacesRef.current[convId]?.[path]?.text ?? ''
+    return `data:text/plain;charset=utf-8,${encodeURIComponent(text)}`
+  }
+
+  return { state, ready: true, turnsLoaded: () => true, setState, patchConv, startConversation, reply, regenerate, editMessage, showVersion, branch, summarizeSide, attach: () => {}, stop, reset, callToolFromView, setViewState, upload, setDrive, setPluginConfig, refreshFiles: () => {}, refreshSkills: () => {}, readFile, searchDrive, refreshWorkspace: () => {}, workspacePreview, deleteWorkspaceFile, workspaceFileUrl, bridge: null }
 }

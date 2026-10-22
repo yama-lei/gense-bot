@@ -76,7 +76,7 @@ export interface Turn {
   attachments?: Attachment[]
   /** The `/` command the message was sent with (roadmap-2 R17). */
   command?: CommandRef
-  /** Plugins and chats `@`-mentioned in the message (R18); mentioned files are attachments. */
+  /** Plugins, chats and workspace files `@`-mentioned in the message (R18); mentioned Drive files are attachments. */
   mentions?: Mention[]
 }
 
@@ -89,9 +89,9 @@ export interface CommandRef {
   label: string
 }
 
-/** An `@`-mentioned plugin or chat. */
+/** An `@`-mentioned plugin, chat or workspace file (`id` is its path). */
 export interface Mention {
-  kind: 'plugin' | 'chat'
+  kind: 'plugin' | 'chat' | 'workspace'
   id: string
   label: string
 }
@@ -144,6 +144,27 @@ export interface Conversation {
   parent?: ChatParent
   /** The turns shown are an older version (read-only), not the live conversation. */
   viewingOld?: boolean
+  /** Files in the chat's workspace; undefined until loaded. */
+  files?: WorkspaceFile[]
+}
+
+/** The start of a workspace file, for the file panel's preview. */
+export interface WorkspacePreview {
+  text: string
+  size: number
+  /** Only the first part of the file is in `text`. */
+  truncated: boolean
+  /** Not UTF-8 text; `text` is empty. */
+  binary: boolean
+}
+
+/** A file in a chat's workspace (roadmap-2 "L0-6 会话工作区"). Paths are absolute. */
+export interface WorkspaceFile {
+  path: string
+  size: number
+  mtime: number
+  /** Under the read-only /skills mount. */
+  readOnly: boolean
 }
 
 /** Chats the sidebar and project pages list; side threads only show beside their parent. */
@@ -313,6 +334,8 @@ export interface TurnSettings {
   projectContext: string
   /** Enabled skills, listed in the system prompt. */
   skills: { name: string; description: string }[]
+  /** Changes when the enabled skills or their Drive files change; chats then re-mount /skills. */
+  skillsVersion: string
 }
 
 /** Client body fields sent with each chat request. */

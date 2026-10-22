@@ -3,7 +3,7 @@ import { useAgent } from 'agents/react'
 import type { UIMessage } from 'ai'
 import { useEffect, useState } from 'react'
 import { userMessage } from '../message'
-import type { Effort, HubState, Outgoing, ToolResult, Turn, TurnBody } from '../types'
+import type { Effort, HubState, Outgoing, ToolResult, Turn, TurnBody, WorkspaceFile, WorkspacePreview } from '../types'
 import { pending } from './pending'
 import { toTurns, type ChatStatus } from './turns'
 
@@ -17,6 +17,10 @@ export interface ChatControls {
   /** `tools/call` from a view, run by the chat; `key` is the rendering tool call's id. */
   callTool: (name: string, args: unknown, key: string) => Promise<ToolResult>
   setViewState: (callId: string, state: unknown) => void
+  /** Workspace (roadmap-2 "L0-6 会话工作区"). */
+  refreshFiles: () => void
+  fileText: (path: string) => Promise<WorkspacePreview>
+  deleteFile: (path: string) => Promise<void>
 }
 
 type Siblings = Record<string, string[]>
@@ -26,11 +30,13 @@ export function ChatBridge({
   id,
   defaults,
   onTurns,
+  onFiles,
   register,
 }: {
   id: string
   defaults: HubState['prefs']
   onTurns: (id: string, turns: Turn[], viewingOld: boolean) => void
+  onFiles: (id: string, files: WorkspaceFile[]) => void
   register: (id: string, c: ChatControls | null) => void
 }) {
   const agent = useAgent({ agent: 'Chat', basePath: `agents/hub/chats/${encodeURIComponent(id)}` })
@@ -41,6 +47,7 @@ export function ChatBridge({
   // An older version being read; null shows the live conversation.
   const [viewing, setViewing] = useState<{ messages: UIMessage[]; siblings: Siblings } | null>(null)
   const { messages, status, error, isServerStreaming, sendMessage, regenerate, stop } = chat
+  const [filesAsked, askFiles] = useState(0)
 
   useEffect(() => {
     const unstop = (turnId: string) =>
@@ -81,6 +88,12 @@ export function ChatBridge({
         setViewStates((s) => ({ ...s, [callId]: state }))
         agent.call('setViewState', [callId, state]).catch((e: unknown) => console.error('setViewState failed', e))
       },
+      refreshFiles: () => askFiles((n) => n + 1),
+      fileText: (path) => agent.call<WorkspacePreview>('fileText', [path]),
+      deleteFile: async (path) => {
+        await agent.call('deleteFile', [path])
+        askFiles((n) => n + 1)
+      },
     })
     return () => register(id, null)
   }, [id, register, sendMessage, regenerate, stop, messages, agent])
@@ -103,6 +116,15 @@ export function ChatBridge({
       .then(setSiblings)
       .catch((e: unknown) => console.error('versions failed', e))
   }, [agent, agent.identified, settled, path])
+
+  // The model may have written files during the turn.
+  useEffect(() => {
+    if (!agent.identified || !settled) return
+    agent
+      .call<WorkspaceFile[]>('files', [])
+      .then((f) => onFiles(id, f))
+      .catch((e: unknown) => console.error('files failed', e))
+  }, [agent, agent.identified, settled, path, filesAsked, id, onFiles])
 
   // Send the message the chat was created with, once the socket is up.
   useEffect(() => {

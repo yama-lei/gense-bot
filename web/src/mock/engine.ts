@@ -41,22 +41,44 @@ export function planReply(turn: Turn, state: AppState): Script {
   const { userMessage: message, attachments = [], command, mentions = [] } = turn
   const enabled = (id: string) => state.plugins.some((p) => p.id === id && p.enabled && p.available)
 
+  const conv = state.conversations.find((c) => c.turns.some((t) => t.id === turn.id))
   const skill = command?.id.startsWith('skill:') ? command.label : null
   if (skill) {
+    // The chat's own skill wins over a shared one with the same name, as on the server.
+    const local = `/workspace/skills/${skill}/SKILL.md`
+    const path = conv?.files?.some((f) => f.path === local) ? local : `/skills/${skill}/SKILL.md`
     return {
       summary: `使用 Skill：${skill}`,
-      steps: [{ name: 'skill_activate', input: { name: skill }, durationMs: 120 }],
+      steps: [{ name: 'read', input: { path }, durationMs: 120 }],
       text: `我按 Skill **${skill}** 的说明处理了你的请求：\n\n> ${message}\n\n（Mock 演示：真实环境中助手会先读取 Skill 的完整说明，再按步骤完成任务。）`,
       citations: [],
     }
   }
   if (command?.id === 'summarize') {
-    const conv = state.conversations.find((c) => c.turns.some((t) => t.id === turn.id))
     const earlier = conv?.turns.filter((t) => t.id !== turn.id && t.userMessage) ?? []
     return {
       summary: '总结会话，没有调用工具',
       steps: [],
       text: earlier.length ? `本会话要点：\n\n${earlier.map((t) => `- ${t.userMessage.replace(/\s+/g, ' ').slice(0, 40)}`).join('\n')}\n\n（Mock 演示）` : '这个会话还没有可以总结的内容。（Mock 演示）',
+      citations: [],
+    }
+  }
+  const wsFiles = mentions.filter((m) => m.kind === 'workspace')
+  const reads = wsFiles.map((m) => ({ name: 'read', input: { path: m.id }, durationMs: 120 }))
+  if (/工作区|写成文件|存成文件|记下来/.test(message)) {
+    const path = '/workspace/笔记.md'
+    return {
+      summary: reads.length ? `读取 ${reads.length} 个工作区文件并写入笔记` : '写入工作区',
+      steps: [...reads, { name: 'write', input: { path, content: `# 笔记\n\n${message}\n` }, durationMs: 150 }],
+      text: `已写入本会话的工作区：\`${path}\`。点右上角的文件夹按钮可以查看和下载。（Mock 演示）`,
+      citations: [],
+    }
+  }
+  if (wsFiles.length) {
+    return {
+      summary: `读取 ${wsFiles.length} 个工作区文件`,
+      steps: reads,
+      text: `我读了工作区里的 ${wsFiles.map((m) => `\`${m.id}\``).join('、')}，会结合其中的内容回答。（Mock 演示）`,
       citations: [],
     }
   }

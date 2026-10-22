@@ -6,12 +6,13 @@ import type { Store } from '../store'
 import type { Attachment, BranchNote, Conversation, DriveFile, Effort, ToolCall, Turn, Versions, WebSource } from '../types'
 import { modelName, useModels } from '../models'
 import { Composer, effortLabel } from './Composer'
-import { IconAlert, IconArrowDown, IconBranch, IconCheck, IconChevronDown, IconChevronLeft, IconChevronRight, IconCopy, IconDoc, IconEdit, IconInfo, IconMore, IconRetry, IconSide, IconTool, IconX } from './Icons'
+import { IconAlert, IconArrowDown, IconBranch, IconCheck, IconChevronDown, IconChevronLeft, IconChevronRight, IconCopy, IconDoc, IconFolder, IconEdit, IconInfo, IconMore, IconRetry, IconSide, IconTool, IconX } from './Icons'
 import { Markdown } from './Markdown'
 import { TopBar } from './TopBar'
 import { MOCK } from '../mode'
 import { formatSize } from '../util'
 import { suggestions } from './suggest'
+import { WorkspacePanel } from './WorkspacePanel'
 
 const statusLabel: Record<Turn['status'], string> = {
   queued: '已接收，排队中',
@@ -41,9 +42,17 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
   const side = sideId ? store.state.conversations.find((c) => c.id === sideId) : undefined
   const sides = store.state.conversations.filter((c) => c.parent?.kind === 'side' && c.parent.chatId === conv.id)
   const parent = conv.parent && store.state.conversations.find((c) => c.id === conv.parent!.chatId)
+  const [filesOpen, setFilesOpen] = useState<string | null>(null)
+  const showFiles = filesOpen === conv.id
   const openSide = (id: string) => {
     setPanel(null)
+    setFilesOpen(null)
     setSideId(id)
+  }
+  const toggleFiles = () => {
+    setPanel(null)
+    setSideId(null)
+    setFilesOpen(showFiles ? null : conv.id)
   }
 
   useEffect(() => {
@@ -78,7 +87,10 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
     },
     sendMessage: (text) => store.reply(conv.id, { text }, model, effort),
     requestDisplayMode: (mode) => {
-      if (mode !== 'inline') setSideId(null)
+      if (mode !== 'inline') {
+        setSideId(null)
+        setFilesOpen(null)
+      }
       setPanel(mode === 'inline' ? null : { turnId: turn.id, callId: call.id })
     },
     setViewState: (state) => store.setViewState(conv.id, turn.id, call.id, state),
@@ -99,9 +111,15 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
   }, [last?.assistantMessage, last?.toolCalls.length, last?.status, conv.turns.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className={'chat-layout' + (panelCall || side ? ' with-panel' : '')}>
+    <div className={'chat-layout' + (panelCall || side || showFiles ? ' with-panel' : '')}>
       <div className="page chat">
-        <TopBar>
+        <TopBar
+          right={
+            <button className={'icon-btn' + (showFiles ? ' active' : '')} aria-label="会话文件" aria-pressed={showFiles} title="会话文件" onClick={toggleFiles}>
+              <IconFolder />
+            </button>
+          }
+        >
           <TitleMenu store={store} conv={conv} showDetails={showDetails} onShowDetails={setShowDetails} />
         </TopBar>
 
@@ -183,6 +201,7 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
           )}
         </div>
       </div>
+      {showFiles && <WorkspacePanel store={store} conv={conv} onClose={() => setFilesOpen(null)} />}
       {side && <SideThread store={store} side={side} onClose={() => setSideId(null)} />}
       {panelCall && panelTurn && !side && (
         <aside className="side-panel" aria-label="插件面板">

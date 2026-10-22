@@ -40,9 +40,12 @@ const text = (m: UIMessage) =>
 
 const userExtras = (meta: UserMetadata | undefined) => ({ attachments: meta?.attachments, command: meta?.command, mentions: meta?.mentions })
 
+/** A SKILL.md under the shared /skills mount or the chat's /workspace/skills (roadmap-2 L0-6). */
+const skillPath = /^\/(?:workspace\/)?skills\/([^/]+)\/SKILL\.md$/
+
 /** Process line naming the tools loaded and the skills and chats a turn drew on (R19, R22: both show in the process summary). */
 function processSummary(calls: ToolCall[]) {
-  const skills = [...new Set(calls.filter((c) => c.name === 'skill_activate').map((c) => (c.input as { name?: string }).name).filter(Boolean))]
+  const skills = [...new Set(calls.flatMap((c) => (c.name === 'read' ? (skillPath.exec((c.input as { path?: string }).path ?? '')?.[1] ?? []) : [])))]
   const chats = new Set(calls.filter((c) => c.name === 'chats_read').map((c) => (c.input as { id?: string }).id)).size
   const loaded = [...new Set(calls.filter((c) => c.name === 'tools_load').flatMap((c) => (c.result?.structuredContent as { names?: string[] } | undefined)?.names ?? []))]
   const images = calls.filter((c) => c.name === 'image_generate' && c.status === 'succeeded').length

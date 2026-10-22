@@ -28,9 +28,6 @@ export interface ToolHost {
   seesImages: boolean
   /** Transcript of another of the user's chats; throws for an unknown id. */
   readChat(id: string): Promise<{ title: string; text: string }>
-  /** Instructions of an enabled skill and the paths of the files beside its SKILL.md. */
-  loadSkill(name: string): Promise<{ body: string; resources: string[] }>
-  readSkillResource(name: string, path: string): Promise<string>
   /** Deferred loading (roadmap-2 L0-1): tools that can still be loaded this turn, with their descriptions. */
   findTools(query: string): { name: string; description: string }[]
   /** Adds tools to this chat's loaded set; returns the names that were unknown. */
@@ -117,27 +114,8 @@ export function createTools(host: ToolHost) {
   const offsetInput = z.number().int().min(0).optional().describe('从第几个字符开始，默认 0')
 
   return {
-    // Always on (roadmap-2 L2): skills and @-mentioned chats are not plugins the user switches off.
+    // Always on: @-mentioned chats are not a plugin the user switches off. Skills are files in the workspace (L0-6).
     core: {
-      skill_activate: tool({
-        description: '激活一个 Skill，取得它的完整说明。任务符合系统提示里列出的某个 Skill，或用户用命令指定了 Skill 时，先调用它，再按说明完成任务。',
-        inputSchema: z.object({ name: z.string().min(1).max(64).describe('Skill 名称，与列表中一致') }),
-        execute: guarded(async ({ name }) => {
-          const { body, resources } = await host.loadSkill(name)
-          const files = resources.length ? `\n\n这个 Skill 附带的文件（需要时用 skill_read 读取）：\n${resources.map((p) => `- ${p}`).join('\n')}` : ''
-          return { content: `Skill「${name}」的说明：\n\n${body}${files}`, structuredContent: { name, resources } }
-        }),
-        toModelOutput,
-      }),
-      skill_read: tool({
-        description: `读取已激活的 Skill 附带的文件。path 是 skill_activate 列出的路径。每次最多 ${READ_CHUNK} 字。`,
-        inputSchema: z.object({ name: z.string().min(1).max(64), path: z.string().min(1).max(300), offset: offsetInput }),
-        execute: guarded(async ({ name, path, offset = 0 }) => {
-          const { part, more } = chunk(await host.readSkillResource(name, path), offset)
-          return { content: `Skill「${name}」的文件 ${path}：\n\n${part}${more}` }
-        }),
-        toModelOutput,
-      }),
       chats_read: tool({
         description: `读取用户的另一个会话（用户用 @ 提到的会话），作为本轮的上下文。每次最多 ${READ_CHUNK} 字。`,
         inputSchema: z.object({ id: z.string().min(1).max(100).describe('会话 id'), offset: offsetInput }),

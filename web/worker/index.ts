@@ -45,6 +45,20 @@ export default {
       return new Response(found.bytes, { headers: { 'content-type': found.mediaType, 'cache-control': 'private, max-age=31536000, immutable' } })
     }
 
+    // Workspace files live in their chat too (roadmap-2 "L0-6 会话工作区").
+    const file = url.pathname.match(/^\/api\/chats\/([\w-]{1,100})\/files$/)
+    const path = url.searchParams.get('path')
+    if (file && path && request.method === 'GET') {
+      try {
+        const found = await (await hub()).chatFile(file[1], path)
+        if (!found) return new Response('Not found', { status: 404 })
+        const disposition = `attachment; filename*=UTF-8''${encodeURIComponent(found.name)}`
+        return new Response(found.bytes, { headers: { 'content-type': 'application/octet-stream', 'content-disposition': disposition, 'cache-control': 'private, no-store' } })
+      } catch (e) {
+        return new Response(e instanceof Error ? e.message : String(e), { status: 400 })
+      }
+    }
+
     // Google OAuth for Drive. Both legs run behind Access, so the state is bound to this user's hub.
     const redirectUri = `${url.origin}${CALLBACK_PATH}`
     if (url.pathname === '/oauth/google/start' && request.method === 'GET') {

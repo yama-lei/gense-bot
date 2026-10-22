@@ -22,7 +22,13 @@ export function userMessage({ text, attachments = [], command, mentions = [] }: 
     notes.push(
       `${MENTIONS} 用户在消息中提到了：\n` +
         mentions
-          .map((m) => (m.kind === 'plugin' ? `- 插件「${m.label}」：本轮优先使用这个插件的工具。` : `- 会话「${m.label}」（id: ${m.id}）：用 chats_read 读取它的内容作为上下文。`))
+          .map((m) =>
+            m.kind === 'plugin'
+              ? `- 插件「${m.label}」：本轮优先使用这个插件的工具。`
+              : m.kind === 'workspace'
+                ? `- 工作区文件 ${m.id}：需要时用 read 读取。`
+                : `- 会话「${m.label}」（id: ${m.id}）：用 chats_read 读取它的内容作为上下文。`,
+          )
           .join('\n'),
     )
   if (attachments.length) notes.push(attachmentNote(attachments))

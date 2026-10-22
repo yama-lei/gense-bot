@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { MOCK } from './mode'
 import { useMockStore } from './mock/store'
 import { useRealStore } from './real/store'
-import type { AppState, Conversation, DriveFile, Effort, Outgoing, ToolResult, Turn } from './types'
+import type { AppState, Conversation, DriveFile, Effort, Outgoing, PluginValue, ToolResult, Turn } from './types'
 
 /** What the views need from the data layer; the mock and the Worker-backed store both provide it. */
 export interface Store {
@@ -36,6 +36,8 @@ export interface Store {
   /** Saves any file (at most 20 MB) to GenseBot/资料; rejects with a message for the user. */
   upload: (file: File) => Promise<DriveFile>
   setDrive: (connected: boolean) => void
+  /** Changes some of a plugin's settings; null returns a value to its default and clears a secret. Rejects with a message for the user. */
+  setPluginConfig: (id: string, values: Record<string, PluginValue | null>, secrets: Record<string, string | null>) => Promise<void>
   /** Reloads GenseBot/资料 and Artifacts from Drive. */
   refreshFiles: () => void
   /** Reloads the skills in GenseBot/Skills. */

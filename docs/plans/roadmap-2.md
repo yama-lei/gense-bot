@@ -1,6 +1,6 @@
 # 路线图 2：从首个闭环到日常可用
 
-状态：2026-10-21 制定，按阶段开发中（阶段 1–5、7 已完成；阶段 6 等端点开通）。来源是仓库根目录的 `goal.md`（用户的新功能清单），这里把它整理成 Intent → Spec → Design，并给出分层和开发顺序。所有取舍由开发者决定，理由写在各节；有长期成本的决定另见 [ADR-0003](../adr/0003-free-plan-agent-features.md)。
+状态：2026-10-21 制定，按阶段开发中（阶段 1–8 已完成）。来源是仓库根目录的 `goal.md`（用户的新功能清单），这里把它整理成 Intent → Spec → Design，并给出分层和开发顺序。所有取舍由开发者决定，理由写在各节；有长期成本的决定另见 [ADR-0003](../adr/0003-free-plan-agent-features.md)。
 
 依据：[首版 Spec](../specs/personal-assistant.md)、[网页界面 Spec](../specs/web-ui.md)、[架构](../design/architecture.md)。
 
@@ -17,6 +17,7 @@
 | G7 | 图片生成工具 | 用提示词生成图片 |
 | G8 | Skills | 可复用的做事方法，用户可增改 |
 | G9 | 输入框中 `/` 命令和 `@` 插件 / 资料文件 / 其他会话 | 输入框的命令与提及 |
+| G10 | （2026-10-21 追加）生图应该作为插件；插件要提供配置功能；把插件都配置化 | 每个插件可以声明配置项，在定制页填写；密钥加密保存。图片生成是一个可配置的插件 |
 
 ## 分层
 
@@ -24,7 +25,7 @@
 L3 进阶      生成式界面(G5)    Codemode(G6，Free 计划不可用，见 ADR-0003)
 L2 交互      会话树与支线(G4)  / 命令与 @ 提及(G9)   Skills(G8)
 L1 能力插件  网页(G2)          文件格式(G3)          图片(G7)
-L0 平台改造  工具注册表与按需加载 · 附件管线 · 会话树存储 · 输入框扩展点
+L0 平台改造  工具注册表与按需加载 · 附件管线 · 会话树存储 · 输入框扩展点 · 插件配置(G10)
 横切         UI/UX 对标(G1)
 ```
 
@@ -38,6 +39,7 @@ L0 平台改造  工具注册表与按需加载 · 附件管线 · 会话树存�
 | pi-gpt-search | 调用 ChatGPT 内部接口 `chatgpt.com/backend-api/codex/alpha/search`，需要个人订阅登录 token，伪造 UA。非公开接口，不适合放进服务端 | <https://github.com/mateusdcc/pi-gpt-search> |
 | 我们端点的 GPT 搜索 | OpenAI 端点的 Responses API 带 `{type:"web_search"}` 工具可用（`gpt-6.1-sol` 实测：自动搜索、打开页面，回答带 URL 注释）。这就是“类似 pi-gpt-search 的逻辑”的正规做法 | 本地 curl |
 | 图片生成 | OpenAI 端点有 `gpt-image-*` 模型，但 `/images/generations` 和 Responses `image_generation` 都返回 `Image generation is not enabled for this group` | 本地 curl |
+| 图片生成（复测） | 用户在中转站开通分组权限后，`/images/generations` 可用：`gpt-image-2` 约 18 秒返回一张 base64 PNG（约 1.2 MB），`gpt-image-1` 不在该分组。此前“自行注入”的现象来自中转的上游：不声明工具时响应里的 `tools` 也带 `image_generation`，而中转只检查显式声明 | 本地 curl |
 | Codemode | `@cloudflare/codemode` 需要 Worker Loader（Dynamic Workers），官方写明只在 Workers Paid 计划提供 | <https://developers.cloudflare.com/dynamic-workers/pricing/> |
 | 按需加载工具 | Think 没有工具搜索；但有 `beforeStep`（即 AI SDK `prepareStep`），每一步都可以改 `activeTools` | `@cloudflare/think` 0.21 `beforeStep` |
 | 会话树 | Think 的消息本来就是树：`regenerate()` 保留旧回答为兄弟节点，`session.getBranches(id)` 可读出各版本。活动路径永远是最后插入的叶子，没有切换活动分支的公开接口 | `agents` `SessionsCore.getLatestLeaf`（按 `seq` 取最新） |
@@ -96,7 +98,9 @@ L0 平台改造  工具注册表与按需加载 · 附件管线 · 会话树存�
 | R20 | 生成式界面 | 让助手“用表格和图表对比三款手机”→ 回答中出现由组件渲染的卡片、表格、图表；深色模式下可读 |
 | R21 | 界面交互 | 生成的界面中点按钮 → 作为一条用户消息发给助手 |
 | R22 | 按需加载 | 模型首轮只看到核心工具和 `tools_find`；需要其他工具时先搜索再加载，过程摘要可见；同一会话后续轮次保持已加载 |
-| R23 | 图片生成 | 让助手画一张图 → 消息中显示图片，可保存到 `GenseBot/Artifacts/`；端点不支持时，插件在定制页显示“端点未开通”，不能开启 |
+| R23 | 图片生成 | 让助手画一张图 → 消息中显示图片，可以放大和下载；连接 Drive 且开启“保存到 Drive”时，另存到 `GenseBot/Artifacts/` |
+| R24 | 插件配置 | 定制页每个插件都有“设置”：修改后下一轮对话生效；密钥只显示“已设置”，不回显，可以清除后改用服务器配置 |
+| R25 | 未配置的插件 | 缺少必要配置（例如没有搜索 API Key）的插件不能开启，并写明缺什么；补上后即可开启 |
 
 ## Design
 
@@ -151,12 +155,35 @@ L0 平台改造  工具注册表与按需加载 · 附件管线 · 会话树存�
 
 - “复合使用”写进系统提示：先 `web_search`，需要细节再 `web_fetch`，问题复杂或前两者结果不够时用 `web_research`。
 - 结果的 `structuredContent.sources` 被前端收集成回答下方的来源卡片，与文件引用并列。
-- 未配置 `DEEPSEEK_API_KEY` 时 `web_search` / `web_fetch` 不注册；未配置 OpenAI 端点时 `web_research` 不注册。插件三者都没有时不可开启。
+- 没有 DeepSeek API Key（用户设置或服务器 `DEEPSEEK_API_KEY`）时不提供 `web_search` / `web_fetch`；没有深度搜索模型时不提供 `web_research`。三者都没有时插件不可开启。
 
-### L1 图片（阻塞）
+### L0-5 插件配置（G10）
 
-- 插件 `image`，工具 `image_generate(prompt, size)`：调用 OpenAI 端点 `/images/generations`，模型取 `IMAGE_MODEL`。生成的图片直接存到 `GenseBot/Artifacts/`（PNG），消息里显示图片（经 `/api/files/<id>/content` 读取，Worker 校验 Access 后代理 Drive）。
-- 当前端点返回“未开通”，所以排在最后，并在 hub 刷新模型时探测：探测失败则插件标记为不可用。
+- 声明：`src/plugins/catalog.ts` 里每个插件可以带 `settings`。每一项有 key、名称、说明，类型为文本、密钥、下拉或开关，可以有默认值。前后端共用这份声明。
+- 存储：用户填写的值存在 UserHub。普通值进入广播状态 `pluginConfig`；密钥用 `TOKEN_ENCRYPTION_KEY` 加密后存进 KV，广播状态只带“哪些密钥已设置”。客户端改配置只能通过 callable `setPluginConfig`，hub 按声明校验 key、类型和取值。
+- 取值顺序：用户值，然后是服务器配置（`.env`，只用于端点地址、Key 和默认模型），最后是声明里的默认值。定制页显示某一项“使用服务器配置”，但不显示服务器的值。
+- 可用性：worker 根据解析后的配置算出每个插件当前能提供哪些工具（例如有 Key 才有 `web_search`）。一个工具都没有时插件不能开启，`pluginIssues` 写明缺什么。配置改了就重新计算。
+- 生效：Chat 每轮开始时从 hub 取解析后的配置（含解密后的密钥，只在服务端之间传递）。工具执行时读取这份配置，所以改设置后下一轮生效，不需要重新部署。
+- 各插件的配置项：
+
+| 插件 | 配置项 |
+| --- | --- |
+| 资料 | 搜索范围：整个 Drive，或只搜 GenseBot 的资料和 Artifacts |
+| Artifact | 自动保存：展示的同时存到 Drive（默认关，仍由用户决定） |
+| 界面 | 使用倾向：需要时 / 尽量使用（改变系统提示） |
+| 网页 | DeepSeek API Key（密钥，默认用服务器的）、每次搜索结果数、深度搜索模型 |
+| 图片 | 端点地址、API Key（都默认用服务器的 OpenAI 端点）、模型（默认 `gpt-image-2`）、尺寸、质量、保存到 Drive（默认开） |
+
+### L1 图片
+
+- 插件 `image`，工具 `image_generate(prompt, size?)`，调用配置端点的 `/images/generations`。`size` 只在用户明确要求形状时由模型填写，否则用设置里的默认尺寸。
+- 端点可能忽略 `output_format`、`size` 和 `quality`（2026-10-21 实测中转站固定返回约 1.6 MB 的 1254×1254 PNG），所以按文件头识别格式，并把字节分块（每块 1 MB）存储。
+- 图片字节存在所属会话的 Durable Object（SQLite 的单个值不能超过 2 MB，所以分块存），经 `GET /api/chats/<chatId>/images/<imageId>` 读取。Worker 校验 Access，hub 确认会话属于该用户后再转发。这样不连 Drive 也能看图。
+- 连接了 Drive 并开启“保存到 Drive”时，同时另存到 `GenseBot/Artifacts/`，失败不影响显示。
+- 界面：生成中显示占位；完成后显示图片，可以点开大图、下载，并附上提示词。
+- 以前“端点开通时才探测”的设计取消：配置齐全就可以开启，端点报错时把原因作为工具结果交给模型转述。401、403、404 是配置问题，结果里要求模型不要重试，并让用户去定制页修改。
+- Responses 端点会自行注入托管的 `image_generation` 工具，模型会优先调用它。它的结果是几 MB 的 base64，既不能存进消息，也绕过了插件设置。因此每个 Responses 请求都设 `tool_choice: allowed_tools`，只允许调用我们声明的工具（`worker/models.ts` 的 `responsesCompat`）。
+- 同一处还会去掉请求里的 `item_reference`。AI SDK 默认用 id 引用上一步的推理，而无状态的中转站解析不了，整个请求返回 502。这会让所有多步工具调用失败，是在本阶段测试中发现的。
 
 ### L2 Skills
 
@@ -200,8 +227,9 @@ L0 平台改造  工具注册表与按需加载 · 附件管线 · 会话树存�
 | 3 | 附件管线与任意文件上传 | — | R7–R10（Mock 已验证；真实环境需要用户连接 Drive 后验证） |
 | 4 | `/` 命令、`@` 提及、Skills | 1、3 | R17–R19（Mock 与本地真实模型已验证；Drive Skills 需要用户连接 Drive 后验证） |
 | 5 | 按需加载、生成式界面 | 1 | R20–R22（Mock 浅色/深色/窄屏与本地真实模型已验证；按需加载用临时调低的门槛实测） |
-| 6 | 图片生成 | 端点开通 | R23（2026-10-21 复测：`/images/generations` 和显式声明的 Responses `image_generation` 仍返回 `Image generation is not enabled for this group`。端点偶尔会自行注入该工具并返回图片，但这不是受支持的途径，不依赖它；前端只保证这类结果不会导致崩溃） |
+| 6 | 图片生成 | 端点开通 | 并入阶段 8。R23（2026-10-21 复测：`/images/generations` 和显式声明的 Responses `image_generation` 仍返回 `Image generation is not enabled for this group`。端点偶尔会自行注入该工具并返回图片，但这不是受支持的途径，不依赖它；前端只保证这类结果不会导致崩溃） |
 | 7 | 整体 UI/UX 走查 | 全部 | 每个页面的走查记录（见下节） |
+| 8 | 插件配置 + 图片插件 | 1、6 | R23–R25（Mock 浅色/深色/窄屏与本地真实模型已验证：生成图片；设置保存后刷新仍在；用户的无效 API Key 覆盖服务器的值，清除后回退；配置错误时只调用一次就告知用户） |
 
 每个阶段单独提交；Mock 模式同步提供演示数据，保持 Mock 部署可用。
 

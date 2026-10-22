@@ -45,7 +45,8 @@ function processSummary(calls: ToolCall[]) {
   const skills = [...new Set(calls.filter((c) => c.name === 'skill_activate').map((c) => (c.input as { name?: string }).name).filter(Boolean))]
   const chats = new Set(calls.filter((c) => c.name === 'chats_read').map((c) => (c.input as { id?: string }).id)).size
   const loaded = [...new Set(calls.filter((c) => c.name === 'tools_load').flatMap((c) => (c.result?.structuredContent as { names?: string[] } | undefined)?.names ?? []))]
-  return [loaded.length && `加载工具：${loaded.join('、')}`, skills.length && `使用 Skill：${skills.join('、')}`, chats && `读取 ${chats} 个会话`].filter(Boolean).join(' · ') || undefined
+  const images = calls.filter((c) => c.name === 'image_generate' && c.status === 'succeeded').length
+  return [loaded.length && `加载工具：${loaded.join('、')}`, skills.length && `使用 Skill：${skills.join('、')}`, chats && `读取 ${chats} 个会话`, images && `生成 ${images} 张图片`].filter(Boolean).join(' · ') || undefined
 }
 
 /**

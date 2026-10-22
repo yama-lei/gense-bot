@@ -5,7 +5,9 @@ import type { Citation, DriveFile, ToolResult } from '../src/types'
 import { findQuote } from '../src/util'
 import { isImage, toFile, type Drive, type Folders, type TextCache } from './drive'
 import { uiInput } from '../src/plugins/ui/schema'
-import { webAvailable, webFetch, webResearch, webSearch } from './web'
+import { generateImage, imageExtension } from './image'
+import type { PluginConfig } from './plugins'
+import { webFetch, webResearch, webSearch } from './web'
 
 // Server half of the plugins (architecture "插件与界面"). Each execute() returns an MCP-style
 // CallToolResult: `content` goes to the model, `structuredContent` only to the view.
@@ -33,6 +35,10 @@ export interface ToolHost {
   findTools(query: string): { name: string; description: string }[]
   /** Adds tools to this chat's loaded set; returns the names that were unknown. */
   loadTools(names: string[]): string[]
+  /** A plugin's resolved settings for the running turn (roadmap-2 "L0-5 插件配置"). */
+  config(plugin: string): PluginConfig
+  /** Keeps a generated image with this chat; resolves to the URL the client loads it from. */
+  saveImage(bytes: Uint8Array, mediaType: string): Promise<{ id: string; url: string }>
 }
 
 /** Characters per `files_read` call; longer files are read in parts. */
@@ -160,11 +166,12 @@ export function createTools(host: ToolHost) {
         toModelOutput,
       }),
       files_search: tool({
-        description: '在用户的整个 Google Drive 中按文件名和全文搜索，返回文件 ID。',
+        description: '在用户的 Google Drive 中按文件名和全文搜索，返回文件 ID。',
         inputSchema: z.object({ query: z.string().min(1).max(200).describe('关键词') }),
         execute: guarded(async ({ query }) => {
           const { drive, folders } = await host.drive()
-          const files = await drive.search(query, folders)
+          const within = host.config('files').searchScope === 'gensebot' ? [folders.sources, folders.artifacts] : []
+          const files = await drive.search(query, folders, 20, within)
           return { content: files.length ? `找到 ${files.length} 个文件：\n${files.map(describe).join('\n')}` : `没有找到包含「${query}」的文件`, structuredContent: { files } }
         }),
         toModelOutput,
@@ -224,7 +231,12 @@ export function createTools(host: ToolHost) {
       artifact_create: tool({
         description: '在会话中展示一个产物（提纲、报告、代码等），用户可以预览并保存到 Drive。只用于展示，不会保存。',
         inputSchema: artifactInput,
-        execute: async (input): Promise<ToolResult> => ({ content: `已展示 Artifact「${input.title}」（未保存）`, structuredContent: input }),
+        execute: async (input, { toolCallId }): Promise<ToolResult> => {
+          if (!host.config('artifact').autoSave) return { content: `已展示 Artifact「${input.title}」（未保存）`, structuredContent: input }
+          // Auto-save (plugin setting): the view shows it as saved; a failed save still shows it.
+          const saved = await saveArtifact(host, input, toolCallId).catch((e: unknown) => ({ content: `保存失败：${e instanceof Error ? e.message : String(e)}`, structuredContent: undefined }))
+          return { content: `已展示 Artifact「${input.title}」；${saved.content}`, structuredContent: { ...input, saved: saved.structuredContent } }
+        },
         toModelOutput,
       }),
       artifact_save: tool({
@@ -270,30 +282,63 @@ export function createTools(host: ToolHost) {
         toModelOutput,
       }),
     },
-    web: webTools(host.env),
+    web: webTools(host),
+    image: {
+      image_generate: tool({
+        description: '按描述生成一张图片，显示给用户。prompt 要具体：主体、场景、风格、构图、光线、需要出现的文字。生成约需半分钟。',
+        inputSchema: z.object({
+          prompt: z.string().min(1).max(4000).describe('图片描述，用户用什么语言就用什么语言'),
+          size: z.enum(['1024x1024', '1536x1024', '1024x1536']).optional().describe('只在用户明确要求方形、横向或纵向时填写；否则不填，使用用户设置的默认尺寸'),
+        }),
+        execute: guarded(async ({ prompt, size }, { abortSignal }) => {
+          const config = host.config('image')
+          const image = await generateImage(config, prompt, size, abortSignal)
+          const { id, url } = await host.saveImage(image.bytes, image.mediaType)
+          let file: DriveFile | undefined
+          if (config.saveToDrive) {
+            // Drive is a copy; the image stays visible in the chat without it.
+            file = await host
+              .drive()
+              .then(async ({ drive, folders }) => {
+                const base = prompt.replace(/[\\/:*?"<>|\n\r]+/g, ' ').trim().slice(0, 40) || '图片'
+                const name = await drive.freeName(folders.artifacts, `${base}.${imageExtension(image.mediaType)}`)
+                const saved = await drive.upload(folders, folders.artifacts, name, image.mediaType, image.bytes.slice().buffer)
+                host.filesChanged()
+                return saved
+              })
+              .catch(() => undefined)
+          }
+          const where = file ? `，已另存到 GenseBot/Artifacts/${file.name}` : ''
+          return {
+            content: `已生成图片并显示给用户${where}。不要在回复里重复描述画面细节，也不要输出图片链接。`,
+            structuredContent: { prompt, revisedPrompt: image.revisedPrompt, images: [{ id, url, mediaType: image.mediaType, fileId: file?.id, fileName: file?.name }] },
+          }
+        }),
+        toModelOutput,
+      }),
+    },
   } satisfies Record<string, ToolSet>
 }
 
-/** Web plugin; tools whose backend is not configured are left out. */
-function webTools(env: WorkerEnv): ToolSet {
-  const has = webAvailable(env)
-  const out: ToolSet = {}
-  if (has.search) {
-    out.web_search = tool({
+/** Web plugin; which of its tools a turn offers depends on the settings (worker/plugins.ts). */
+function webTools(host: ToolHost) {
+  const key = () => String(host.config('web').deepseekKey ?? '')
+  return {
+    web_search: tool({
       description: '搜索公开网页，返回标题、链接、日期和摘要。适合查事实、找最新信息和找链接。支持 site:域名、"精确短语"、-排除词、after:2025 等语法。',
       inputSchema: z.object({
         query: z.string().min(1).max(128).describe('搜索词，最多 128 字'),
-        count: z.number().int().min(1).max(20).optional().describe('结果数，默认 8'),
+        count: z.number().int().min(1).max(20).optional().describe('结果数，不填用设置里的默认值'),
       }),
-      execute: guarded(async ({ query, count = 8 }) => {
-        const hits = await webSearch(env, query, count)
+      execute: guarded(async ({ query, count }) => {
+        const hits = await webSearch(key(), query, count ?? Number(host.config('web').searchCount ?? 8))
         if (!hits.length) return { content: `没有找到「${query}」的结果`, structuredContent: { sources: [] } }
         const lines = hits.map((h, i) => `[${i + 1}] ${h.title}\n${h.url}${h.date ? `（${h.date.slice(0, 10)}）` : ''}\n${h.summary}`)
         return { content: lines.join('\n\n'), structuredContent: { sources: hits.map(({ url, title, site }) => ({ url, title, site })) } }
       }),
       toModelOutput,
-    })
-    out.web_fetch = tool({
+    }),
+    web_fetch: tool({
       description: `读取一个网页的正文（Markdown）。每次最多返回 ${READ_CHUNK} 字，较长的网页用 offset 继续读。`,
       inputSchema: z.object({
         url: z.string().url().max(8192),
@@ -301,7 +346,7 @@ function webTools(env: WorkerEnv): ToolSet {
       }),
       execute: guarded(async ({ url, offset = 0 }) => {
         if (!/^https?:\/\//i.test(url) || new URL(url).username) return { content: '只能读取 http(s) 网页', isError: true }
-        const page = await webFetch(env, url)
+        const page = await webFetch(key(), url)
         const part = page.content.slice(offset, offset + READ_CHUNK)
         const end = offset + part.length
         const more = end < page.content.length ? `\n\n[第 ${offset}–${end} 字，共 ${page.content.length} 字；用 offset=${end} 继续读]` : ''
@@ -311,31 +356,23 @@ function webTools(env: WorkerEnv): ToolSet {
         }
       }),
       toModelOutput,
-    })
-  }
-  if (has.research) {
-    out.web_research = tool({
+    }),
+    web_research: tool({
       description: '深度搜索：由另一个模型多次搜索、打开网页并交叉核对，返回带来源的研究结论。耗时较长（约半分钟到两分钟），只在问题复杂、需要多方对比，或 web_search 结果不够时使用。',
       inputSchema: z.object({ question: z.string().min(1).max(2000).describe('完整的研究问题，写明背景和需要的细节') }),
       execute: guarded(async ({ question }, { abortSignal }) => {
-        const r = await webResearch(env, question, abortSignal)
+        const r = await webResearch(host.env, String(host.config('web').researchModel), question, abortSignal)
         const refs = r.sources.map((s, i) => `[${i + 1}] ${s.title} ${s.url}`).join('\n')
         return { content: `${r.text}${refs ? `\n\n来源：\n${refs}` : ''}`, structuredContent: { sources: r.sources } }
       }),
       toModelOutput,
-    })
-  }
-  return out
+    }),
+  } satisfies ToolSet
 }
 
 export type PluginId = Exclude<keyof ReturnType<typeof createTools>, 'core' | 'meta'>
 /** Plugins this server implements; the hub offers only these. */
-export const pluginIds: PluginId[] = ['files', 'artifact', 'ui', 'web']
-/** Plugins this deployment can offer, given which backends `.env` configures. */
-export function availablePlugins(env: WorkerEnv): PluginId[] {
-  const web = webAvailable(env)
-  return pluginIds.filter((id) => id !== 'web' || web.search || web.research)
-}
+export const pluginIds: PluginId[] = ['files', 'artifact', 'ui', 'web', 'image']
 /** Plugin of each tool, for checking calls made by views. */
 export const toolPlugin = (all: ReturnType<typeof createTools>, name: string) => (Object.entries(all) as [PluginId | 'core' | 'meta', ToolSet][]).find(([, set]) => name in set)?.[0]
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { planReply } from './engine'
-import { seed } from './seed'
+import { mockPluginConfig, seed } from './seed'
 import { tools } from '../plugins'
 import type { ToolContext } from '../plugins/types'
 import type { Store } from '../store'
@@ -8,7 +8,7 @@ import type { AppState, BranchNote, Conversation, DriveFile, Effort, Outgoing, T
 import { MAX_UPLOAD_BYTES, uid } from '../util'
 
 // v6: skills.
-const KEY = 'gensebot-mock-v7'
+const KEY = 'gensebot-mock-v8'
 /** Older versions by the id of the message they replaced: the turns from there on, per chat. */
 const BRANCHES_KEY = 'gensebot-mock-branches-v1'
 type Branches = Record<string, Record<string, Turn[]>>
@@ -297,6 +297,22 @@ export function useMockStore(): Store {
 
   const setDrive = (driveConnected: boolean) => setState((s) => ({ ...s, account: { ...s.account, driveConnected, driveError: null } }))
 
+  // Secrets are only marked as set; the mock never keeps them.
+  const setPluginConfig: Store['setPluginConfig'] = async (id, values, secrets) =>
+    setState((s) => ({
+      ...s,
+      plugins: s.plugins.map((p) => {
+        if (p.id !== id) return p
+        const next = { ...p.config.values }
+        for (const [k, v] of Object.entries(values)) if (v === null || v === '') delete next[k]
+        else next[k] = v
+        const set = new Set(p.config.secretsSet)
+        for (const [k, v] of Object.entries(secrets)) if (v === null) set.delete(k)
+        else if (v.trim()) set.add(k)
+        return { ...p, ...mockPluginConfig(id, next, [...set]) }
+      }),
+    }))
+
   const readFile = async (id: string) => {
     const file = stateRef.current.files.find((f) => f.id === id)
     if (!file) throw new Error('文件不存在，或你的 Google 账号无权访问')
@@ -326,5 +342,5 @@ export function useMockStore(): Store {
     setViews({})
   }
 
-  return { state, ready: true, turnsLoaded: () => true, setState, patchConv, startConversation, reply, regenerate, editMessage, showVersion, branch, summarizeSide, attach: () => {}, stop, reset, callToolFromView, setViewState, upload, setDrive, refreshFiles: () => {}, refreshSkills: () => {}, readFile, searchDrive, bridge: null }
+  return { state, ready: true, turnsLoaded: () => true, setState, patchConv, startConversation, reply, regenerate, editMessage, showVersion, branch, summarizeSide, attach: () => {}, stop, reset, callToolFromView, setViewState, upload, setDrive, setPluginConfig, refreshFiles: () => {}, refreshSkills: () => {}, readFile, searchDrive, bridge: null }
 }

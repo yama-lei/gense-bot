@@ -243,6 +243,14 @@ code, pre { font-family: var(--mono); }
 .artifact-body { padding: 16px 22px 32px; }
 .generic-card { padding: 12px 14px; border: 1px dashed var(--border); border-radius: 12px; font-size: 14px; }
 .generic-card p { margin: 6px 0 0; }
+.image-gen { margin: 0; width: min(100%, 460px); }
+.image-gen + .image-gen { margin-top: 12px; }
+.image-gen img { display: block; width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--border); background: var(--hover); }
+.image-pending { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; border-radius: 12px; border: 1px solid var(--border); background: var(--hover); color: var(--muted); font-size: 14px; animation: pulse 2s ease-in-out infinite; }
+.image-gen figcaption { margin-top: 6px; }
+.image-meta { display: flex; align-items: center; gap: 8px; }
+.image-meta > span { flex: 1; min-width: 0; }
+.pill-btn.small { padding: 4px 9px; font-size: 13px; gap: 4px; }
 .to-bottom { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); width: 38px; height: 38px; border-radius: 50%; background: var(--surface); border: 1px solid var(--border); box-shadow: 0 4px 14px rgb(0 0 0 / .1); display: grid; place-items: center; z-index: 5; }
 .chat-composer { padding: 0 20px 14px; padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px)); flex-shrink: 0; }
 .chat-composer .composer-wrap { max-width: 800px; margin: 0 auto; }
@@ -311,6 +319,20 @@ code, pre { font-family: var(--mono); }
 .row-input { border-color: transparent; background: transparent; padding: 6px 8px; }
 .tag { font-size: 11px; font-weight: 500; padding: 1px 7px; border-radius: 99px; background: var(--surface-2); color: var(--muted); margin-left: 4px; vertical-align: 2px; }
 .tag.warn { background: var(--warn-bg); color: var(--warn); }
+.plugin-row { flex-wrap: wrap; }
+.warn-text { color: var(--warn); }
+.plugin-settings { flex-basis: 100%; display: flex; flex-direction: column; gap: 14px; margin-top: 4px; padding-top: 14px; border-top: 1px dashed var(--border); }
+.setting { display: grid; grid-template-columns: minmax(140px, 220px) 1fr; align-items: center; gap: 6px 16px; font-size: 14px; }
+.setting.inline { grid-template-columns: minmax(140px, 220px) auto; justify-content: start; }
+.setting-label { display: flex; flex-direction: column; gap: 2px; }
+.setting-label small { font-size: 12.5px; }
+.setting input, .setting select { min-width: 0; width: 100%; border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; background: var(--bg); outline: 0; }
+.setting input:focus, .setting select:focus { border-color: var(--muted); }
+.setting-secret { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.setting-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.error-text { color: var(--err); }
+.plugin-settings .error-text { margin: 0; }
+@media (max-width: 600px) { .setting { grid-template-columns: 1fr; } .setting.inline { grid-template-columns: 1fr auto; } }
 .toggle { width: 42px; height: 24px; border-radius: 99px; background: var(--border); position: relative; flex-shrink: 0; transition: background .15s; }
 .toggle span { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .15s; box-shadow: 0 1px 2px rgb(0 0 0 / .2); }
 .toggle.on { background: var(--accent); }

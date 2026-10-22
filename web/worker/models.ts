@@ -36,8 +36,27 @@ export function parseModelKey(key: string): { provider: Provider; id: string } |
 
 export function languageModel(env: WorkerEnv, provider: Provider, id: string): LanguageModel {
   return provider === 'openai'
-    ? createOpenAI({ baseURL: v1(env.OPENAI_BASE_URL), apiKey: env.OPENAI_AUTH_TOKEN })(id)
+    ? createOpenAI({ baseURL: v1(env.OPENAI_BASE_URL), apiKey: env.OPENAI_AUTH_TOKEN, fetch: responsesCompat })(id)
     : createAnthropic({ baseURL: v1(env.ANTHROPIC_BASE_URL), authToken: env.ANTHROPIC_AUTH_TOKEN })(id)
+}
+
+/**
+ * Adapts Responses API requests to OpenAI-compatible relays:
+ * - Some add hosted tools of their own (e.g. `image_generation`), whose results the agent can
+ *   neither run nor store; `allowed_tools` keeps the model to the tools we sent.
+ * - Stateless ones cannot resolve `item_reference` (earlier reasoning by id) and fail the whole
+ *   request; the model works without its earlier reasoning.
+ */
+const responsesCompat: typeof fetch = async (input, init) => {
+  if (typeof init?.body === 'string' && String(input).endsWith('/responses')) {
+    const body = JSON.parse(init.body) as { input?: { type?: string }[]; tools?: { type: string; name?: string }[]; tool_choice?: unknown }
+    if (body.tools?.length && (body.tool_choice === undefined || body.tool_choice === 'auto')) {
+      body.tool_choice = { type: 'allowed_tools', mode: 'auto', tools: body.tools.map((t) => (t.type === 'function' ? { type: 'function', name: t.name } : { type: t.type })) }
+    }
+    if (Array.isArray(body.input)) body.input = body.input.filter((i) => i.type !== 'item_reference')
+    init = { ...init, body: JSON.stringify(body) }
+  }
+  return fetch(input, init)
 }
 
 /** Maps the chosen effort to each provider's own parameter. */

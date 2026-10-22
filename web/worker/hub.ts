@@ -3,12 +3,14 @@ import { Agent, callable, type Connection, type ConnectionContext } from 'agents
 import { RoutedAgents } from 'agents/routing'
 import { z } from 'zod'
 import { builtinSkills, parseSkill } from '../src/skills'
-import type { BranchNote, ChatMeta, DriveFile, HubState, Provider, TurnSettings } from '../src/types'
+import { pluginSettings, resolveSettings, validSetting } from '../src/plugins/catalog'
+import type { BranchNote, ChatMeta, DriveFile, HubState, PluginValue, Provider, TurnSettings } from '../src/types'
 import type { Chat } from './chat'
 import { Drive, MAX_UPLOAD_BYTES, type Folders, type TextCache } from './drive'
 import { DRIVE_SCOPE, GrantRevokedError, authUrl, decrypt, encrypt, exchangeCode, refreshAccessToken, revoke } from './google'
 import { defaultModel, listEndpointModels, pickCapabilities, providers } from './models'
-import { availablePlugins, pluginIds } from './tools'
+import { readiness, serverKeys, serverSettings, type PluginConfig } from './plugins'
+import { pluginIds } from './tools'
 
 /** Header the Worker sets from the verified Access JWT; any client-supplied value is stripped. */
 export const EMAIL_HEADER = 'x-gense-email'
@@ -80,6 +82,8 @@ export class UserHub extends Agent<WorkerEnv, HubState> {
     prefs: { language: 'zh-CN', defaultEffort: 'medium', model: '' },
     enabledPlugins: [...pluginIds],
     availablePlugins: [...pluginIds],
+    pluginSettings: {},
+    pluginIssues: {},
     account: { name: '', email: '', driveConnected: false, driveError: null },
     files: [],
     skills: builtinInfo,
@@ -103,12 +107,13 @@ export class UserHub extends Agent<WorkerEnv, HubState> {
     // State saved by an older deployment may lack newer fields.
     const account = { ...this.state.account, driveConnected: !!this.grant(), driveError: this.state.account.driveError ?? null }
     // A plugin this user has never seen starts enabled; one they turned off stays off.
-    const available = availablePlugins(this.env)
+    const available = [...pluginIds]
     const seen = this.ctx.storage.kv.get<string[]>('seenPlugins') ?? ['files', 'artifact']
     const enabledPlugins = [...this.state.enabledPlugins, ...available.filter((id) => !seen.includes(id) && !this.state.enabledPlugins.includes(id))]
     this.ctx.storage.kv.put('seenPlugins', [...new Set([...seen, ...available])])
     const skills = { skills: this.state.skills ?? builtinInfo, disabledSkills: this.state.disabledSkills ?? [], skillsError: this.state.skillsError ?? null }
     this.setState({ ...this.state, prefs, account, files: this.state.files ?? [], availablePlugins: available, enabledPlugins, ...skills })
+    await this.syncPlugins()
     await this.syncChats()
     if (this.grant()) void this.refreshFiles()
     void this.refreshSkills()
@@ -206,6 +211,74 @@ export class UserHub extends Agent<WorkerEnv, HubState> {
   @callable()
   update(patch: z.infer<typeof patchSchema>) {
     this.setState({ ...this.state, ...patchSchema.parse(patch) })
+  }
+
+  // ---- Plugin settings (roadmap-2 "L0-5 插件配置") ----
+
+  /** Sealed secrets by plugin and key; never part of the broadcast state. */
+  private secrets() {
+    return this.ctx.storage.kv.get<Record<string, Record<string, string>>>('pluginSecrets') ?? {}
+  }
+
+  /** Every plugin's settings with secrets decrypted: user value, then server value, then default. */
+  async pluginConfig(): Promise<Record<string, PluginConfig>> {
+    const sealed = this.secrets()
+    const server = serverSettings(this.env)
+    const out: Record<string, PluginConfig> = {}
+    for (const id of pluginIds) {
+      const user: Record<string, PluginValue> = { ...this.state.pluginSettings?.[id]?.values }
+      for (const [key, value] of Object.entries(sealed[id] ?? {})) {
+        // A secret sealed with a rotated key is treated as unset rather than failing every turn.
+        const plain = await decrypt(this.env, value).catch(() => '')
+        if (plain) user[key] = plain
+      }
+      out[id] = resolveSettings(id, user, server[id])
+    }
+    return out
+  }
+
+  /** Recomputes what the customize page shows about each plugin's settings. */
+  private async syncPlugins() {
+    const sealed = this.secrets()
+    const keys = serverKeys(this.env)
+    const config = await this.pluginConfig()
+    const pluginSettingsState: HubState['pluginSettings'] = {}
+    const pluginIssues: HubState['pluginIssues'] = {}
+    for (const id of pluginIds) {
+      pluginSettingsState[id] = { values: this.state.pluginSettings?.[id]?.values ?? {}, secretsSet: Object.keys(sealed[id] ?? {}), serverKeys: keys[id] ?? [] }
+      const { issue } = readiness(id, config[id], this.env)
+      if (issue) pluginIssues[id] = issue
+    }
+    this.setState({ ...this.state, pluginSettings: pluginSettingsState, pluginIssues })
+  }
+
+  /**
+   * Changes some of a plugin's settings. A value of null goes back to the server's or the
+   * default; a secret is sealed and stored outside the state, and an empty one is ignored.
+   */
+  @callable()
+  async setPluginConfig(id: string, values: Record<string, PluginValue | null>, secrets: Record<string, string | null>) {
+    if (!pluginIds.includes(id as (typeof pluginIds)[number])) throw new Error(`没有插件 ${id}`)
+    const settings = pluginSettings(id)
+    const next = { ...this.state.pluginSettings?.[id]?.values }
+    for (const [key, value] of Object.entries(z.record(z.string(), z.unknown()).parse(values))) {
+      const s = settings.find((x) => x.key === key && x.kind !== 'secret')
+      if (!s) throw new Error(`插件 ${id} 没有设置项 ${key}`)
+      if (value === null || value === '') delete next[key]
+      else if (validSetting(s, value)) next[key] = value
+      else throw new Error(`「${s.label}」的值无效`)
+    }
+    const sealed = this.secrets()
+    const mine = { ...sealed[id] }
+    for (const [key, value] of Object.entries(z.record(z.string(), z.string().max(2000).nullable()).parse(secrets))) {
+      if (!settings.some((x) => x.key === key && x.kind === 'secret')) throw new Error(`插件 ${id} 没有密钥 ${key}`)
+      if (value === null) delete mine[key]
+      else if (value.trim()) mine[key] = await encrypt(this.env, value.trim())
+    }
+    this.ctx.storage.kv.put('pluginSecrets', { ...sealed, [id]: mine })
+    const current = this.state.pluginSettings?.[id] ?? { values: {}, secretsSet: [], serverKeys: [] }
+    this.setState({ ...this.state, pluginSettings: { ...this.state.pluginSettings, [id]: { ...current, values: next } } })
+    await this.syncPlugins()
   }
 
   /** Lists the endpoints' models (cached 1 h) and decorates them with models.dev capabilities (cached 1 day). */
@@ -465,6 +538,12 @@ export class UserHub extends Agent<WorkerEnv, HubState> {
     return file
   }
 
+  /** A generated image of one of this user's chats (`GET /api/chats/<id>/images/<imageId>`). */
+  async chatImage(chatId: string, imageId: string): Promise<{ mediaType: string; bytes: ArrayBuffer } | null> {
+    if (!this.state.chats.some((c) => c.id === chatId)) return null
+    return (await this.chats.get(chatId))?.image(imageId) ?? null
+  }
+
   /** Converted file text by `fileId:modifiedTime`; texts too large for one row are not kept. */
   readonly textCache: TextCache = {
     get: async (key) => {
@@ -495,13 +574,14 @@ export class UserHub extends Agent<WorkerEnv, HubState> {
   }
 
   /** Settings a chat needs to run one turn. */
-  turnSettings(chatId?: string): TurnSettings {
+  async turnSettings(chatId?: string): Promise<TurnSettings> {
+    const pluginConfig = await this.pluginConfig()
     const { enabledPlugins, memories, prefs, models, account, chats, projects } = this.state
     const projectId = chats.find((c) => c.id === chatId)?.projectId
     const project = projects.find((p) => p.id === projectId)
     const projectContext = project ? [`项目：${project.name}`, project.description.trim()].filter(Boolean).join('\n') : ''
     const skills = this.state.skills.filter((s) => !this.state.disabledSkills.includes(s.name)).map(({ name, description }) => ({ name, description }))
-    return { enabledPlugins, memories: memories.map((m) => m.text), language: prefs.language, models, driveConnected: account.driveConnected, projectContext, skills }
+    return { enabledPlugins, pluginConfig, memories: memories.map((m) => m.text), language: prefs.language, models, driveConnected: account.driveConnected, projectContext, skills }
   }
 
   /** Bumps the chat to the top of the list after a turn and remembers the model chosen. */

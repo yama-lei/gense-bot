@@ -37,6 +37,14 @@ export default {
       }
     }
 
+    // Generated images live in their chat; the hub checks the chat is this user's.
+    const image = url.pathname.match(/^\/api\/chats\/([\w-]{1,100})\/images\/([\w-]{1,100})$/)
+    if (image && request.method === 'GET') {
+      const found = await (await hub()).chatImage(image[1], image[2])
+      if (!found) return new Response('Not found', { status: 404 })
+      return new Response(found.bytes, { headers: { 'content-type': found.mediaType, 'cache-control': 'private, max-age=31536000, immutable' } })
+    }
+
     // Google OAuth for Drive. Both legs run behind Access, so the state is bound to this user's hub.
     const redirectUri = `${url.origin}${CALLBACK_PATH}`
     if (url.pathname === '/oauth/google/start' && request.method === 'GET') {

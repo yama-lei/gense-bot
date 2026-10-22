@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { tools, views } from '../plugins'
+import { liveViews, tools, views } from '../plugins'
 import type { DisplayMode, ViewHost } from '../plugins/types'
 import { href, navigate } from '../router'
 import type { Store } from '../store'
@@ -476,7 +476,7 @@ function TurnView({
         {turn.assistantMessage && <Markdown text={turn.assistantMessage + (turn.status === 'running' ? ' ▍' : '')} />}
 
         {turn.toolCalls
-          .filter((c) => c.resourceUri && c.origin === 'model' && c.status === 'succeeded')
+          .filter((c) => c.resourceUri && c.origin === 'model' && (c.status === 'succeeded' || (c.status === 'running' && liveViews.has(c.resourceUri))))
           .map((c) => (
             <div key={c.id} className="plugin-slot">
               <PluginSlot call={c} displayMode="inline" host={hostFor(turn, c)} />

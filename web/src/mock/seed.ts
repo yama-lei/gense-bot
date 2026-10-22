@@ -1,8 +1,18 @@
-import { pluginCatalog } from '../plugins/catalog'
+import { pluginCatalog, pluginReadiness, resolveSettings } from '../plugins/catalog'
 import { builtinSkills } from '../skills'
-import type { AppState, ToolCall } from '../types'
+import type { AppState, PluginInfo, PluginValue, ToolCall } from '../types'
 
-const mockPlugins = ['files', 'artifact', 'email', 'ui', 'web']
+const mockPlugins = ['files', 'artifact', 'email', 'ui', 'web', 'image']
+/** Settings a real deployment would take from `.env`. */
+const mockServerKeys: Record<string, string[]> = { web: ['deepseekKey', 'researchModel'], image: ['baseUrl', 'apiKey'] }
+
+/** A plugin's settings state and issue, as the hub would compute them; secrets only count as set. */
+export function mockPluginConfig(id: string, values: Record<string, PluginValue>, secretsSet: string[]): Pick<PluginInfo, 'config' | 'issue'> {
+  const serverKeys = mockServerKeys[id] ?? []
+  const present = (keys: string[]) => Object.fromEntries(keys.map((k) => [k, 'set']))
+  const resolved = resolveSettings(id, { ...values, ...present(secretsSet) }, present(serverKeys))
+  return { config: { values, secretsSet, serverKeys }, issue: pluginReadiness(id, resolved, true).issue }
+}
 
 const now = Date.now()
 const min = 60_000
@@ -324,7 +334,7 @@ torch.cat([half_cos, half_cos], dim=-1)   # shape (5, 4)
     { id: 's2', name: '奖学金报名截止提醒', rule: '2026-10-29 20:00 一次', nextRunAt: now + 8 * day, enabled: true, lastResult: '尚未执行' },
     { id: 's3', name: '周报草稿', rule: '每周五 18:00', nextRunAt: now + 3 * day, enabled: false, lastResult: '上周五 · 失败：免费额度耗尽' },
   ],
-  plugins: pluginCatalog.map((p) => ({ ...p, enabled: mockPlugins.includes(p.id), available: mockPlugins.includes(p.id) })),
+  plugins: pluginCatalog.map((p) => ({ ...p, enabled: mockPlugins.includes(p.id), available: mockPlugins.includes(p.id), ...mockPluginConfig(p.id, {}, []) })),
   skills: builtinSkills.map((s) => ({ name: s.name, description: s.description, source: 'builtin' as const, enabled: true })),
   memories: [
     { id: 'm1', text: '不要把报名截止时间当成活动开始时间。' },

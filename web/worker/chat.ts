@@ -9,12 +9,14 @@ import { pluginCatalog } from '../src/plugins/catalog'
 import { isHiddenNote } from '../src/message'
 import { Drive } from './drive'
 import { defaultModel, effortOptions, languageModel, parseModelKey } from './models'
-import { artifactInput, availablePlugins, createTools, DEFER_MIN_TOOLS, enabledTools, rankTools, saveArtifact, type PluginId, type ToolHost } from './tools'
+import { readiness, type PluginConfig } from './plugins'
+import { artifactInput, createTools, DEFER_MIN_TOOLS, enabledTools, pluginIds, rankTools, saveArtifact, type PluginId, type ToolHost } from './tools'
 
 const BASE_PROMPT = `你是 GenseBot，一个私人助手。回答简洁、准确；不确定时直说。
 
 - 需要展示较长的提纲、报告或代码时，用 artifact_create 展示，而不是直接贴在回复里。只有用户要求保存时才调用 artifact_save。
 - 对比多个选项、展示数据或趋势、请用户在几个方向里选一个时，用 ui_render 画卡片、表格或图表，按钮可以让用户一键继续；简单问答直接用文字。
+- 用户要画图、生成图片或插图时，用 image_generate，prompt 写完整的画面描述；图片会直接显示给用户，回复里只需一两句说明。
 - 用户提到资料、文件或文档时，用 files_list / files_search 找到文件，再用 files_read 读取。不要凭记忆编造文件内容。
 - 回答用到了文件内容时，最后调用 files_cite，逐字摘录支持结论的原文。
 - 需要最新信息或网上的资料时：先用 web_search；要看某个网页的细节，用 web_fetch 读取；问题复杂、需要多方对比，或前两者不够时，用 web_research。回答中用 Markdown 链接注明来源。
@@ -31,6 +33,9 @@ function transcript(messages: UIMessage[]) {
     .filter(Boolean)
     .join('\n\n')
 }
+
+/** Image bytes are kept in rows of at most this size; a SQLite value is limited to 2 MB. */
+const IMAGE_CHUNK = 1_000_000
 
 /** Tools a plugin view may call through host.callTool, keyed by name; each gets a stable idempotency key. */
 const VIEW_TOOLS = {
@@ -78,7 +83,19 @@ export class Chat extends Think<WorkerEnv> {
       this.ctx.storage.kv.put('loadedTools', [...new Set([...this.loadedTools(), ...known])])
       return names.filter((n) => !candidates?.has(n))
     },
+    config: (plugin) => this.pluginConfig[plugin] ?? {},
+    saveImage: async (bytes, mediaType) => {
+      const id = crypto.randomUUID()
+      this.imagesTable()
+      for (let i = 0, seq = 0; i < bytes.length; i += IMAGE_CHUNK, seq++) {
+        const part = bytes.slice(i, i + IMAGE_CHUNK).buffer
+        this.ctx.storage.sql.exec('INSERT INTO images (id, seq, media_type, data) VALUES (?, ?, ?, ?)', id, seq, mediaType, part)
+      }
+      return { id, url: `/api/chats/${this.ctx.storage.kv.get<string>('id')}/images/${id}` }
+    },
   }
+  /** Resolved plugin settings of the running turn; set before any tool runs. */
+  private pluginConfig: Record<string, PluginConfig> = {}
   /**
    * Deferred loading for the running turn (roadmap-2 L0-1): the tools always offered and the
    * plugin tools that can be loaded, with their descriptions. Null when every tool is offered.
@@ -125,7 +142,7 @@ export class Chat extends Think<WorkerEnv> {
 
   // All tools are registered; beforeTurn narrows the plugin tools to the enabled ones.
   getTools() {
-    return { ...enabledTools(this.tools, availablePlugins(this.env)), ...this.tools.meta }
+    return { ...enabledTools(this.tools, pluginIds), ...this.tools.meta }
   }
 
   async beforeTurn(ctx: TurnContext): Promise<TurnConfig> {
@@ -149,8 +166,15 @@ export class Chat extends Think<WorkerEnv> {
     // Files may have changed since the last turn; quotes are checked against fresh reads.
     this.host.readCache.clear()
     this.host.seesImages = caps?.image ?? true
+    this.pluginConfig = settings.pluginConfig
 
+    // A plugin offers only the tools its settings make work (e.g. no search without a key).
     const offered = enabledTools(this.tools, settings.enabledPlugins)
+    for (const id of settings.enabledPlugins) {
+      const { tools } = readiness(id, settings.pluginConfig[id] ?? {}, this.env)
+      if (!tools || !(id in this.tools)) continue
+      for (const name of Object.keys(this.tools[id as PluginId])) if (!tools.includes(name)) delete offered[name]
+    }
     const always = Object.keys(this.tools.core)
     const pluginTools = Object.keys(offered).filter((n) => !always.includes(n))
     this.deferred = null
@@ -167,6 +191,7 @@ export class Chat extends Think<WorkerEnv> {
       ctx.system,
       `回复语言：${settings.language}。`,
       settings.driveConnected ? '' : '用户还没有连接 Google Drive：文件和保存相关的工具会失败。需要时请提示用户在“定制”页连接。',
+      settings.enabledPlugins.includes('ui') && settings.pluginConfig.ui?.usage === 'often' ? '用户希望多用界面：只要回答里有可以结构化的内容（要点、步骤、对比、数据），就用 ui_render 展示。' : '',
       settings.projectContext ? `当前项目说明：\n${settings.projectContext}` : '',
       settings.memories.length ? `关于用户（用户在设置里写下的记忆）：\n${settings.memories.map((m) => `- ${m}`).join('\n')}` : '',
       this.deferred ? `为节省上下文，插件工具需要先加载：要用下面的工具时，先用 tools_find 查找（或直接用 tools_load 加载），然后调用。已加载的工具在本会话中一直可用。不要用其他方式代替这些工具。\n${this.deferredCatalog()}` : '',
@@ -326,6 +351,24 @@ export class Chat extends Think<WorkerEnv> {
     } catch (e) {
       return { content: e instanceof Error ? e.message : String(e), isError: true }
     }
+  }
+
+  /** A generated image's bytes, for `GET /api/chats/<id>/images/<imageId>` (through the hub). */
+  image(imageId: string): { mediaType: string; bytes: ArrayBuffer } | null {
+    this.imagesTable()
+    const rows = this.sql<{ media_type: string; data: ArrayBuffer }>`SELECT media_type, data FROM images WHERE id = ${imageId} ORDER BY seq`
+    if (!rows.length) return null
+    const out = new Uint8Array(rows.reduce((n, r) => n + r.data.byteLength, 0))
+    let at = 0
+    for (const r of rows) {
+      out.set(new Uint8Array(r.data), at)
+      at += r.data.byteLength
+    }
+    return { mediaType: rows[0].media_type, bytes: out.buffer }
+  }
+
+  private imagesTable() {
+    this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS images (id TEXT NOT NULL, seq INTEGER NOT NULL, media_type TEXT NOT NULL, data BLOB NOT NULL, PRIMARY KEY (id, seq))')
   }
 
   /** View state per tool call id (ChatGPT's widgetState), restored when the chat is reopened. */

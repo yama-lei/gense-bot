@@ -7,6 +7,7 @@ import { findQuote, formatSize } from '../util'
 import { Composer, Picker, effortLabel } from './Composer'
 import { IconAlert, IconDoc, IconPin, IconPlus, IconProject, IconRetry, IconSearch, IconTrash, Spark } from './Icons'
 import { Markdown } from './Markdown'
+import { PluginSettings } from './PluginSettings'
 import { suggestions } from './suggest'
 import { TopBar } from './TopBar'
 
@@ -461,6 +462,7 @@ export function ScheduledView({ store }: { store: Store }) {
 export function CustomizeView({ store }: { store: Store }) {
   const { plugins, skills, skillsError, memories, prefs, account } = store.state
   const [memo, setMemo] = useState('')
+  const [editing, setEditing] = useState<string | null>(null)
   return (
     <div className="page">
       <TopBar>
@@ -487,19 +489,27 @@ export function CustomizeView({ store }: { store: Store }) {
         <p className="muted small">每个插件提供一组工具，也可以提供自己的界面。关闭后，助手不能调用它的工具。</p>
         <ul className="list rows">
           {plugins.map((t) => (
-            <li key={t.id} className="row">
+            <li key={t.id} className="row plugin-row">
               <div className="row-main">
                 <strong>
                   {t.name} {t.sideEffect && <span className="tag warn">外部写操作</span>} {!t.available && <span className="tag">后续</span>}
                 </strong>
                 <span className="muted small">{t.description}</span>
+                {t.available && t.issue && <span className="small warn-text">{t.issue}</span>}
               </div>
+              {t.available && t.settings.length > 0 && (
+                <button className={'pill-btn' + (editing === t.id ? ' on' : '')} aria-expanded={editing === t.id} onClick={() => setEditing(editing === t.id ? null : t.id)}>
+                  设置
+                </button>
+              )}
+              {/* A plugin that is not configured can still be turned off, but not on. */}
               <Toggle
                 checked={t.enabled}
-                disabled={!t.available}
+                disabled={!t.available || (!t.enabled && !!t.issue)}
                 label={t.name}
                 onChange={(v) => store.setState((s) => ({ ...s, plugins: s.plugins.map((x) => (x.id === t.id ? { ...x, enabled: v } : x)) }))}
               />
+              {editing === t.id && <PluginSettings key={t.id} plugin={t} store={store} onClose={() => setEditing(null)} />}
             </li>
           ))}
         </ul>

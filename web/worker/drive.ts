@@ -169,8 +169,10 @@ export class Drive {
   }
 
   /** Name and full-text search across the whole Drive. */
-  async search(text: string, folders: Folders | null, limit = 20): Promise<DriveFile[]> {
-    const files = await this.query(`(name contains ${lit(text)} or fullText contains ${lit(text)}) and mimeType != '${FOLDER}' and trashed = false`, { pageSize: limit })
+  /** Name and full-text search; `within` limits it to files directly in those folders. */
+  async search(text: string, folders: Folders | null, limit = 20, within: string[] = []): Promise<DriveFile[]> {
+    const scope = within.length ? ` and (${within.map((id) => `${lit(id)} in parents`).join(' or ')})` : ''
+    const files = await this.query(`(name contains ${lit(text)} or fullText contains ${lit(text)}) and mimeType != '${FOLDER}' and trashed = false${scope}`, { pageSize: limit })
     return files.map((f) => toFile(f, kindOf(f, folders)))
   }
 

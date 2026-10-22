@@ -171,6 +171,27 @@ export interface Schedule {
   lastResult: string
 }
 
+export type PluginValue = string | boolean
+/** One plugin setting (roadmap-2 "L0-5 插件配置"); values are checked against it on the server. */
+export interface PluginSetting {
+  key: string
+  label: string
+  help?: string
+  /** `secret` values are sealed on the server and never sent back; `model` picks one of the OpenAI endpoint's chat models. */
+  kind: 'text' | 'url' | 'secret' | 'select' | 'toggle' | 'model'
+  options?: { value: string; label: string }[]
+  default?: PluginValue
+  placeholder?: string
+}
+/** A plugin's settings as the hub broadcasts them; secrets appear only as `secretsSet`. */
+export interface PluginSettingsState {
+  /** Values the user set; others fall back to the server, then to the declared default. */
+  values: Record<string, PluginValue>
+  secretsSet: string[]
+  /** Keys the server configures (`.env`), used when the user sets none. */
+  serverKeys: string[]
+}
+
 /** A plugin as listed on the customize page. */
 export interface PluginInfo {
   id: string
@@ -178,7 +199,12 @@ export interface PluginInfo {
   description: string
   sideEffect: boolean
   enabled: boolean
+  /** The server implements it. */
   available: boolean
+  settings: PluginSetting[]
+  config: PluginSettingsState
+  /** Why it cannot be turned on with its current settings; null when it can. */
+  issue: string | null
 }
 
 /** An Agent Skill (roadmap-2 R19): built in, or `GenseBot/Skills/<名称>/SKILL.md` in Drive. */
@@ -259,6 +285,9 @@ export interface HubState {
   enabledPlugins: string[]
   /** Plugins whose tools the server implements. */
   availablePlugins: string[]
+  pluginSettings: Record<string, PluginSettingsState>
+  /** Why a plugin offers no tools with its current settings. */
+  pluginIssues: Record<string, string>
   /** Built-in skills and the ones last read from GenseBot/Skills. */
   skills: Omit<SkillInfo, 'enabled'>[]
   disabledSkills: string[]
@@ -274,6 +303,8 @@ export interface HubState {
 /** What a chat asks its hub for before each turn. */
 export interface TurnSettings {
   enabledPlugins: string[]
+  /** Resolved settings of every plugin, secrets included; only ever passed between server objects. */
+  pluginConfig: Record<string, Record<string, PluginValue>>
   memories: string[]
   language: string
   models: ModelOption[]

@@ -7,9 +7,10 @@ import type { ArtifactInput } from './tools'
 
 type Saved = { fileId: string; name: string }
 
-export function ArtifactView({ toolInput, displayMode, viewState, host }: ViewProps<ArtifactInput, ArtifactInput, { saved?: Saved }>) {
+export function ArtifactView({ toolInput, toolResult, displayMode, viewState, host }: ViewProps<ArtifactInput, ArtifactInput & { saved?: Saved }, { saved?: Saved }>) {
   const a = toolInput
-  const saved = viewState?.saved
+  // Saved by the user from this view, or by the server when the plugin's auto-save is on.
+  const saved = viewState?.saved ?? toolResult?.structuredContent?.saved
   const [saving, setSaving] = useState(false)
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState<string | null>(null)

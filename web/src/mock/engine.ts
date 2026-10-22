@@ -143,6 +143,19 @@ export function planReply(turn: Turn, state: AppState): Script {
     }
   }
 
+  if (mentions.some((m) => m.id === 'image') || /画|生成图片|插图|配图/.test(message)) {
+    if (!enabled('image')) return unavailable('图片')
+    const issue = state.plugins.find((p) => p.id === 'image')?.issue
+    if (issue) return { summary: '图片插件未配置，没有调用工具', steps: [], text: `图片插件还没配置好（${issue}），请在“定制”页的图片插件设置里补全后再试。`, citations: [] }
+    const size = /横|宽屏|风景/.test(message) ? '1536x1024' : /竖|海报|手机壁纸/.test(message) ? '1024x1536' : undefined
+    return {
+      summary: '生成 1 张图片',
+      steps: [{ name: 'image_generate', input: { prompt: message.replace(/\s+/g, ' ').slice(0, 80), size }, durationMs: 1600 }],
+      text: '图片生成好了。点图片可以查看原图，也可以下载。（Mock 演示：真实环境会调用你在插件设置里配置的生图端点）',
+      citations: [],
+    }
+  }
+
   if (/邮件|email/i.test(message)) {
     if (!enabled('email')) return unavailable('邮件')
     return {

@@ -15,6 +15,8 @@ const emptyHub: HubState = {
   prefs: { language: 'zh-CN', defaultEffort: 'medium', model: '' },
   enabledPlugins: [],
   availablePlugins: [],
+  pluginSettings: {},
+  pluginIssues: {},
   skills: [],
   disabledSkills: [],
   skillsError: null,
@@ -44,7 +46,14 @@ export function useRealStore(): Store {
       conversations: hub.chats.map((c): Conversation => ({ ...c, turns: turns[c.id]?.turns ?? [], viewingOld: turns[c.id]?.viewingOld })),
       files: hub.files,
       schedules: [],
-      plugins: pluginCatalog.map((p) => ({ ...p, enabled: hub.enabledPlugins.includes(p.id), available: hub.availablePlugins.includes(p.id) })),
+      plugins: pluginCatalog.map((p) => ({
+        ...p,
+        enabled: hub.enabledPlugins.includes(p.id),
+        available: hub.availablePlugins.includes(p.id),
+        // State from an older hub deployment may lack plugin settings.
+        config: hub.pluginSettings?.[p.id] ?? { values: {}, secretsSet: [], serverKeys: [] },
+        issue: hub.pluginIssues?.[p.id] ?? null,
+      })),
       // State from an older hub deployment may lack skills.
       skills: (hub.skills ?? []).map((s) => ({ ...s, enabled: !hub.disabledSkills?.includes(s.name) })),
       memories: hub.memories,
@@ -154,6 +163,9 @@ export function useRealStore(): Store {
       // OAuth needs a top-level navigation; the callback returns to the customize page.
       if (connected) location.href = '/oauth/google/start'
       else void call('disconnectDrive', [])
+    },
+    setPluginConfig: async (id, values, secrets) => {
+      await hubAgent.call('setPluginConfig', [id, values, secrets])
     },
     refreshFiles: () => void call('refreshFiles', []),
     refreshSkills: () => void call('refreshSkills', []),

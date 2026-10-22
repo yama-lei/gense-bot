@@ -25,6 +25,21 @@ export default function App() {
     document.title = pageTitle ? `${pageTitle} · GenseBot` : 'GenseBot'
   }, [pageTitle])
 
+  // Same shortcuts as ChatGPT: Ctrl/⌘+Shift+O new chat, Shift+Esc focus the input.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'o') {
+        e.preventDefault()
+        navigate({ name: 'home' })
+      } else if (e.shiftKey && e.key === 'Escape') {
+        e.preventDefault()
+        document.querySelector<HTMLTextAreaElement>('.composer textarea')?.focus()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   const toggle = () => (mobile() ? setDrawer((v) => !v) : setCollapsed((v) => !v))
 
   let view

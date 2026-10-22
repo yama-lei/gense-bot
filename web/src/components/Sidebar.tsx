@@ -55,7 +55,7 @@ export function Sidebar({ state, route, open, onClose, onReset }: Props) {
         </label>
 
         <nav className="sb-nav">
-          <a className={'sb-item' + (route.name === 'home' ? ' active' : '')} href="#/">
+          <a className={'sb-item' + (route.name === 'home' ? ' active' : '')} href="#/" title="新对话（Ctrl+Shift+O）">
             <IconPlus /> 新对话
           </a>
           {nav.map((n) => (

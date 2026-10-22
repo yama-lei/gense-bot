@@ -255,7 +255,8 @@ export function Composer({ placeholder, model, effort, onModel, onEffort, onSend
               if (mentions.length) setMentions((ms) => ms.slice(0, -1))
               else if (command) setCommand(null)
             }
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+            // On touch keyboards Enter inserts a newline; the send button sends.
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !matchMedia('(pointer: coarse)').matches) {
               e.preventDefault()
               send()
             }

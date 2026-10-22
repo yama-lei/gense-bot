@@ -318,7 +318,7 @@ code, pre { font-family: var(--mono); }
 .prefs { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
 
 /* Files */
-.files { max-width: 1100px; }
+.files:has(.has-preview) { max-width: 1100px; }
 .files-split { display: grid; grid-template-columns: 1fr; gap: 16px; }
 .files-split.has-preview { grid-template-columns: minmax(240px, 320px) 1fr; }
 .files-list { min-width: 0; }

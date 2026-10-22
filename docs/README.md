@@ -1,6 +1,6 @@
 # 个人助手项目文档
 
-本项目要做一个可持续扩展的云端个人助手。M0 Mock 前端已部署；后端（Think + Google Drive）正在准备规格和设计，尚未实现。
+本项目要做一个可持续扩展的个人助手。路线图 2 已在 Think + Cloudflare 上完成；路线图 3（草案）计划改用 pi-durable，同时支持 Cloudflare 和自部署。
 
 ## 阅读顺序
 
@@ -13,6 +13,7 @@
 7. [助手功能清单](intents/agent-features.md)：goal.md 按能力拆开后的清单、状态和待商量的问题（含会话工作区）。
 8. [路线图 2](plans/roadmap-2.md) 与 [ADR-0003](adr/0003-free-plan-agent-features.md)：网页搜索、文件、会话树、命令、Skills、生成式界面的分层计划和开发顺序。
 9. [OpenAI 兼容中转站的已知问题](research/openai-relay.md)：注入的托管工具、`item_reference`、生图参数，以及现有的绕开方式。
+10. [路线图 3](plans/roadmap-3.md) 与 [ADR-0004](adr/0004-pi-durable-portable-core.md)（2026-10-22，草案）：改用 pi-durable、Cloudflare 与自部署两种部署方式、树形会话、Event、子 agent、自部署 sandbox。
 
 原始课程材料保留在 [实验 1](intents/lab1.md) 和 [实验 2](intents/lab2.md)。它们提供长期方向，不代表其中每项功能都属于第一版交付范围。
 

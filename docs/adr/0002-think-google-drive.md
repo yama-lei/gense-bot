@@ -1,6 +1,6 @@
 # 使用 Cloudflare Think 作为 Agent 运行时，Google Drive 保存用户文件
 
-状态：已接受（2026-10-21）。部分替代 [ADR-0001](0001-cloudflare-free-tier.md)：仍托管在 Cloudflare Free 计划，但不再要求模型零支出，也不再把 Cloudflare 作为用户文件的主存储。
+状态：已接受（2026-10-21）。运行时部分被 [ADR-0004](0004-pi-durable-portable-core.md) 替代（2026-10-22）：改回 pi-durable，并支持自部署；Google Drive 改为插件。部分替代 [ADR-0001](0001-cloudflare-free-tier.md)：仍托管在 Cloudflare Free 计划，但不再要求模型零支出，也不再把 Cloudflare 作为用户文件的主存储。
 
 Agent 运行时改用 [`@cloudflare/think`](https://developers.cloudflare.com/agents/harnesses/think/)，不再组合 Pi Durable、PiHarness 和 Computer Workspace。Think 已经包含聊天协议、消息持久化、流恢复、重复提交去重、工具循环上限、恢复预算、定时任务和 React 客户端。原方案要把多个仍在变化的 beta 组件拼起来，聊天协议和 UI 映射还要我们自己写，复杂度高，收益不明显。
 

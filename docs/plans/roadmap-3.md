@@ -1,0 +1,317 @@
+# 路线图 3：pi-durable 核心、树形会话、Event 与 sandbox
+
+状态：草案，2026-10-22，待用户评审。决策依据见 [ADR-0004](../adr/0004-pi-durable-portable-core.md)。[路线图 2](roadmap-2.md) 的功能（R1–R30）在本路线图的阶段 3 迁移到新架构，那里的 Spec 继续有效，下面另有说明的除外。
+
+## Intent（2026-10-22 讨论记录）
+
+| 编号 | 用户的话（摘录） | 整理后的目标 |
+| --- | --- | --- |
+| H1 | “一棵树才对应一个侧边栏的显示会话；用户 fork 出去的应该保持在树内部” | 侧栏一项就是一棵树；分叉、重新生成、子 agent 都是树里的节点，不在侧栏另开会话 |
+| H2 | “小地图是展示大致的 tree 进度”“active 的 node 在小地图上就是绿色”“小地图点开是可以放出一个居中的大矩形的” | 会话页右上角有树的小地图，当前节点为绿色；点开是居中的大弹窗，在里面看历史、切换分叉 |
+| H3 | “子 Agent 异步吧，主 Agent 被这个 event 唤醒了而已”“后面我们还会有定时任务……之后 webhook……也是要有 Event 这个思想的” | 一个统一的 Event 概念：子 agent 汇报、定时任务、webhook 都通过它投递给会话，可以唤醒会话 |
+| H4 | “不要弄 worktree……Agent 的两次写操作之间如果文件发生了变动……那就报错，要求 read before write……也不要 merge” | 树内所有节点共用一个文件系统，没有合并；文件在 agent 读过或写过之后被别人改过，再写就报错，要求先读 |
+| H5 | “默认 fork 吧，让 agent 可选 fork 或者 new” | 子 agent 默认带着当前上下文 fork 出去，agent 也可以选择从空白开始 |
+| H6 | “限制子 Agent 的时候……不要把 tool schema 移除（这会导致 cache miss），而是要在上下文中 append 一个 tips + 在调用工具的时候给其报错” | 树里所有节点的工具集合相同；不允许的调用返回错误，角色说明作为一条消息追加在上下文里 |
+| H7 | “支线去掉，和用户 fork 合并……subagent 在 fork 的时候，必须要用 report 汇报结果；用户这一侧是不必要的，除非用户主动选择 summary to main” | 用户分叉和子 agent 是同一种东西，只有提示词不同；用户分叉可以“总结给主线” |
+| H8 | “Pi Durable 将会是一个很伟大的框架，我们一定要主动集成它”“我预感未来我们会选择自己部署……（当然都要支持）” | 核心用 pi-durable；同时支持 Cloudflare 和自部署 |
+| H9 | “肯定还要支持完整的 sandbox”“cloudflare 沙盒是要付费的，我们在 cloudflare 上就先不做……区别其实就是有没有 bash 工具” | 自部署提供完整 sandbox（`bash`）；Cloudflare Free 部署只读写文件，其余功能相同 |
+| H10 | “GoogleDrive 也要作为 Plugin” | Drive 从内置能力改成插件：文件来源、Skills 来源、Drive 工具 |
+| H11 | “按照用户的话，感觉也不错啊。一个 session 就是一个 dir？……是否要做权限隔离？” | 每个用户一个 sandbox，每棵树一个目录；会话之间只做软隔离（见 D6） |
+
+已确认：Event 卡片默认折叠；子 agent 最多同时 3 个、只能派生一层、唤醒有频率限制；网络出口默认关闭，密钥不进 sandbox；迁移时先迁移现有功能，再做新功能；不考虑兼容旧数据。
+
+## 术语
+
+- **树**：侧栏里的一个会话。包含一条主线和若干分叉，共用一个工作区目录。
+- **分叉（branch）**：树里的一条对话，对应一个 pi-durable conversation。主线是树的根 conversation。
+- **节点**：分叉中的一条记录（pi-durable entry）。分叉从某个节点长出来。
+- **角色**：
+  - `main`：主线。
+  - `user`：用户分叉。重新生成和编辑消息也产生这种分叉。
+  - `agent`：子 agent。
+- **模式**：
+  - `fork`：带着分叉点之前的上下文。
+  - `new`：从空白上下文开始，只带任务说明。
+- **Event**：投递给某个分叉的一条外部输入，带来源和是否唤醒。
+
+## 分层
+
+```text
+web/            前端：订阅 watch() 推来的变化，渲染消息、树、小地图、文件面板
+core/           平台无关，pi-durable + pi-ai
+  extensions/   会话树 · Event · 子 agent/report · 文件工具（读前检查）· 插件 · Skills · 生成式界面
+  env/          ExecutionEnv：文件读写，可选 exec
+hosts/node      自部署：SQLite 文件 · setTimeout · HTTP/WS · 本地目录 · Docker sandbox（bash）
+hosts/cf        Cloudflare Free：DO SQLite · 闹钟唤醒 · Worker 路由 · DO SQLite 里的工作区（无 bash）
+```
+
+## Spec（行为与验收）
+
+编号接路线图 2 的 R1–R30。
+
+### 迁移（阶段 1–3）
+
+| 编号 | 行为 | 验收操作 → 期望结果 |
+| --- | --- | --- |
+| R31 | 两种部署方式同一套功能 | 同一组 E2E 在 Node 部署端和 Cloudflare 部署端都通过；唯一的区别是 Cloudflare 上没有 `bash` |
+| R32 | 断点恢复 | 回答过程中杀掉 Node 进程（或让 DO 被驱逐）→ 重启后回答从中断处继续，已显示的部分不丢 |
+| R33 | 现有功能 | 路线图 2 的 R1–R12、R17–R29 在新架构上重新通过。R13–R16、R30 由 R34–R41 替代；R22 改用 `deferred` 工具和 `tool_search` |
+| R34 | Drive 插件 | 定制页里 Drive 是一个插件，可开关、可配置。开启后：附件选择和 `@` 里有 Drive 文件，Skills 可以来自 Drive，有搜索和读取 Drive 的工具；关闭后这些都消失 |
+
+### 树形会话（阶段 4）
+
+| 编号 | 行为 | 验收操作 → 期望结果 |
+| --- | --- | --- |
+| R35 | 一树一会话 | 任意分叉、重新生成、编辑、子 agent 都不会让侧栏多出会话；侧栏标题是主线的标题 |
+| R36 | 用户分叉 | 任意一条消息的菜单里点“从这里分叉”→ 页面切到新分叉，输入框可以直接继续；主线不受影响 |
+| R37 | 版本切换 | 重新生成或编辑后，消息上显示 “‹ 2 / 2 ›”。翻到哪个版本，页面就显示那条分叉，并且可以直接在上面继续（对标 ChatGPT，不再只读） |
+| R38 | 小地图 | 有分叉的树在会话页右上角显示小地图：主线是一条主干，分叉从对应位置长出；当前节点绿色；正在运行的分叉有动效；子 agent 和用户分叉的样式不同。只有主线时不显示 |
+| R39 | 树的弹窗 | 点小地图 → 居中弹出大矩形（手机上全屏），节点可以缩放、拖动；悬停或点一下看摘要；点节点 → 关闭弹窗，切到那条分叉并滚到该节点。Esc 或点遮罩关闭 |
+| R40 | 总结给主线 | 用户分叉的顶栏或菜单里有“总结给主线”→ 这个分叉的 agent 再跑一轮，把分叉点到最新节点的内容整理好，用 `report` 发给主线；主线出现一张折叠的 Event 卡片，不唤醒主线 |
+| R41 | 返回主线 | 在任何分叉上都能一键回到主线最新节点 |
+
+### 共用文件系统与读前检查（阶段 5）
+
+| 编号 | 行为 | 验收操作 → 期望结果 |
+| --- | --- | --- |
+| R42 | 树内共用目录 | 子 agent 写的文件，主线和其他分叉立刻能读到；文件面板显示的是整棵树的目录 |
+| R43 | 先读后改 | agent 没读过一个已存在的文件就直接 `write`/`edit`/`delete` → 报错“请先 read”；新建文件不需要先读 |
+| R44 | 改动冲突 | 分叉 A 读了文件 f 之后，分叉 B 改了 f，A 再改 f → A 收到“文件在你读过之后被修改，请重新 read”；A 重新读之后可以改。用户在文件面板删除或上传文件也算修改 |
+| R45 | 软隔离 | 文件工具只能访问本树目录和只读的 Skills 目录，越界报错；用户用 `@` 引用其他会话的文件时允许读取那个文件 |
+
+### Event（阶段 6）
+
+| 编号 | 行为 | 验收操作 → 期望结果 |
+| --- | --- | --- |
+| R46 | Event 卡片 | 所有不是用户直接输入的消息（子 agent 汇报、定时任务、webhook、系统通知）都显示成折叠卡片：图标、来源、标题、时间；展开看正文 |
+| R47 | 唤醒 | `wake` 为真的 Event 送达空闲的分叉 → 立即开始一轮；分叉正在运行 → 排在当前这一轮之后。`wake` 为假 → 只出现卡片，下次用户发言时模型能看到 |
+| R48 | 不重复 | 同一个 Event 因为重试或重启被投递两次 → 只出现一张卡片，只唤醒一次 |
+| R49 | 定时任务 | 在定时任务页新建“每天 9 点总结昨天的邮件”，选一个会话 → 到点后该会话出现一张定时任务卡片，并开始一轮；可以暂停、删除；重启服务后照常触发 |
+| R50 | Webhook | 为某个会话生成 webhook 地址和密钥 → 用 `curl` 带正确签名 POST → 会话出现 webhook 卡片；签名错误返回 401，不产生 Event；可以重新生成或撤销 |
+
+### 子 agent（阶段 7）
+
+| 编号 | 行为 | 验收操作 → 期望结果 |
+| --- | --- | --- |
+| R51 | 派生 | 让主线“分头调研这三家公司”→ 主线调用 `agent_spawn` 三次，立即回复“已派出”，不等结果；小地图上出现三条子 agent 分叉，正在运行 |
+| R52 | 汇报唤醒 | 每个子 agent 完成后用 `report` 汇报 → 主线出现汇报卡片并被唤醒，综合已有结果回复；三份汇报陆续到达时，主线不会同时跑多轮，而是排队 |
+| R53 | 未汇报 | 子 agent 没调用 `report` 就结束（或出错、被中止）→ 系统替它向主线发一张“未完成”卡片，附上最后一条回答和原因 |
+| R54 | 限制 | 已有 3 个子 agent 在运行时再 `agent_spawn` → 工具返回错误，说明上限；子 agent 调用 `agent_spawn` → 返回“子 agent 不能再派生”；主线调用 `report` → 返回“主线无需汇报”。三种情况下发给模型的工具列表都不变 |
+| R55 | 查看和中止 | 在小地图或弹窗里点子 agent 分叉 → 能看它的完整过程；可以中止它，中止后按 R53 汇报 |
+| R56 | fork 与 new | `agent_spawn` 默认 `fork`，子 agent 知道之前的对话；指定 `new` 时子 agent 只看到任务说明 |
+
+### Sandbox（阶段 8，只在自部署）
+
+| 编号 | 行为 | 验收操作 → 期望结果 |
+| --- | --- | --- |
+| R57 | bash | 自部署上让助手“用 Python 画个图存成 png”→ 助手用 `bash` 运行，png 出现在文件面板。Cloudflare 部署上模型看不到 `bash`，助手说明这里不能运行代码 |
+| R58 | 网络出口 | sandbox 默认不能访问外网；`curl` 白名单里的域名可以访问；白名单在设置里可改 |
+| R59 | 密钥不进 sandbox | 在 sandbox 里 `env`、读文件都找不到任何插件密钥或模型密钥；需要密钥的请求由宿主代理补上 |
+| R60 | 资源与休眠 | 死循环或占满内存的命令到时间被终止，返回错误，服务本身不受影响；空闲一段时间后容器停止，下次 `bash` 时自动启动，文件都在 |
+| R61 | 用户之间隔离 | 两个用户的 sandbox 互相看不到文件和进程 |
+
+## Design
+
+### D1 core 与部署层
+
+- 每个用户一个 pi-durable `Harness`，一份存储：
+  - Node 上是 `data/users/<userId>/pi.sqlite`。
+  - Cloudflare 上是该用户 UserHub DO 的 SQLite，表名加前缀 `pi_`。
+  - 宿主自己的表（树索引、Event、定时任务、插件配置）和 pi 共用同一个数据库适配器，保证在同一个事务队列里（pi-durable README “Storage” 一节）。
+- 部署层接口：
+
+```ts
+interface Host {
+  storage(userId): Promise<Storage>          // pi-durable Storage
+  onWake(userId, wake): void                 // Node：什么也不做（Harness 自己用 setTimeout）；CF：设 DO 闹钟
+  env(userId, treeId): ExecutionEnv          // 文件读写；Node 上带 exec
+  secrets: SecretStore                       // 插件密钥，只在宿主侧解密
+  publish(userId, frame): void               // 推给前端
+}
+```
+
+- Node 端：一个进程按用户懒加载 Harness，空闲一段时间后关闭。启动时打开所有存在未完成任务或定时任务的用户，调用 `resume()`。
+- Cloudflare 端：UserHub DO 持有 Harness，Chat DO 不再存在。按 pi-durable README 的 DO 示例：
+  - 在 `blockConcurrencyWhile` 里打开 Harness。
+  - 有任务运行时，用闹钟每 60 秒心跳一次，同时不晚于最早的 sleep。
+  - 闹钟触发时调用 `resume()`。
+- 模型：pi-ai 的 `createModels()` 注册 `.env` 里的 OpenAI 兼容端点和 Anthropic 兼容端点。中转站的已知问题（[中转站问题](../research/openai-relay.md)）要在 pi-ai 上重新验证（V1）。
+
+### D2 树的数据
+
+- 一棵树就是一个 pi-durable 根 conversation，加上从它（或从它的分叉）`fork(entryId)` 出来的 conversation。`new` 模式的子 agent 用 `createConversation()`，在树索引里记它的发起节点。
+- 宿主表 `branches`：
+
+```text
+id, treeId, conversationId, parentBranchId, forkEntryId,
+role(main|user|agent), mode(fork|new), title,
+status(idle|running|done|failed|aborted), createdAt
+```
+
+- 宿主表 `trees`：`id, title, rootBranchId, activeBranchId, updatedAt, pinned, projectId`。侧栏读 `trees`。
+- 重新生成：在被重新生成的回答之前那个节点 fork，再提交同一条用户输入。编辑消息：在被编辑消息的前一个节点 fork，提交新内容。所以“版本”就是从同一个节点长出的、`role=user` 的兄弟分叉。“‹ 2 / 2 ›”在它们之间切换，切过去就是普通分叉，可以继续（R37）。
+- `activeBranchId` 记住用户上次所在的分叉，打开会话时回到那里。
+
+### D3 提示词和工具集不变
+
+- 树里所有 conversation 选择同一组 extension，system prompt 和工具列表完全一样，所以 fork 出来的分叉和主线前缀相同，可以命中 prompt cache（是否真的命中见 V3）。
+- 角色差异用一条追加的记录表达，自定义 entry kind `app.brief`，模型把它当作一条用户输入：
+  - `agent`：“你是子 agent，任务是……；完成后必须调用 `report`；不能调用 `agent_spawn`。”
+  - `user`：“这是用户开的分叉；除非用户要求，不要调用 `report`。”
+- 不允许的调用由一个 `beforeTool` 钩子拦截，返回 `{ block: "原因" }`（R54）。不使用 `configure({ extensions: { remove } })`，因为它会改变发给模型的工具列表。
+- 部署方式之间工具集可以不同（Cloudflare 没有 `bash`），同一部署内不变。
+
+### D4 Event
+
+```text
+Event {
+  id, userId, target: { treeId, branchId },
+  source: { kind: agent | schedule | webhook | system, id, label },
+  type: report | tick | webhook | notice,
+  title, body, data?,
+  wake: boolean,
+  status: pending → delivered | failed,
+  idempotencyKey, createdAt, deliveredAt?
+}
+```
+
+- `core.emit(event)`：先写宿主表 `events`（`idempotencyKey` 唯一，重复写入直接返回已有的那条），再投递：
+  - `wake=true`：`conversation.submit({ type: "input", requestId: event.id, ... })`，内容是渲染后的事件文本，记录为自定义 entry kind `app.event`，附带 Event 的元数据。分叉忙时排在当前这一轮之后。
+  - `wake=false`：作为一条写入（不触发运行）追加到 transcript。
+  - `requestId = event.id` 保证重启重投不会重复（R48）。
+- 唤醒频率限制：同一个分叉 1 分钟内最多被唤醒 N 次（默认 6）。超出的 Event 改成 `wake=false` 写入，并追加一条系统 notice。
+- 前端把 `app.event` 记录渲染成折叠卡片（R46）。
+- 来源：
+  - **agent**：`report` 工具。
+  - **schedule**：用 pi-durable 的自定义任务实现。定时任务是一个 `defineTask`，`sleepUntil(下次时间)` 之后 `emit`，再算下一次。它的持久化、重启后继续、DO 闹钟唤醒都由 pi-durable 和 D1 的唤醒机制负责，两种部署方式通用。宿主表 `schedules` 只存定义：`id, target, cron | at, prompt, enabled`。
+  - **webhook**：`POST /hooks/:hookId`。请求头带 HMAC-SHA256 签名和时间戳，宿主校验后 `emit`。密钥加密保存，只在生成时显示一次。
+  - **system**：例如子 agent 未汇报（R53）。
+
+### D5 子 agent 与“总结给主线”
+
+- 所有 conversation 都有 `agent_spawn({ task, mode = "fork", title })` 和 `report({ summary, status: done | partial | failed, files? })`。
+- `agent_spawn` 按 pi-durable 示例 `23-subagent-background` 的写法：
+  1. 检查限制：调用者是主线；同时运行的子 agent 少于 3 个。
+  2. 在一个后台锚点任务下创建分叉：`fork` 模式从当前节点 fork；`new` 模式新建 conversation。
+  3. 写入 `branches`（`role=agent`），追加 `app.brief`，提交任务。
+  4. 立即返回分叉 id。主线不等结果。
+- `report`：
+  - 在子 agent 里调用：`emit` 一个 `type=report`、`wake=true`、目标为主线的 Event，并把分叉标记为 `done`。
+  - 在用户分叉里调用：`wake=false`。
+- 未汇报：锚点任务等子 agent 的运行结束。如果期间没有 `report`，就 `emit` 一个“未完成”的 report，附最后一条回答和结束原因（R53）。
+- 中止子 agent：中止它的 conversation。锚点任务看到中止后同样发“未完成”。
+- **总结给主线**：用户在分叉里点按钮 → 给这个分叉提交一条 `app.brief` 输入：“把从分叉点到现在的内容整理成：目标、结论、关键决定、改过的文件、未解决的问题，然后调用 `report`。”
+  - 格式参考 Pi 的 branch summary（Goal / Constraints / Progress / Key Decisions / Next Steps 加文件列表）。
+  - 这一轮显示在分叉里，结果作为折叠卡片出现在主线，不唤醒主线（R40）。
+
+### D6 文件系统
+
+- 目录布局（每个用户一份）：
+
+```text
+<userRoot>/
+  sessions/<treeId>/     树的工作区，agent 的 cwd
+  skills/                启用的共享 Skills（只读）
+```
+
+  - Node 上 `<userRoot>` 是 `data/users/<userId>/files`。sandbox 容器把它挂载到 `/data`，所以 agent 看到的路径是 `/data/sessions/<treeId>` 和 `/data/skills`。
+  - Cloudflare 上的 `ExecutionEnv` 用 DO SQLite 模拟同样的路径。
+- 会话自己的 Skills 放在 `sessions/<treeId>/skills/<名字>/SKILL.md`，规则同 R29。
+- 读前检查（R43、R44）由我们的 extension 包装 pi-durable 的 `read`/`write`/`edit`，加上自己的 `delete`：
+  - 每个 conversation 有一份账本，存在 pi-durable 的自定义文档 `app.ledger` 里，内容是“路径 → 内容哈希”，记录它最近一次读到或写入的内容。重启后账本还在。
+  - `read`：读取后记录哈希。只读了部分行的，也记录整个文件的哈希。
+  - `write`/`edit`/`delete`：
+    - 文件不存在时，`write` 直接新建。
+    - 文件存在但账本里没有 → 报错“请先 read”。
+    - 当前哈希和账本不同 → 报错“文件在你读过之后被修改：<谁、何时，如果知道>，请重新 read”。
+    - 成功后更新账本。
+  - `bash` 修改文件不会更新账本，所以之后用工具写这个文件时，需要先重新读。这正是期望的行为。
+  - 同一路径的并发写由 pi-durable 按 env id 和路径串行。检查哈希和写入要在同一个串行区间里完成。
+- 软隔离（R45）：文件工具把路径解析成真实路径，必须落在本树目录或 `skills/` 之内（`skills/` 只读），否则报错。`@` 引用的其他会话文件由前端把内容作为附件传入，或在本轮临时放行这一个路径。`bash` 不受这层限制，见 D7。
+- 删除会话时删除 `sessions/<treeId>/`。
+
+### D7 Sandbox（自部署）
+
+- 每个用户一个 Docker 容器（镜像：Debian + Python + Node + 常用 CLI），`sleep infinity` 作为入口，`/data` 绑定挂载 `<userRoot>`，`skills/` 以只读方式挂载。
+- 隔离：
+  - 用户之间的隔离靠容器（可选 gVisor `runsc`）。容器名由登录身份推导，不从 URL 取。
+  - 同一用户的会话之间不做安全隔离。sandbox 是最小的信任单位，容器里的进程等同 root。
+- `bash`：
+  - `docker exec`，cwd 是本树目录。
+  - 带超时（默认 120 秒）。
+  - 输出有上限，超出部分截断后写入文件。
+  - 进程数、CPU、内存设上限。
+- 网络：容器默认 `--network none`，只连一个内部网络，那里有一个出口代理：
+  - 白名单里的域名放行。
+  - 需要密钥的域名由代理补上请求头。
+  - 其余拒绝。
+  - 白名单在设置里编辑（R58、R59）。
+- 生命周期：第一次 `bash` 时启动，空闲 15 分钟后停止。文件在宿主目录里，容器停止不丢文件；在容器里安装的软件包会丢，需要固定的依赖写进镜像。
+- `ExecutionEnv` 的文件读写始终直接访问宿主目录，不经过容器，所以文件面板和读前检查不依赖容器是否在运行。
+
+### D8 插件即 extension
+
+- `src/plugins/catalog.ts` 的声明（名称、说明、设置项）保留。每个插件对应一个 pi-durable extension（工具、system prompt 段落、钩子）。
+- 插件开关通过 `configure({ extensions })` 生效。这会改变工具列表，所以只在用户改设置时发生，下一轮生效，可以接受。
+- 解密后的密钥只在宿主侧传给工具，不写进 transcript，也不进 sandbox。
+- 工具多的插件（例如 MCP、Drive）的工具标成 `deferred`，模型通过 `tool_search` 加载，取代路线图 2 的 `tools_find`/`tools_load`。
+- Drive 插件（R34）：
+  - 设置项：OAuth 连接、搜索范围、Artifacts 自动保存。
+  - 提供 Drive 文件来源（附件、`@`）、Skills 来源（把 Drive Skills 同步到 `skills/`）和 `drive_search`/`drive_read` 工具。
+
+### D9 前端协议
+
+- 每个浏览器连接一个 WebSocket 到用户的 Harness。前端订阅“当前树的树索引”和“当前分叉的 `watch()`”。
+- 服务端转发 `watch()` 的 Chord 操作，前端在本地应用这些操作，再把 entries 和 `pi.live` 文档整理成消息列表。
+- 流式输出来自 `pi.live`。pi-durable 默认每 100 ms 提交一次，Cloudflare 上可以放宽到 300–500 ms。
+- 断线重连从当前视图重新开始（pi-durable 不回放历史帧）。
+- 发言、中止、fork、版本切换、总结给主线、文件操作都是 WebSocket 上的请求，服务端校验后调用 core。
+- 树弹窗的布局：节点按时间纵向排列，主线居中，分叉向两侧展开。超过一定数量时折叠成“+N”，点开再展开。
+
+### D10 测试
+
+- E2E 用 Playwright，跑在 Node 部署端上，模型用 pi-ai 的 faux provider（按脚本返回回答和工具调用）。前端 Mock 引擎和 Mock 部署删除。
+- 同一组用例在 `wrangler dev` 上跑一遍 Cloudflare 部署端（R31），`bash` 相关用例跳过。
+- 真实模型的冒烟测试在部署前手动跑，覆盖 V1 中列出的中转问题。
+
+## 实现前验证
+
+| 编号 | 要验证的事 | 怎么验证 | 不通过时 |
+| --- | --- | --- | --- |
+| V1 | pi-ai 能通过我们的中转调用模型：OpenAI 兼容（Responses）和 Anthropic 兼容，流式、工具调用、思考强度、`web_search` | 最小脚本逐项跑 | 给 pi-ai 写自定义 provider，或在中转前面加一层修正 |
+| V2 | pi-durable 能在 Workers Free 计划上运行：打包体积（README 说 tree-shaken 后 TypeBox 约 4 MB）、每次请求的 CPU 时间、DO SQLite 适配器 | `wrangler deploy` 一个最小 Harness，跑多轮工具调用 | Cloudflare 部署端降级，或评估 Workers Paid |
+| V3 | fork 出来的分叉能命中主线的 prompt cache（pi-durable 给 fork 新的 provider session id，可能影响缓存路由） | 对比 fork 前后两次请求的 cached tokens | 让同一棵树的分叉共用 session id，或接受缓存未命中 |
+| V4 | 自定义 entry kind 能作为“用户输入”提交，也能作为不触发运行的写入追加 | 最小脚本 | Event 改用普通用户输入，元数据另存宿主表 |
+| V5 | `watch()` 经 WebSocket 推给前端的性能：长对话、多个分叉同时运行 | 压测脚本 | 前端改为按需拉取，或合并帧 |
+| V6 | 后台子 agent 的写法（示例 23）在 DO 被驱逐后能正确恢复，并且只汇报一次 | 运行中驱逐 DO，或杀掉 Node 进程 | 调整锚点任务的写法 |
+
+## 开发顺序
+
+| 阶段 | 内容 | 依赖 | 退出条件 |
+| --- | --- | --- | --- |
+| 0 | ADR-0004、本路线图 | — | 用户评审通过 |
+| 1 | `core` 骨架 + `hosts/node`：pi-ai 接中转、一个会话的对话、`watch()` 推到前端、faux provider 的 E2E 框架 | V1、V4、V5 | 本地能流式对话；R32 在 Node 上通过 |
+| 2 | `hosts/cf` 追平阶段 1 | V2 | R31、R32 在 Cloudflare 上通过；在独立的预览地址上部署，线上仍是旧版 |
+| 3 | 现有功能迁移成 extension：网页、图片、插件配置、附件、`/` 和 `@`、Skills、生成式界面、文件面板、Drive 插件 | 1、2 | R33、R34；替换线上旧版 |
+| 4 | 树形会话：树索引、分叉、版本切换、小地图、弹窗、总结给主线 | 3、V3 | R35–R41 |
+| 5 | 共用文件系统、读前检查、软隔离 | 4 | R42–R45 |
+| 6 | Event：卡片、唤醒、去重、定时任务、webhook | 4 | R46–R50 |
+| 7 | 子 agent：`agent_spawn`、`report`、限制、未汇报处理 | 5、6、V6 | R51–R56 |
+| 8 | 自部署 sandbox：Docker、`bash`、出口代理、资源限制、休眠 | 5 | R57–R61 |
+| 9 | 整体 UI/UX 走查 | 全部 | 走查记录 |
+
+## 待定
+
+1. 自部署怎么登录：反向代理加 OIDC（例如 Google），还是我们自己做登录？Cloudflare 上继续用 Cloudflare Access。
+2. 工作区和 Drive 的关系（功能清单问题 8）：工作区是工作目录、Drive 是长期存储，产物什么时候同步到 Drive？
+3. 删除会话时是否先提醒导出工作区（功能清单问题 11）。
+4. “总结给主线”默认不唤醒主线（本文的建议）。是否要在按钮旁边提供“并唤醒”？
+5. 定时任务的时区：默认用浏览器时区记在定时任务里，还是使用全局设置？
+
+## 不做
+
+- Cloudflare 上的 sandbox：需要 Workers Paid 计划。以后改用付费计划时接 Sandbox SDK，`ExecutionEnv` 接口不变。
+- worktree、分叉合并：树内共用一个目录，用读前检查代替（H4）。
+- 旧数据迁移：实验阶段，旧会话、工作区和插件配置不保留。
+- 前端 Mock 部署：由 Node 部署端加 faux provider 代替。
+- 子 agent 再派生子 agent：只允许一层（H6）。

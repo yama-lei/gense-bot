@@ -1,6 +1,6 @@
 # 路线图 2：从首个闭环到日常可用
 
-状态：2026-10-21 制定，按阶段开发中（阶段 1–8 已完成）。来源是仓库根目录的 `goal.md`（用户的新功能清单），这里把它整理成 Intent → Spec → Design，并给出分层和开发顺序。所有取舍由开发者决定，理由写在各节；有长期成本的决定另见 [ADR-0003](../adr/0003-free-plan-agent-features.md)。
+状态：2026-10-21 制定，阶段 1–9 已完成。后续工作见[路线图 3](roadmap-3.md)（2026-10-22）：架构改为 pi-durable，这里的 Spec 在路线图 3 的阶段 3 迁移；R13–R16、R22、R30 和 L0-3、L0-6 的设计被替代。来源是仓库根目录的 `goal.md`（用户的新功能清单），这里把它整理成 Intent → Spec → Design，并给出分层和开发顺序。所有取舍由开发者决定，理由写在各节；有长期成本的决定另见 [ADR-0003](../adr/0003-free-plan-agent-features.md)。
 
 依据：[首版 Spec](../specs/personal-assistant.md)、[网页界面 Spec](../specs/web-ui.md)、[架构](../design/architecture.md)。
 

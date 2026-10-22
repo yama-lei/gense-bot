@@ -276,21 +276,23 @@ Event {
 
 ## 实现前验证
 
-| 编号 | 要验证的事 | 怎么验证 | 不通过时 |
+脚本在 [`spikes/pi/`](../../spikes/pi/)，依赖 pi-durable、pi-ai、chord 1.4.0。
+
+| 编号 | 要验证的事 | 结果（2026-10-22） | 不通过时 |
 | --- | --- | --- | --- |
-| V1 | pi-ai 能通过我们的中转调用模型：OpenAI 兼容（Responses）和 Anthropic 兼容，流式、工具调用、思考强度、`web_search` | 最小脚本逐项跑 | 给 pi-ai 写自定义 provider，或在中转前面加一层修正 |
-| V2 | pi-durable 能在 Workers Free 计划上运行：打包体积（README 说 tree-shaken 后 TypeBox 约 4 MB）、每次请求的 CPU 时间、DO SQLite 适配器 | `wrangler deploy` 一个最小 Harness，跑多轮工具调用 | Cloudflare 部署端降级，或评估 Workers Paid |
-| V3 | fork 出来的分叉能命中主线的 prompt cache（pi-durable 给 fork 新的 provider session id，可能影响缓存路由） | 对比 fork 前后两次请求的 cached tokens | 让同一棵树的分叉共用 session id，或接受缓存未命中 |
-| V4 | 自定义 entry kind 能作为“用户输入”提交，也能作为不触发运行的写入追加 | 最小脚本 | Event 改用普通用户输入，元数据另存宿主表 |
-| V5 | `watch()` 经 WebSocket 推给前端的性能：长对话、多个分叉同时运行 | 压测脚本 | 前端改为按需拉取，或合并帧 |
-| V6 | 后台子 agent 的写法（示例 23）在 DO 被驱逐后能正确恢复，并且只汇报一次 | 运行中驱逐 DO，或杀掉 Node 进程 | 调整锚点任务的写法 |
+| V1 | pi-ai 能通过我们的中转调用模型 | **基本通过。** OpenAI 中转（Responses API）和 Anthropic 中转都能：流式输出、工具调用、带工具结果继续对话、设置思考强度。用 `createProvider` 配置 `baseUrl` 和 `apiKey` 即可，不需要自定义 provider。**未验证：** Responses 的托管 `web_search` 工具（pi-ai 的工具只有函数形式，深度搜索可能要自己写一个 provider 或改成普通工具）；中转没有返回思考摘要（`reasoning` 用量为 0，与旧版行为一致）；OpenAI 中转的缓存读取只在极短的提示下测过（为 0，没有结论） | 给 pi-ai 写自定义 provider，或在中转前面加一层修正 |
+| V2 | pi-durable 能在 Workers Free 计划上运行：打包体积、CPU 时间、DO SQLite 适配器 | 未验证（阶段 2 开始前做） | Cloudflare 部署端降级，或评估 Workers Paid |
+| V3 | fork 出来的分叉能命中主线的 prompt cache | **通过。** Anthropic 中转上，主线和 fork 在同一前缀上的 `cacheRead` 都是 5191 个 token；fork 虽然有新的 provider session id，但缓存仍命中。因此子 agent 和用户分叉可以共用前缀，不必特意共享 session id | 让同一棵树的分叉共用 session id，或接受缓存未命中 |
+| V4 | 自定义 entry kind 能作为“用户输入”提交，也能作为不触发运行的写入追加 | **通过。** `submit({type:"input", entry:{kind:"app.event",...}})` 照常触发一轮并得到回答，transcript 里记录的是 `app.event`；`submit({type:"write", entry:{kind:"app.note",...}})` 空闲时立即追加、不触发运行，模型看不到它的内容。fork 只带到 fork 点为止的记录。关闭并重新打开同一个 SQLite 文件后，根会话、历史和 fork 都在 | Event 改用普通用户输入，元数据另存宿主表 |
+| V5 | `watch()` 推给前端的数据量 | **通过。** 一轮 4000 字的流式回答约 26 帧、10.5 KB，最大一帧 4.6 KB；在已有 120 多条记录的会话里同样的回答是 26 帧、10.7 KB，所以帧大小不随历史增长。新连接拿到的完整快照约 57 KB（122 条记录）。多个分叉同时运行的情况未测 | 前端改为按需拉取，或合并帧 |
+| V6 | 后台子 agent 的写法（示例 23）在进程被杀后能正确恢复，并且只汇报一次 | 未验证（阶段 7 开始前做） | 调整锚点任务的写法 |
 
 ## 开发顺序
 
 | 阶段 | 内容 | 依赖 | 退出条件 |
 | --- | --- | --- | --- |
 | 0 | ADR-0004、本路线图 | — | 用户评审通过 |
-| 1 | `core` 骨架 + `hosts/node`：pi-ai 接中转、一个会话的对话、`watch()` 推到前端、faux provider 的 E2E 框架 | V1、V4、V5 | 本地能流式对话；R32 在 Node 上通过 |
+| 1 | `core` 骨架 + `hosts/node`：pi-ai 接中转、一个会话的对话、`watch()` 推到前端、faux provider 的 E2E 框架 | V1、V4、V5（已验证，见上） | 本地能流式对话；R32 在 Node 上通过 |
 | 2 | `hosts/cf` 追平阶段 1 | V2 | R31、R32 在 Cloudflare 上通过；在独立的预览地址上部署，线上仍是旧版 |
 | 3 | 现有功能迁移成 extension：网页、图片、插件配置、附件、`/` 和 `@`、Skills、生成式界面、文件面板、Drive 插件 | 1、2 | R33、R34；替换线上旧版 |
 | 4 | 树形会话：树索引、分叉、版本切换、小地图、弹窗、总结给主线 | 3、V3 | R35–R41 |

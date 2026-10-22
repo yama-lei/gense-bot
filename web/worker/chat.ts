@@ -3,15 +3,18 @@ import { Think, type ChatResponseResult, type TurnConfig, type TurnContext } fro
 import { callable, getAgentByName } from 'agents'
 import { generateText, type UIMessage } from 'ai'
 import { z } from 'zod'
-import type { BranchNote, Effort, ToolResult, TurnBody, TurnMetadata } from '../src/types'
+import type { BranchNote, Effort, ToolResult, TurnBody, TurnMetadata, UserMetadata } from '../src/types'
+import { builtinCommands } from '../src/commands'
+import { pluginCatalog } from '../src/plugins/catalog'
 import { isHiddenNote } from '../src/message'
 import { Drive } from './drive'
 import { defaultModel, effortOptions, languageModel, parseModelKey } from './models'
-import { artifactInput, availablePlugins, createTools, enabledTools, saveArtifact, type ToolHost } from './tools'
+import { artifactInput, availablePlugins, createTools, DEFER_MIN_TOOLS, enabledTools, rankTools, saveArtifact, type PluginId, type ToolHost } from './tools'
 
 const BASE_PROMPT = `你是 GenseBot，一个私人助手。回答简洁、准确；不确定时直说。
 
 - 需要展示较长的提纲、报告或代码时，用 artifact_create 展示，而不是直接贴在回复里。只有用户要求保存时才调用 artifact_save。
+- 对比多个选项、展示数据或趋势、请用户在几个方向里选一个时，用 ui_render 画卡片、表格或图表，按钮可以让用户一键继续；简单问答直接用文字。
 - 用户提到资料、文件或文档时，用 files_list / files_search 找到文件，再用 files_read 读取。不要凭记忆编造文件内容。
 - 回答用到了文件内容时，最后调用 files_cite，逐字摘录支持结论的原文。
 - 需要最新信息或网上的资料时：先用 web_search；要看某个网页的细节，用 web_fetch 读取；问题复杂、需要多方对比，或前两者不够时，用 web_research。回答中用 Markdown 链接注明来源。
@@ -63,6 +66,38 @@ export class Chat extends Think<WorkerEnv> {
     },
     loadSkill: async (name) => (await this.hub()).loadSkill(name),
     readSkillResource: async (name, path) => (await this.hub()).readSkillResource(name, path),
+    findTools: (query) => {
+      if (!this.deferred) return []
+      const loaded = new Set(this.loadedTools())
+      const open = [...this.deferred.candidates].filter(([name]) => !loaded.has(name)).map(([name, description]) => ({ name, description }))
+      return rankTools(open, query).slice(0, 10)
+    },
+    loadTools: (names) => {
+      const candidates = this.deferred?.candidates
+      const known = names.filter((n) => candidates?.has(n))
+      this.ctx.storage.kv.put('loadedTools', [...new Set([...this.loadedTools(), ...known])])
+      return names.filter((n) => !candidates?.has(n))
+    },
+  }
+  /**
+   * Deferred loading for the running turn (roadmap-2 L0-1): the tools always offered and the
+   * plugin tools that can be loaded, with their descriptions. Null when every tool is offered.
+   */
+  private deferred: { always: string[]; candidates: Map<string, string> } | null = null
+  /** Tools loaded in this chat; they stay loaded for its later turns. */
+  private loadedTools = () => this.ctx.storage.kv.get<string[]>('loadedTools') ?? []
+  /** One line per plugin naming its loadable tools, so the model knows what exists without their schemas. */
+  private deferredCatalog() {
+    const names = [...this.deferred!.candidates.keys()]
+    return (Object.entries(this.tools) as [string, Record<string, unknown>][])
+      .map(([id, set]) => [id, Object.keys(set).filter((n) => names.includes(n))] as const)
+      .filter(([, tools]) => tools.length)
+      .map(([id, tools]) => `- ${pluginCatalog.find((p) => p.id === id)?.name ?? id}：${tools.join('、')}`)
+      .join('\n')
+  }
+  private activeTools() {
+    const d = this.deferred!
+    return [...d.always, ...this.loadedTools().filter((n) => d.candidates.has(n))]
   }
   private readonly tools = createTools(this.host)
 
@@ -90,7 +125,7 @@ export class Chat extends Think<WorkerEnv> {
 
   // All tools are registered; beforeTurn narrows the plugin tools to the enabled ones.
   getTools() {
-    return enabledTools(this.tools, availablePlugins(this.env))
+    return { ...enabledTools(this.tools, availablePlugins(this.env)), ...this.tools.meta }
   }
 
   async beforeTurn(ctx: TurnContext): Promise<TurnConfig> {
@@ -115,13 +150,26 @@ export class Chat extends Think<WorkerEnv> {
     this.host.readCache.clear()
     this.host.seesImages = caps?.image ?? true
 
-    const tools = Object.keys(enabledTools(this.tools, settings.enabledPlugins))
+    const offered = enabledTools(this.tools, settings.enabledPlugins)
+    const always = Object.keys(this.tools.core)
+    const pluginTools = Object.keys(offered).filter((n) => !always.includes(n))
+    this.deferred = null
+    if (caps?.toolCall !== false && pluginTools.length >= DEFER_MIN_TOOLS) {
+      this.deferred = { always: [...always, ...Object.keys(this.tools.meta)], candidates: new Map(pluginTools.map((n) => [n, typeof offered[n].description === 'string' ? offered[n].description : ''])) }
+      // A plugin the user @-mentioned or picked a command for is loaded without asking the model to.
+      const meta = this.messages.findLast((m) => m.role === 'user')?.metadata as UserMetadata | undefined
+      const wanted = [...(meta?.mentions ?? []).filter((m) => m.kind === 'plugin').map((m) => m.id), builtinCommands.find((c) => c.id === meta?.command?.id)?.plugin]
+      const preload = wanted.flatMap((id) => (id && id in this.tools ? Object.keys(this.tools[id as PluginId]) : []))
+      if (preload.length) this.host.loadTools(preload)
+    }
+    const tools = this.deferred ? this.activeTools() : Object.keys(offered)
     const system = [
       ctx.system,
       `回复语言：${settings.language}。`,
       settings.driveConnected ? '' : '用户还没有连接 Google Drive：文件和保存相关的工具会失败。需要时请提示用户在“定制”页连接。',
       settings.projectContext ? `当前项目说明：\n${settings.projectContext}` : '',
       settings.memories.length ? `关于用户（用户在设置里写下的记忆）：\n${settings.memories.map((m) => `- ${m}`).join('\n')}` : '',
+      this.deferred ? `为节省上下文，插件工具需要先加载：要用下面的工具时，先用 tools_find 查找（或直接用 tools_load 加载），然后调用。已加载的工具在本会话中一直可用。不要用其他方式代替这些工具。\n${this.deferredCatalog()}` : '',
       settings.skills.length
         ? `可用的 Skill（任务符合某个 Skill 的描述时，先用 skill_activate 激活它，再按它的说明做）：\n${settings.skills.map((s) => `- ${s.name}：${s.description}`).join('\n')}`
         : '',
@@ -138,6 +186,11 @@ export class Chat extends Think<WorkerEnv> {
       providerOptions: effortOptions(key.provider, effort),
       messageMetadata: ({ part }) => (part.type === 'start' ? { ...metadata } : undefined),
     }
+  }
+
+  // Tools loaded in a step are offered from the next step of the same turn.
+  beforeStep() {
+    if (this.deferred) return { activeTools: this.activeTools() }
   }
 
   async onChatResponse(result: ChatResponseResult) {

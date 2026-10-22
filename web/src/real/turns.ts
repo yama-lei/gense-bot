@@ -22,7 +22,9 @@ function toolCall(p: ToolPart): ToolCall {
   const base = { id: p.toolCallId, name, input: p.input ?? {}, resourceUri: tools[name]?.resourceUri, origin: 'model' as const }
   if (p.state === 'output-available') {
     const output = p.output as ToolResult | undefined
-    return { ...base, status: output?.isError ? 'failed' : 'succeeded', result: output }
+    // Provider-executed tools (e.g. an endpoint's own image_generation) return their own shapes.
+    if (typeof output?.content !== 'string') return { ...base, status: p.errorText ? 'failed' : 'succeeded', result: { content: p.errorText ?? '（没有文字结果）', isError: !!p.errorText } }
+    return { ...base, status: output.isError ? 'failed' : 'succeeded', result: output }
   }
   if (p.state === 'output-error' || p.state === 'output-denied') return { ...base, status: 'failed', result: { content: p.errorText ?? '工具调用失败', isError: true } }
   return { ...base, status: 'running' }
@@ -38,11 +40,12 @@ const text = (m: UIMessage) =>
 
 const userExtras = (meta: UserMetadata | undefined) => ({ attachments: meta?.attachments, command: meta?.command, mentions: meta?.mentions })
 
-/** Process line naming the skills and chats a turn drew on (R19: activation shows in the process summary). */
+/** Process line naming the tools loaded and the skills and chats a turn drew on (R19, R22: both show in the process summary). */
 function processSummary(calls: ToolCall[]) {
   const skills = [...new Set(calls.filter((c) => c.name === 'skill_activate').map((c) => (c.input as { name?: string }).name).filter(Boolean))]
   const chats = new Set(calls.filter((c) => c.name === 'chats_read').map((c) => (c.input as { id?: string }).id)).size
-  return [skills.length && `使用 Skill：${skills.join('、')}`, chats && `读取 ${chats} 个会话`].filter(Boolean).join(' · ') || undefined
+  const loaded = [...new Set(calls.filter((c) => c.name === 'tools_load').flatMap((c) => (c.result?.structuredContent as { names?: string[] } | undefined)?.names ?? []))]
+  return [loaded.length && `加载工具：${loaded.join('、')}`, skills.length && `使用 Skill：${skills.join('、')}`, chats && `读取 ${chats} 个会话`].filter(Boolean).join(' · ') || undefined
 }
 
 /**

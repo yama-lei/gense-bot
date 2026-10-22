@@ -102,6 +102,47 @@ export function planReply(turn: Turn, state: AppState): Script {
     }
   }
 
+  if (mentions.some((m) => m.id === 'ui') || /图表|表格|对比|比较|可视化|趋势/.test(message)) {
+    if (!enabled('ui')) return unavailable('界面')
+    const phone = (title: string, subtitle: string, price: string, tags: string[], note: string) => ({
+      type: 'card' as const,
+      title,
+      subtitle,
+      blocks: [{ type: 'stat' as const, label: '起售价', value: price }, { type: 'badges' as const, items: tags }, { type: 'text' as const, text: note }],
+    })
+    return {
+      summary: '整理成卡片和图表',
+      steps: [
+        {
+          name: 'ui_render',
+          input: {
+            title: '三款手机对比',
+            blocks: [
+              {
+                type: 'grid',
+                columns: 3,
+                cards: [
+                  phone('Pixel 10', 'Google', '¥5,299', ['影像', '原生系统'], '拍照稳定，系统更新最久。'),
+                  phone('iPhone 17', 'Apple', '¥5,999', ['生态', '视频'], '视频和生态最好，充电偏慢。'),
+                  phone('小米 16', 'Xiaomi', '¥4,299', ['续航', '快充'], '续航和快充领先，价格最低。'),
+                ],
+              },
+              { type: 'chart', kind: 'bar', title: '续航测试（小时）', labels: ['Pixel 10', 'iPhone 17', '小米 16'], series: [{ name: '视频播放', values: [21, 24, 27] }, { name: '游戏', values: [7.5, 8, 9.5] }], unit: '小时' },
+              { type: 'chart', kind: 'line', title: '近 6 个月价格（元）', labels: ['5月', '6月', '7月', '8月', '9月', '10月'], series: [{ name: 'Pixel 10', values: [5999, 5799, 5699, 5499, 5399, 5299] }, { name: 'iPhone 17', values: [6299, 6299, 6199, 6099, 5999, 5999] }, { name: '小米 16', values: [4599, 4599, 4499, 4399, 4299, 4299] }], unit: '元' },
+              { type: 'chart', kind: 'pie', title: '评测关注点', labels: ['影像', '续航', '性能', '系统', '价格'], series: [{ name: '占比', values: [34, 26, 18, 12, 10] }], unit: '%' },
+              { type: 'table', columns: ['', '屏幕', '重量', '快充'], rows: [['Pixel 10', '6.3 英寸', '204 g', '30 W'], ['iPhone 17', '6.3 英寸', '177 g', '40 W'], ['小米 16', '6.4 英寸', '191 g', '90 W']] },
+              { type: 'callout', tone: 'info', text: '价格为 Mock 数据，仅用于演示。' },
+              { type: 'buttons', items: [{ label: '更看重拍照', message: '我更看重拍照，该选哪款？' }, { label: '更看重续航', message: '我更看重续航，该选哪款？' }, { label: '预算 4000 以内', message: '预算 4000 以内有什么推荐？' }] },
+            ],
+          },
+          durationMs: 300,
+        },
+      ],
+      text: '如果预算有限、重视续航，小米 16 最合适；重视拍照和系统更新选 Pixel 10。点下面的按钮告诉我你更看重什么。',
+      citations: [],
+    }
+  }
+
   if (/邮件|email/i.test(message)) {
     if (!enabled('email')) return unavailable('邮件')
     return {

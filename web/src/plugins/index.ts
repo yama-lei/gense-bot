@@ -6,12 +6,15 @@ import { emailTools } from './email/tools'
 import { EmailDraftView } from './email/views'
 import { filesTools } from './files/tools'
 import type { PluginTool, View } from './types'
+import { uiTools } from './ui/tools'
+import { UiView } from './ui/views'
 import { webTools } from './web/tools'
 
-export const tools: Record<string, PluginTool> = Object.fromEntries([...filesTools, ...artifactTools, ...emailTools, ...webTools, ...coreTools].map((t) => [t.name, t]))
+export const tools: Record<string, PluginTool> = Object.fromEntries([...filesTools, ...artifactTools, ...emailTools, ...webTools, ...uiTools, ...coreTools].map((t) => [t.name, t]))
 
 /** Built-in React views. MCP Apps resources (`text/html;profile=mcp-app`) will render in a sandboxed iframe later. */
 export const views: Record<string, View> = {
   'ui://artifact/view': ArtifactView,
   'ui://email/draft': EmailDraftView,
+  'ui://ui/render': UiView,
 }

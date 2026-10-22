@@ -2,7 +2,7 @@ import { pluginCatalog } from '../plugins/catalog'
 import { builtinSkills } from '../skills'
 import type { AppState, ToolCall } from '../types'
 
-const mockPlugins = ['files', 'artifact', 'email', 'web']
+const mockPlugins = ['files', 'artifact', 'email', 'ui', 'web']
 
 const now = Date.now()
 const min = 60_000

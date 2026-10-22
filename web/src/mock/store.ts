@@ -8,7 +8,7 @@ import type { AppState, BranchNote, Conversation, DriveFile, Effort, Outgoing, T
 import { MAX_UPLOAD_BYTES, uid } from '../util'
 
 // v6: skills.
-const KEY = 'gensebot-mock-v6'
+const KEY = 'gensebot-mock-v7'
 /** Older versions by the id of the message they replaced: the turns from there on, per chat. */
 const BRANCHES_KEY = 'gensebot-mock-branches-v1'
 type Branches = Record<string, Record<string, Turn[]>>

@@ -4,6 +4,7 @@ import type { WorkerEnv } from './env'
 import type { Citation, DriveFile, ToolResult } from '../src/types'
 import { findQuote } from '../src/util'
 import { isImage, toFile, type Drive, type Folders, type TextCache } from './drive'
+import { uiInput } from '../src/plugins/ui/schema'
 import { webAvailable, webFetch, webResearch, webSearch } from './web'
 
 // Server half of the plugins (architecture "插件与界面"). Each execute() returns an MCP-style
@@ -28,6 +29,10 @@ export interface ToolHost {
   /** Instructions of an enabled skill and the paths of the files beside its SKILL.md. */
   loadSkill(name: string): Promise<{ body: string; resources: string[] }>
   readSkillResource(name: string, path: string): Promise<string>
+  /** Deferred loading (roadmap-2 L0-1): tools that can still be loaded this turn, with their descriptions. */
+  findTools(query: string): { name: string; description: string }[]
+  /** Adds tools to this chat's loaded set; returns the names that were unknown. */
+  loadTools(names: string[]): string[]
 }
 
 /** Characters per `files_read` call; longer files are read in parts. */
@@ -229,6 +234,42 @@ export function createTools(host: ToolHost) {
         toModelOutput,
       }),
     },
+    // Offered only while deferred loading is on (worker/chat.ts); never part of a plugin.
+    meta: {
+      tools_find: tool({
+        description: '查找还没有加载的工具。当前可用的工具不够完成任务时，用关键词（中文或英文，如“网页”“文件”“图表”“save”）搜索，再用 tools_load 加载需要的工具。',
+        inputSchema: z.object({ query: z.string().max(100).describe('要做的事或关键词；留空列出全部') }),
+        execute: async ({ query }): Promise<ToolResult> => {
+          const found = host.findTools(query)
+          if (!found.length) return { content: '没有可以加载的工具了。', structuredContent: { names: [] } }
+          return { content: `可以加载的工具：\n${found.map((t) => `- ${t.name}：${t.description}`).join('\n')}\n\n用 tools_load 加载需要的工具。`, structuredContent: { names: found.map((t) => t.name) } }
+        },
+        toModelOutput,
+      }),
+      tools_load: tool({
+        description: '加载 tools_find 找到的工具。加载后下一步就可以调用，本会话之后也一直可用。',
+        inputSchema: z.object({ names: z.array(z.string().min(1).max(64)).min(1).max(10) }),
+        execute: async ({ names }): Promise<ToolResult> => {
+          const unknown = host.loadTools(names)
+          const loaded = names.filter((n) => !unknown.includes(n))
+          const miss = unknown.length ? `；找不到：${unknown.join('、')}（先用 tools_find 查看可加载的工具）` : ''
+          return { content: `${loaded.length ? `已加载：${loaded.join('、')}，现在可以调用` : '没有加载任何工具'}${miss}`, structuredContent: { names: loaded }, isError: !loaded.length }
+        },
+        toModelOutput,
+      }),
+    },
+    ui: {
+      ui_render: tool({
+        description:
+          '在回答中插入一块界面：卡片、网格、统计数字、表格、图表（柱状/折线/饼图）、提示框和按钮。适合对比多个选项、展示数据和趋势、给出可点选的下一步；简单问答不要用。按钮被点击时，它的 message 会作为用户消息发出。界面已经展示的内容不要在文字里再重复一遍。',
+        inputSchema: uiInput,
+        execute: async (input): Promise<ToolResult> => ({
+          content: `已在界面中显示${input.title ? `「${input.title}」` : '内容'}，用户能看到；不要在文字里重复其中的数据，只补充结论或说明。`,
+          structuredContent: input,
+        }),
+        toModelOutput,
+      }),
+    },
     web: webTools(host.env),
   } satisfies Record<string, ToolSet>
 }
@@ -287,20 +328,38 @@ function webTools(env: WorkerEnv): ToolSet {
   return out
 }
 
-export type PluginId = Exclude<keyof ReturnType<typeof createTools>, 'core'>
+export type PluginId = Exclude<keyof ReturnType<typeof createTools>, 'core' | 'meta'>
 /** Plugins this server implements; the hub offers only these. */
-export const pluginIds: PluginId[] = ['files', 'artifact', 'web']
+export const pluginIds: PluginId[] = ['files', 'artifact', 'ui', 'web']
 /** Plugins this deployment can offer, given which backends `.env` configures. */
 export function availablePlugins(env: WorkerEnv): PluginId[] {
   const web = webAvailable(env)
   return pluginIds.filter((id) => id !== 'web' || web.search || web.research)
 }
 /** Plugin of each tool, for checking calls made by views. */
-export const toolPlugin = (all: ReturnType<typeof createTools>, name: string) => (Object.entries(all) as [PluginId | 'core', ToolSet][]).find(([, set]) => name in set)?.[0]
+export const toolPlugin = (all: ReturnType<typeof createTools>, name: string) => (Object.entries(all) as [PluginId | 'core' | 'meta', ToolSet][]).find(([, set]) => name in set)?.[0]
 
 /** The core tools and those of the enabled plugins (Spec S8: a disabled plugin's tools are never offered). */
 export function enabledTools(all: ReturnType<typeof createTools>, enabled: string[]): ToolSet {
   const out: ToolSet = {}
   for (const [id, set] of Object.entries(all)) if (id === 'core' || enabled.includes(id)) Object.assign(out, set)
   return out
+}
+
+/** Below this many enabled plugin tools every tool is offered at once: an extra round trip would only be slower. */
+export const DEFER_MIN_TOOLS = 12
+
+/** Tools of `query`-matching candidates, best first: each query word (or CJK character pair) found in a name or description counts. */
+export function rankTools(candidates: { name: string; description: string }[], query: string) {
+  const q = query.toLowerCase()
+  const words = q.split(/[\s,，、;；/]+/).filter(Boolean)
+  const pairs = [...q.replace(/[^\u2e80-\u9fff]/g, '')].flatMap((c, i, a) => (i ? [a[i - 1] + c] : []))
+  const terms = [...new Set([...words, ...pairs])]
+  const scored = candidates.map((t) => {
+    const hay = `${t.name} ${t.description}`.toLowerCase()
+    return { t, score: terms.filter((w) => hay.includes(w)).length }
+  })
+  const hits = scored.filter((x) => x.score > 0).sort((a, b) => b.score - a.score)
+  // No match (or no query): list everything, so the model still sees what exists.
+  return (hits.length ? hits : scored).map((x) => x.t)
 }

@@ -1,6 +1,6 @@
 # 路线图 2：从首个闭环到日常可用
 
-状态：2026-10-21 制定，按阶段开发中（阶段 1–4 已完成）。来源是仓库根目录的 `goal.md`（用户的新功能清单），这里把它整理成 Intent → Spec → Design，并给出分层和开发顺序。所有取舍由开发者决定，理由写在各节；有长期成本的决定另见 [ADR-0003](../adr/0003-free-plan-agent-features.md)。
+状态：2026-10-21 制定，按阶段开发中（阶段 1–5 已完成）。来源是仓库根目录的 `goal.md`（用户的新功能清单），这里把它整理成 Intent → Spec → Design，并给出分层和开发顺序。所有取舍由开发者决定，理由写在各节；有长期成本的决定另见 [ADR-0003](../adr/0003-free-plan-agent-features.md)。
 
 依据：[首版 Spec](../specs/personal-assistant.md)、[网页界面 Spec](../specs/web-ui.md)、[架构](../design/architecture.md)。
 
@@ -102,10 +102,14 @@ L0 平台改造  工具注册表与按需加载 · 附件管线 · 会话树存�
 
 ### L0-1 工具注册表与按需加载
 
-- 每个插件在 `worker/tools.ts` 中声明：工具集合、`core`（是否首轮就给模型）、`sideEffect`。前端 `plugins/catalog.ts` 只描述展示信息。
-- 新增元工具 `tools_find(query)`：返回未加载工具的名称和一句话说明；`tools_load(names)`：把工具加入本会话的已加载集合（存在 Chat 的 KV）。
-- `beforeStep` 在每一步把 `activeTools` 设为“核心工具 + 已加载工具”，所以同一轮中加载后下一步立即可用。被关闭的插件的工具永远不在候选中（S8）。
-- 门槛：启用的非核心工具少于 12 个时不启用按需加载，直接全部提供。工具不多时，多一次往返只会更慢。
+- 工具在 `worker/tools.ts` 的 `createTools` 中按组声明：`core`（Skill 与会话读取，始终提供）、`meta`（`tools_find` / `tools_load`，只在按需加载时提供）和各插件组。前端 `plugins/catalog.ts` 只描述展示信息。
+- 元工具 `tools_find(query)` 按关键词（英文单词与中文二字片段）给候选工具打分，返回名称和说明；没有命中时列出全部候选。`tools_load(names)` 把工具加入本会话的已加载集合（Chat 的 KV `loadedTools`），之后的轮次一直可用。
+- `beforeTurn` 决定本轮是否按需加载；`beforeStep` 在每一步把 `activeTools` 设为“核心 + 元工具 + 已加载工具”，所以同一轮中加载后下一步立即可用。候选只来自已启用的插件（S8）。
+- 系统提示附一行一个插件的工具名清单（不含参数结构）。实测（GPT 端点）：只说“可以查找工具”时，模型看不到图表工具，转而调用端点自带的 `image_generation` 画了一张图；加上清单后，模型会按 `tools_find` → `tools_load` → 调用的顺序进行。
+- 用户 `@` 提及的插件、所选 `/` 命令需要的插件，在本轮开始时直接加载，不必让模型再找一次。
+- 过程摘要显示“加载工具：…”。
+- 门槛：启用的插件工具少于 12 个（`DEFER_MIN_TOOLS`）时不启用按需加载，直接全部提供，因为工具不多时多一次往返只会更慢。目前一共约 10 个，所以默认不触发；验证时临时把门槛调低。
+- 前端解析工具结果时容忍不是 `{content}` 形状的输出（端点自己执行的工具会返回其他结构）。
 - 不用 Codemode 的理由见 ADR-0003。
 
 ### L0-2 附件管线
@@ -167,10 +171,21 @@ L0 平台改造  工具注册表与按需加载 · 附件管线 · 会话树存�
 
 ### L3 生成式界面
 
-- 不引入 OpenUI：DSL 系统提示约 8k token，又依赖网关纠错，而用户自备模型的质量差别很大。改为自定义的 `ui_render` 显示工具：参数是一棵用 Zod 校验的组件树，约 15 种节点（Col/Row/Grid/Card、Title/Text/Badge/List、Table、Chart（柱/线/饼）、Image、Link、Button、Stat、Callout）。
-- 前端 `plugins/ui/views.tsx` 用现有的 CSS 变量渲染，支持深色模式；不认识的节点跳过而不是整体失败。
-- Button 的动作只有一种：`message`（作为用户消息发送），对应 MCP Apps 的 `ui/message`。
-- 借鉴 OpenUI 的做法：每个组件的说明从 Zod schema 生成，作为工具说明给模型。
+- 不引入 OpenUI：它的 DSL 系统提示约 8k token，又依赖网关纠错，而用户自备模型的质量差别很大。改为自定义的 `ui` 插件和显示工具 `ui_render`（`resourceUri` 为 `ui://ui/render`）。参数是一棵用 Zod 校验的组件树（`src/plugins/ui/schema.ts`，前后端共用）：
+  - 顶层是块列表，外加 `grid`（2–4 列）和 `card`（标题、副标题、配图、块）两种容器；
+  - 内容块有 heading、text（Markdown）、stat、badges、list、table、chart（bar / line / pie）、image、link、callout（info / success / warning / error）、buttons。
+  - 每个字段的中文 `.describe()` 就是给模型的组件说明。不做任意嵌套的 Row/Col，因为层级浅一些，模型更不容易出错。
+- 工具结果告诉模型“已在界面中显示，不要在文字里重复数据”。只有在对比、数据、趋势、请用户选方向时才用它（写在系统提示中）。
+- 渲染（`src/plugins/ui/views.tsx`）：
+  - 使用现有的 CSS 变量；遇到不认识或不合法的节点就跳过，不让整体失败；
+  - 图片只接受 https，并设 `referrerPolicy=no-referrer`，加载失败时隐藏。
+- 图表是手写的 SVG，没有引入图表库：
+  - 只有一个 y 轴。柱状图从 0 开始，折线图贴合数据范围。
+  - 系列颜色取 `--series-1…8`，固定顺序，浅色和深色两套都用 dataviz 校验脚本验证过。对比度有 WARN 的颜色由直接数值标签和表格视图兜底。
+  - 柱宽最多 28px，顶端 4px 圆角，同组柱间隔 2px；折线 2px，数据点 8px 带表面色描边；末端数值标签自动错开。
+  - 悬停显示对应列和提示框，可以切换成表格；两个及以上系列显示图例。
+  - 饼图（环形）超过 8 块时，多出的并入“其他”。
+- 按钮只有一种动作：`message`，作为用户消息发送，对应 MCP Apps 的 `ui/message`。按下后整组按钮停用，并高亮所选那个，所选按钮存在 viewState 里。
 
 ### 横切：UI/UX 对标
 
@@ -184,7 +199,7 @@ L0 平台改造  工具注册表与按需加载 · 附件管线 · 会话树存�
 | 2 | 会话树：重新生成、编辑、版本、分支、支线与总结回主线 | — | R11–R16 |
 | 3 | 附件管线与任意文件上传 | — | R7–R10（Mock 已验证；真实环境需要用户连接 Drive 后验证） |
 | 4 | `/` 命令、`@` 提及、Skills | 1、3 | R17–R19（Mock 与本地真实模型已验证；Drive Skills 需要用户连接 Drive 后验证） |
-| 5 | 按需加载、生成式界面 | 1 | R20–R22 |
+| 5 | 按需加载、生成式界面 | 1 | R20–R22（Mock 浅色/深色/窄屏与本地真实模型已验证；按需加载用临时调低的门槛实测） |
 | 6 | 图片生成 | 端点开通 | R23 |
 | 7 | 整体 UI/UX 走查 | 全部 | 每个页面的走查记录 |
 

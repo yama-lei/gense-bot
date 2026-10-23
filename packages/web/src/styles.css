@@ -579,3 +579,8 @@ a.file-card:hover { background: var(--hover); }
 .login-card input:focus { border-color: var(--muted); }
 .login-card .btn { justify-content: center; }
 .login-card .error-text { margin: 0; }
+.model-login { display: flex; flex-direction: column; gap: 10px; margin-bottom: 8px; }
+.model-login-pick { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.model-login-pick .select-field { flex: 1; min-width: 200px; }
+.model-login-run p { margin: 0; }
+.device-code { font-size: 15px; letter-spacing: 1px; padding: 2px 6px; }

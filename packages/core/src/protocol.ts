@@ -1,5 +1,6 @@
 // Messages between the browser and a host over one WebSocket (roadmap-3 D9). Type-only: the web client imports it too.
 import type { WireOp } from '@earendil-works/chord/delta'
+import type { AuthEvent, AuthType } from '@earendil-works/pi-ai'
 import type { PluginState, PluginValue } from './catalog.ts'
 import type { CommandNote, Mention } from './notes.ts'
 
@@ -19,6 +20,23 @@ export interface ModelInfo {
 }
 
 export type Effort = 'low' | 'medium' | 'high'
+
+/** A model service the user can sign in to with their own credentials (R62). */
+export interface ProviderState {
+  id: string
+  name: string
+  /** What the API-key login asks for, e.g. "Anthropic API key"; null when there is none. */
+  apiKey: string | null
+  /** The subscription login's label; null when there is none or the host cannot run it. */
+  oauth: string | null
+  /** How the user is signed in; null when they are not. */
+  configured: AuthType | null
+}
+
+/** A question a login asks the user; `select` answers with an option id. */
+export type LoginPrompt =
+  | { type: 'text' | 'secret' | 'manual_code'; message: string; placeholder?: string }
+  | { type: 'select'; message: string; options: { id: string; label: string; description?: string }[] }
 
 /** A file in a tree's workspace or the Skills, for the file panel. Paths are the agent's (`/data/...`). */
 export interface FileEntry {
@@ -95,9 +113,21 @@ export type ClientRequest =
   | { t: 'plugin.set'; id: number; pluginId: string; enabled?: boolean; values?: Record<string, PluginValue | null>; secrets?: Record<string, string | null> }
   | { t: 'tool.call'; id: number; treeId: string; name: string; args: unknown }
   | { t: 'skill.set'; id: number; name: string; enabled: boolean }
+  /** Runs a login and replies when it ends; meanwhile the host sends `auth.event` and `auth.prompt` for `loginId`. */
+  | { t: 'auth.login'; id: number; loginId: string; provider: string; type: AuthType }
+  /** Answers an `auth.prompt`; without `value` the prompt is cancelled. */
+  | { t: 'auth.answer'; id: number; promptId: string; value?: string }
+  | { t: 'auth.cancel'; id: number; loginId: string }
+  | { t: 'auth.logout'; id: number; provider: string }
 
 export type ServerMessage =
-  | { t: 'hello'; email: string; models: ModelInfo[]; defaultModel: ModelInfo | null }
+  | { t: 'hello'; email: string }
+  | { t: 'models'; models: ModelInfo[]; defaultModel: ModelInfo | null }
+  | { t: 'providers'; providers: ProviderState[] }
+  | { t: 'auth.event'; loginId: string; event: AuthEvent }
+  | { t: 'auth.prompt'; loginId: string; promptId: string; prompt: LoginPrompt }
+  /** The login no longer waits for this prompt (it was answered another way, or the login ended). */
+  | { t: 'auth.prompt.done'; promptId: string }
   | { t: 'trees'; trees: TreeMeta[] }
   | { t: 'plugins'; plugins: PluginState[] }
   | { t: 'skills'; skills: SkillInfo[] }

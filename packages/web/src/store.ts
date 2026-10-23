@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react'
+import type { AuthType } from '@earendil-works/pi-ai'
+import type { LoginHandlers } from './pi/socket'
 import { usePiStore } from './pi/store'
 import type { AppState, Conversation, DriveFile, Effort, Outgoing, PluginValue, ToolResult, Turn, WorkspacePreview } from './types'
 
@@ -42,6 +44,12 @@ export interface Store {
   refreshFiles: () => void
   /** Turns a shared Skill on or off; rejects with a message for the user. */
   setSkillEnabled: (name: string, enabled: boolean) => Promise<void>
+  /** Signs in to a model service with the user's own key or subscription; `done` rejects with a message for the user. */
+  loginModel: (provider: string, type: AuthType, handlers: LoginHandlers) => { done: Promise<void>; cancel: () => void }
+  /** Answers a login prompt; without a value it cancels the prompt. */
+  answerLogin: (promptId: string, value?: string) => Promise<void>
+  /** Forgets the user's credential for a model service; rejects with a message for the user. */
+  logoutModel: (provider: string) => Promise<void>
   /** Text of any readable Drive file; rejects with a message for the user. */
   readFile: (id: string) => Promise<{ file: DriveFile; text: string }>
   /** Name and full-text search across the user's Drive. */

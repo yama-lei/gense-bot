@@ -3,7 +3,6 @@
 // Each tree has a workspace directory, the conversation's cwd (D6).
 import { BACKGROUND_CONTEXT, type Context } from '@earendil-works/chord/context'
 import { applySqliteMigrations, type SqliteDatabase } from '@earendil-works/chord/sqlite'
-import type { Models } from '@earendil-works/pi-ai'
 import {
   createRegistry,
   defineExtension,
@@ -24,6 +23,8 @@ import { DATA_DIR, SKILLS_DIR, toBase64, treeDir, Workspace, type EnvFactory } f
 import { artifactExtension, artifactInput, emailExtension, saveArtifact, uiExtension } from './plugins/display.ts'
 import { imageExtension } from './plugins/image.ts'
 import { PluginStore, type PluginStoreOptions } from './plugins/store.ts'
+import { ModelAccounts } from './credentials.ts'
+import type { ModelSetup } from './models.ts'
 import { attachmentsText, commandText, mentionsText, parseNote, type CommandNote, type Mention } from './notes.ts'
 import { skillsSection, SkillStore } from './skills.ts'
 import { webExtension } from './plugins/web.ts'
@@ -76,12 +77,16 @@ const files = defineExtension({
 const MENTIONED_CHAT_CHARS = 20_000
 
 export interface SpaceOptions {
-  models: Models
-  defaultModel: ModelInfo | null
+  /** The host's providers; each user adds their own with `accounts` (R62). */
+  models: ModelSetup
+  /** Seals the user's plugin secrets and model credentials. */
+  secretKey?: string
+  /** Whether users may run subscription (OAuth) logins on this host. */
+  oauth?: boolean
   /** The user's files (roadmap-3 D6): an environment for a virtual working directory under /data. */
   env: EnvFactory
   /** Plugin settings the host supplies, and the key that seals the user's plugin secrets. */
-  plugins?: Pick<PluginStoreOptions, 'defaults' | 'secretKey'>
+  plugins?: Pick<PluginStoreOptions, 'defaults'>
   /** Passed through to the Harness: wake scheduling and settings belong to the host. */
   harness?: Pick<HarnessOptions, 'onWake' | 'setTimer' | 'now' | 'settings' | 'onReport'>
   /**
@@ -104,14 +109,16 @@ export class UserSpace {
   readonly workspace: Workspace
   readonly plugins: PluginStore
   readonly skills: SkillStore
+  readonly accounts: ModelAccounts
   private readonly options: SpaceOptions
 
-  private constructor(db: SqliteDatabase, harness: Harness, workspace: Workspace, plugins: PluginStore, skills: SkillStore, options: SpaceOptions) {
+  private constructor(db: SqliteDatabase, harness: Harness, workspace: Workspace, plugins: PluginStore, skills: SkillStore, accounts: ModelAccounts, options: SpaceOptions) {
     this.db = db
     this.harness = harness
     this.workspace = workspace
     this.plugins = plugins
     this.skills = skills
+    this.accounts = accounts
     this.options = options
   }
 
@@ -119,13 +126,14 @@ export class UserSpace {
   static async open(db: SqliteDatabase, options: SpaceOptions, ctx: Context = BACKGROUND_CONTEXT) {
     await applySqliteMigrations(db, migrations, { table: 'app_migrations' })
     const storage = await SqliteStorage.open(db, { prefix: 'pi_' })
-    const plugins = await PluginStore.open(db, { ...options.plugins, available: Object.keys(PLUGINS) })
+    const plugins = await PluginStore.open(db, { ...options.plugins, secretKey: options.secretKey, available: Object.keys(PLUGINS) })
     const registry = createRegistry()
     const byName = new Map<string, Extension>()
     for (const e of [gense, files, ...Object.entries(PLUGINS).map(([id, make]) => make(() => plugins.resolved(id)))]) {
       registry.install(e)
       byName.set(e.name, e)
     }
+    const accounts = await ModelAccounts.open(db, { host: options.models, secretKey: options.secretKey, oauth: options.oauth ?? false })
     const workspace = new Workspace(options.env)
     const skills = await SkillStore.open(db, async () => workspace.env(DATA_DIR), ctx)
     // Conversations follow the host's selection, read at every resolution: a plugin switched on or off applies from the
@@ -138,13 +146,13 @@ export class UserSpace {
     }
     const harness = await Harness.open(
       storage,
-      { ...options.harness, settings, models: options.models, registry, env: ({ cwd }) => workspace.env(cwd ?? DATA_DIR) },
+      { ...options.harness, settings, models: accounts.models, registry, env: ({ cwd }) => workspace.env(cwd ?? DATA_DIR) },
       ctx,
     )
     await options.arm?.(harness.wake())
     // Continue runs a previous process left unfinished (R32).
     harness.resume()
-    return new UserSpace(db, harness, workspace, plugins, skills, options)
+    return new UserSpace(db, harness, workspace, plugins, skills, accounts, options)
   }
 
   /** Arms the host's wake-up before a call that can start work. */
@@ -173,7 +181,7 @@ export class UserSpace {
   }
 
   async createTree(ctx: Context = BACKGROUND_CONTEXT): Promise<TreeMeta> {
-    const model = this.options.defaultModel
+    const model = await this.accounts.defaultModel()
     const id = crypto.randomUUID()
     await this.workspace.createTree(id, ctx)
     const conv = await this.harness.createConversation(
@@ -261,6 +269,9 @@ export class UserSpace {
     const conv = await this.conversation(treeId, ctx)
     await this.arm()
 
+    // Only models the user has: a stale pick or a provider without the user's credentials would fail mid-run.
+    if (input.model && !(await this.accounts.list()).some((m) => m.provider === input.model!.provider && m.id === input.model!.id))
+      throw new Error('这个模型不可用，请重新选择')
     const agent = await conv.agent(ctx)
     const model = input.model && (agent.model?.provider !== input.model.provider || agent.model?.modelId !== input.model.id)
       ? { provider: input.model.provider, modelId: input.model.id }

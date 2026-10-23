@@ -117,6 +117,7 @@ export function usePiStore(onUnauthorized: () => void): Store {
       ...local,
       plugins,
       skills: host.skills,
+      providers: host.providers,
       prefs,
       conversations: (host.trees ?? []).map(
         (t): Conversation => ({
@@ -232,6 +233,9 @@ export function usePiStore(onUnauthorized: () => void): Store {
     setPluginEnabled: (pluginId, enabled) => socket.request({ t: 'plugin.set', pluginId, enabled }).then(() => {}),
     refreshFiles: refreshUploads,
     setSkillEnabled: (name, enabled) => socket.request({ t: 'skill.set', name, enabled }),
+    loginModel: (provider, type, handlers) => socket.login(provider, type, handlers),
+    answerLogin: (promptId, value) => socket.request({ t: 'auth.answer', promptId, ...(value !== undefined && { value }) }),
+    logoutModel: (provider) => socket.request({ t: 'auth.logout', provider }),
     readFile: later,
     searchDrive: async () => [],
     refreshWorkspace,

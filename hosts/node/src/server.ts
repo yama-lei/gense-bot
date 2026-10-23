@@ -1,7 +1,7 @@
 // Self-hosted deployment (ADR-0004 decision 3): one process, one SQLite file per user, sockets over `ws`.
 import { openNodeSqliteDatabase } from '@earendil-works/chord/sqlite/node'
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node'
-import { accountApi, Auth, Connection, DATA_DIR, json, MountedEnv, sameOrigin, sessionUser, UserSpace, type ModelSetup } from '@gense/core'
+import { accountApi, Auth, Connection, DATA_DIR, json, MountedEnv, sameOrigin, sessionUser, UserSpace } from '@gense/core'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, stat } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
@@ -51,7 +51,7 @@ async function send(res: ServerResponse, response: Response) {
 
 export async function startServer(config: HostConfig) {
   const auth = await openAuth(config.dataDir)
-  const spaces = new Map<string, Promise<{ space: UserSpace; setup: ModelSetup }>>()
+  const spaces = new Map<string, Promise<UserSpace>>()
 
   const space = (userId: string) => {
     let opening = spaces.get(userId)
@@ -59,12 +59,12 @@ export async function startServer(config: HostConfig) {
       opening = (async () => {
         const dir = join(config.dataDir, 'users', userId)
         await mkdir(dir, { recursive: true })
-        const setup = config.models()
         const files = resolve(dir, 'files')
         await mkdir(files, { recursive: true })
         const db = await openNodeSqliteDatabase(join(dir, 'pi.sqlite'))
         const env = (cwd: string) => new MountedEnv(new NodeExecutionEnv({ cwd: files }), { mount: DATA_DIR, target: files, cwd })
-        return { space: await UserSpace.open(db, { models: setup.models, defaultModel: setup.defaultModel, env, plugins: config.plugins }), setup }
+        // Node runs subscription logins: their flows either call back to this host or ask for the code (R62).
+        return UserSpace.open(db, { models: config.models(), env, plugins: config.plugins, secretKey: config.secretKey, oauth: true })
       })()
       opening.catch(() => spaces.delete(userId))
       spaces.set(userId, opening)
@@ -113,13 +113,11 @@ export async function startServer(config: HostConfig) {
         socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
         return
       }
-      const { space: userSpace, setup } = await space(user.id)
+      const userSpace = await space(user.id)
       wss.handleUpgrade(req, socket, head, (ws) => {
         const connection = new Connection({
           space: userSpace,
           email: user.email,
-          models: setup.options,
-          defaultModel: setup.defaultModel,
           send: (m) => ws.send(m),
         })
         // Requests are handled in arrival order so a send never overtakes the watch before it.
@@ -142,7 +140,7 @@ export async function startServer(config: HostConfig) {
       for (const ws of wss.clients) ws.terminate()
       wss.close()
       await new Promise<void>((resolve) => server.close(() => resolve()))
-      for (const opening of spaces.values()) await (await opening.catch(() => undefined))?.space.close()
+      for (const opening of spaces.values()) await (await opening.catch(() => undefined))?.close()
       await auth.close()
     },
   }

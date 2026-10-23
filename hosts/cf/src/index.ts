@@ -2,7 +2,7 @@
 // one UserHub object per user holds that user's pi-durable Harness and sockets.
 import { DurableObjectSqliteDatabase } from '@earendil-works/chord/sqlite/cloudflare'
 import type { Wake } from '@earendil-works/pi-durable'
-import { accountApi, Auth, Connection, fauxModels, json, pluginDefaultsFromEnv, relayFromEnv, sameOrigin, sessionUser, SqliteFiles, UserSpace, type ModelSetup, type User } from '@gense/core'
+import { accountApi, Auth, Connection, fauxModels, json, pluginDefaultsFromEnv, relayFromEnv, sameOrigin, sessionUser, SqliteFiles, UserSpace, type User } from '@gense/core'
 import { DurableObject } from 'cloudflare:workers'
 
 export interface Env {
@@ -63,7 +63,6 @@ export class Accounts extends DurableObject<Env> {
 
 export class UserHub extends DurableObject<Env> {
   #space!: UserSpace
-  #setup!: ModelSetup
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -72,14 +71,15 @@ export class UserHub extends DurableObject<Env> {
       const fallback = Date.now() + 60_000
       const current = await ctx.storage.getAlarm()
       if (current === null || current > fallback) await ctx.storage.setAlarm(fallback)
-      this.#setup = env.GENSE_FAUX === '1' ? fauxModels() : relayFromEnv(env as unknown as Record<string, string | undefined>)
       const db = new DurableObjectSqliteDatabase(ctx.storage)
       const files = await SqliteFiles.open(db, { id: `hub:${ctx.id.toString()}` })
       this.#space = await UserSpace.open(db, {
-        models: this.#setup.models,
+        models: env.GENSE_FAUX === '1' ? fauxModels() : relayFromEnv(env as unknown as Record<string, string | undefined>),
         env: (cwd) => files.env({ cwd }),
-        defaultModel: this.#setup.defaultModel,
-        plugins: { defaults: pluginDefaultsFromEnv(env as unknown as Record<string, string | undefined>), ...(env.TOKEN_ENCRYPTION_KEY && { secretKey: env.TOKEN_ENCRYPTION_KEY }) },
+        plugins: { defaults: pluginDefaultsFromEnv(env as unknown as Record<string, string | undefined>) },
+        // Subscription logins need a local callback server or a long-lived flow; a Worker offers neither (R62).
+        secretKey: env.TOKEN_ENCRYPTION_KEY || undefined,
+        oauth: false,
         // A failed alarm write resets the object; it arms again when it next starts.
         harness: { onWake: (wake) => void this.#arm(wake).catch(() => ctx.abort('Alarm write failed')) },
         arm: (wake) => this.#arm(wake),
@@ -108,8 +108,6 @@ export class UserHub extends DurableObject<Env> {
     const connection = new Connection({
       space: this.#space,
       email: user.email,
-      models: this.#setup.options,
-      defaultModel: this.#setup.defaultModel,
       send: (m) => server.send(m),
     })
     // Requests are handled in arrival order so a send never overtakes the watch before it.

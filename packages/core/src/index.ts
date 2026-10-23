@@ -1,6 +1,7 @@
 export { Auth, SESSION_COOKIE, SESSION_MAX_AGE_S, type User } from './auth.ts'
 export { Connection, type ConnectionOptions } from './connection.ts'
 export { relayFromEnv, relayModels, RELAY_PROVIDER, type ModelSetup, type RelayConfig } from './models.ts'
+export { ModelAccounts, NO_AMBIENT_AUTH, SealedCredentialStore, type AccountsOptions } from './credentials.ts'
 export * from './protocol.ts'
 export { UserSpace, type SpaceOptions } from './space.ts'
 export * from './notes.ts'

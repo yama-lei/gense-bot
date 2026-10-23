@@ -2,7 +2,7 @@
 import { applyImmutable, decoder, type Decoder } from '@earendil-works/chord/delta'
 import type { PluginState } from '@gense/core/catalog'
 import { parseNote } from '@gense/core/notes'
-import type { ClientRequest, FileEntry, ServerMessage, SkillInfo, TreeMeta, UploadedFile } from '@gense/core/protocol'
+import type { ClientRequest, FileEntry, LoginPrompt, ModelInfo, ProviderState, ServerMessage, SkillInfo, TreeMeta, UploadedFile } from '@gense/core/protocol'
 import assert from 'node:assert/strict'
 import { mkdtemp } from 'node:fs/promises'
 import { createServer } from 'node:http'
@@ -38,6 +38,12 @@ export class Client {
   trees: TreeMeta[] = []
   plugins: PluginState[] = []
   skills: SkillInfo[] = []
+  models: ModelInfo[] = []
+  providers: ProviderState[] = []
+  /** Login prompts the host is waiting on, by prompt id. */
+  readonly prompts = new Map<string, { loginId: string; prompt: LoginPrompt }>()
+  /** Every message received, as sent, to check what never reaches the browser. */
+  readonly raw: string[] = []
   readonly #ws: WebSocket
   readonly #decoders = new Map<string, Decoder>()
   readonly #pending = new Map<number, { resolve(v: unknown): void; reject(e: Error): void }>()
@@ -46,7 +52,10 @@ export class Client {
 
   private constructor(ws: WebSocket) {
     this.#ws = ws
-    ws.on('message', (data) => this.#receive(JSON.parse(String(data)) as ServerMessage))
+    ws.on('message', (data) => {
+      this.raw.push(String(data))
+      this.#receive(JSON.parse(String(data)) as ServerMessage)
+    })
   }
 
   static connect(url: string, cookie: string | undefined, origin?: string) {
@@ -62,6 +71,10 @@ export class Client {
     if (m.t === 'trees') this.trees = m.trees
     if (m.t === 'plugins') this.plugins = m.plugins
     if (m.t === 'skills') this.skills = m.skills
+    if (m.t === 'models') this.models = m.models
+    if (m.t === 'providers') this.providers = m.providers
+    if (m.t === 'auth.prompt') this.prompts.set(m.promptId, { loginId: m.loginId, prompt: m.prompt })
+    if (m.t === 'auth.prompt.done') this.prompts.delete(m.promptId)
     if (m.t === 'view') {
       this.#decoders.set(m.treeId, decoder())
       this.views.set(m.treeId, m.value as View)
@@ -336,4 +349,51 @@ export async function skillsScenario(client: Client) {
 
   for (const id of [tree.id, other.id]) await client.request({ t: 'tree.delete', treeId: id })
   await client.request({ t: 'plugin.set', pluginId: 'ui', enabled: false })
+}
+
+/**
+ * R62: a user's own model service. The API-key login runs on the host and asks for the key through the socket; the
+ * service's models join the list, the key never comes back, and the host's own keys never count as the user's.
+ */
+export async function accountsScenario(client: Client, { oauth }: { oauth: boolean }) {
+  const providers = await client.until(() => client.providers.length > 0 && client.providers, 10_000, 'providers')
+  assert.ok(!providers.some((p) => p.id === 'relay' || p.id === 'faux' || p.configured))
+  assert.equal(providers.some((p) => p.oauth), oauth)
+  const host = await client.until(() => client.models.length > 0 && client.models, 10_000, 'models')
+  // The host has DEEPSEEK_API_KEY for its web plugin; it must not make DeepSeek a model of the user's.
+  assert.ok(host.every((m) => m.provider === 'faux'))
+
+  const promptFor = (loginId: string) => client.until(() => [...client.prompts].find(([, p]) => p.loginId === loginId), 10_000, `prompt of ${loginId}`)
+  const KEY = 'sk-user-secret-123'
+  const login = client.request({ t: 'auth.login', loginId: 'l1', provider: 'mistral', type: 'api_key' })
+  const [promptId, { prompt }] = await promptFor('l1')
+  assert.equal(prompt.type, 'secret')
+  await client.request({ t: 'auth.answer', promptId, value: KEY })
+  await login
+  await client.until(() => client.providers.find((p) => p.id === 'mistral')?.configured === 'api_key', 5_000, 'signed in')
+  const models = await client.until(() => client.models.some((m) => m.provider === 'mistral') && client.models, 5_000, 'mistral models')
+  assert.deepEqual(models.slice(0, host.length), host)
+  assert.ok(!client.raw.some((m) => m.includes(KEY)))
+  assert.equal(client.prompts.size, 0)
+
+  // A model the user does not have is refused before the turn starts.
+  const tree = await client.request<TreeMeta>({ t: 'tree.create' })
+  await assert.rejects(client.request({ t: 'send', treeId: tree.id, text: '你好', requestId: 'm1', model: { provider: 'deepseek', id: 'deepseek-chat', name: 'x' } }), /这个模型不可用/)
+
+  // Cancelling: by declining the prompt, and by cancelling the login.
+  const declined = client.request({ t: 'auth.login', loginId: 'l2', provider: 'groq', type: 'api_key' })
+  await client.request({ t: 'auth.answer', promptId: (await promptFor('l2'))[0] })
+  await assert.rejects(declined, /已取消/)
+  const cancelled = client.request({ t: 'auth.login', loginId: 'l3', provider: 'groq', type: 'api_key' })
+  await promptFor('l3')
+  await client.request({ t: 'auth.cancel', loginId: 'l3' })
+  await assert.rejects(cancelled)
+  await client.until(() => client.prompts.size === 0, 5_000, 'prompts done')
+  assert.equal(client.providers.find((p) => p.id === 'groq')?.configured, null)
+  if (!oauth) await assert.rejects(client.request({ t: 'auth.login', loginId: 'l4', provider: 'anthropic', type: 'oauth' }), /不支持/)
+
+  await client.request({ t: 'auth.logout', provider: 'mistral' })
+  await client.until(() => client.providers.find((p) => p.id === 'mistral')?.configured === null, 5_000, 'signed out')
+  await client.until(() => client.models.length === host.length, 5_000, 'models back to the host')
+  await client.request({ t: 'tree.delete', treeId: tree.id })
 }

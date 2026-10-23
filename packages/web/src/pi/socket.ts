@@ -1,6 +1,7 @@
 // The browser end of the host protocol (packages/core/src/protocol.ts). Reconnects, and re-watches after reconnecting.
 import { applyImmutable, decoder, type Decoder } from '@earendil-works/chord/delta'
-import type { ClientRequest, ModelInfo, ServerMessage, SkillInfo, TreeMeta } from '@gense/core/protocol'
+import type { AuthEvent, AuthType } from '@earendil-works/pi-ai'
+import type { ClientRequest, LoginPrompt, ModelInfo, ProviderState, ServerMessage, SkillInfo, TreeMeta } from '@gense/core/protocol'
 import type { PluginState } from '@gense/core/catalog'
 import type { View } from './turns'
 
@@ -13,20 +14,31 @@ export interface SocketState {
   /** The user's plugin switches and settings; null until the host sends them. */
   plugins: PluginState[] | null
   skills: SkillInfo[]
+  /** Model services the user can sign in to (R62). */
+  providers: ProviderState[]
   connected: boolean
+}
+
+/** What a running login shows: its events, and the prompts it waits on until each is answered or done. */
+export interface LoginHandlers {
+  event(event: AuthEvent): void
+  prompt(promptId: string, prompt: LoginPrompt): void
+  promptDone(promptId: string): void
 }
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 export type Request = DistributiveOmit<ClientRequest, 'id'>
 
 export class HostSocket {
-  state: SocketState = { email: '', models: [], defaultModel: null, trees: null, views: {}, plugins: null, skills: [], connected: false }
+  state: SocketState = { email: '', models: [], defaultModel: null, trees: null, views: {}, plugins: null, skills: [], providers: [], connected: false }
   #ws: WebSocket | undefined
   #next = 1
   #pending = new Map<number, { resolve(v: unknown): void; reject(e: Error): void }>()
   #decoders = new Map<string, Decoder>()
   #watched = new Set<string>()
   #listeners = new Set<() => void>()
+  #logins = new Map<string, LoginHandlers>()
+  #promptLogins = new Map<string, string>()
   #retry = 0
   #closed = false
   #onUnauthorized: () => void
@@ -73,7 +85,21 @@ export class HostSocket {
   #receive(m: ServerMessage) {
     switch (m.t) {
       case 'hello':
-        return this.#set({ email: m.email, models: m.models, defaultModel: m.defaultModel })
+        return this.#set({ email: m.email })
+      case 'models':
+        return this.#set({ models: m.models, defaultModel: m.defaultModel })
+      case 'providers':
+        return this.#set({ providers: m.providers })
+      case 'auth.event':
+        return this.#logins.get(m.loginId)?.event(m.event)
+      case 'auth.prompt':
+        this.#promptLogins.set(m.promptId, m.loginId)
+        return this.#logins.get(m.loginId)?.prompt(m.promptId, m.prompt)
+      case 'auth.prompt.done': {
+        const loginId = this.#promptLogins.get(m.promptId)
+        this.#promptLogins.delete(m.promptId)
+        return loginId && this.#logins.get(loginId)?.promptDone(m.promptId)
+      }
       case 'plugins':
         return this.#set({ plugins: m.plugins })
       case 'skills':
@@ -106,6 +132,15 @@ export class HostSocket {
       this.#pending.set(id, { resolve: resolve as (v: unknown) => void, reject })
       ws.send(JSON.stringify({ ...r, id }))
     })
+  }
+
+  /** Runs a login on the host; resolves when it succeeds. */
+  login(provider: string, type: AuthType, handlers: LoginHandlers) {
+    const loginId = crypto.randomUUID()
+    this.#logins.set(loginId, handlers)
+    const done = this.request<void>({ t: 'auth.login', loginId, provider, type })
+    void done.finally(() => this.#logins.delete(loginId)).catch(() => {})
+    return { done, cancel: () => void this.request({ t: 'auth.cancel', loginId }).catch(() => {}) }
   }
 
   /** Keeps exactly these trees watched. */

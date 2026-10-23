@@ -7,6 +7,7 @@ import { Composer, Picker, effortLabel } from './Composer'
 import { IconAlert, IconDoc, IconPin, IconPlus, IconProject, IconRetry, IconSearch, IconTrash, Spark } from './Icons'
 import { Markdown } from './Markdown'
 import { PluginSettings } from './PluginSettings'
+import { ModelAccounts } from './ModelAccounts'
 import { Select } from './Select'
 import { suggestions } from './suggest'
 import { TopBar } from './TopBar'
@@ -479,6 +480,9 @@ export function CustomizeView({ store }: { store: Store }) {
             </button>
           </li>
         </ul>
+
+        <h3 className="section-title">模型</h3>
+        <ModelAccounts store={store} />
 
         <h3 className="section-title">插件</h3>
         <p className="muted small">每个插件提供一组工具，也可以提供自己的界面。关闭后，助手不能调用它的工具。</p>

@@ -1,5 +1,5 @@
 import type { PluginSetting, PluginSettingsState } from '@gense/core/catalog'
-import type { SkillInfo } from '@gense/core/protocol'
+import type { ProviderState, SkillInfo } from '@gense/core/protocol'
 // The UI's data model; see docs/specs/web-ui.md "数据模型草案".
 
 export type TurnStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'interrupted'
@@ -193,7 +193,7 @@ export interface Schedule {
 }
 
 export type { PluginSetting, PluginSettingsState, PluginValue } from '@gense/core/catalog'
-export type { SkillInfo }
+export type { ProviderState, SkillInfo }
 /** A plugin as listed on the customize page. */
 export interface PluginInfo {
   id: string
@@ -252,6 +252,8 @@ export interface AppState {
   schedules: Schedule[]
   plugins: PluginInfo[]
   skills: SkillInfo[]
+  /** Model services the user can sign in to; their models join `models`. */
+  providers: ProviderState[]
   memories: Memory[]
   prefs: Preferences
   account: Account

@@ -4,7 +4,7 @@
 //   "[错误] ..."    a provider error
 //   "[工具 name] {json}"  calls the tool, then answers "工具结果：<its text>"
 //   anything else   "收到：<text>"
-import { createModels, type Message } from '@earendil-works/pi-ai'
+import type { Message } from '@earendil-works/pi-ai'
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, type FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux'
 import type { ModelSetup } from './models.ts'
 
@@ -35,9 +35,7 @@ export function fauxModels(): ModelSetup {
     return fauxAssistantMessage([fauxText(`收到：${text}`)])
   }
   faux.setResponses([reply])
-  const models = createModels()
-  models.setProvider(faux.provider)
   const model = faux.getModel()
   const option = { provider: model.provider, id: model.id, name: model.name }
-  return { models, options: [option], defaultModel: option }
+  return { providers: [faux.provider], options: [option], defaultModel: option }
 }

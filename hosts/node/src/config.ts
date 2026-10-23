@@ -8,12 +8,14 @@ export interface HostConfig {
   host: string
   /** Built front end; missing in dev, where Vite serves it. */
   webDir: string
-  /** A function so each user's Harness gets its own catalog (stage 3 adds per-user credentials). */
+  /** The host's own providers; a function so each user's Models gets its own instances. */
   models: () => ModelSetup
   /** Enables the admin endpoint for adding users over HTTP; the CLI does not need it. */
   adminToken?: string
-  /** Plugin defaults from `.env` and the key that seals users' plugin secrets. */
+  /** Plugin defaults from `.env`. */
   plugins: NonNullable<SpaceOptions['plugins']>
+  /** TOKEN_ENCRYPTION_KEY: seals users' plugin secrets and model credentials. */
+  secretKey?: string
 }
 
 const root = resolve(import.meta.dirname, '../../..')
@@ -26,6 +28,7 @@ export function configFromEnv(env = process.env): HostConfig {
     webDir: resolve(root, 'packages/web/dist'),
     models: env.GENSE_FAUX === '1' ? fauxModels : () => relayFromEnv(env),
     adminToken: env.ADMIN_TOKEN || undefined,
-    plugins: { defaults: pluginDefaultsFromEnv(env), ...(env.TOKEN_ENCRYPTION_KEY && { secretKey: env.TOKEN_ENCRYPTION_KEY }) },
+    plugins: { defaults: pluginDefaultsFromEnv(env) },
+    secretKey: env.TOKEN_ENCRYPTION_KEY || undefined,
   }
 }

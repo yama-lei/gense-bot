@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { href, navigate } from '../router'
 import type { Store } from '../store'
-import type { DriveFile, Effort, Project } from '../types'
+import type { DriveFile, Effort, Project, ScheduleRule, WebhookInfo } from '../types'
 import { findQuote, formatSize } from '../util'
 import { Composer, Picker, effortLabel } from './Composer'
 import { IconAlert, IconDoc, IconPin, IconPlus, IconProject, IconRetry, IconSearch, IconTrash, Spark } from './Icons'
@@ -426,33 +426,260 @@ function FilePreview({ store, id, tab, quote }: { store: Store; id: string; tab:
   )
 }
 
+const when = (at: number | null) =>
+  at === null ? '—' : new Date(at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+const weekdays = ['日', '一', '二', '三', '四', '五', '六']
+
+function ruleText(rule: ScheduleRule) {
+  switch (rule.kind) {
+    case 'once':
+      return `仅一次 · ${when(rule.at)}`
+    case 'daily':
+      return `每天 ${rule.time}`
+    case 'weekly':
+      return `每周${[...rule.days].sort().map((d) => weekdays[d]).join('、')} ${rule.time}`
+    case 'interval':
+      return rule.minutes % 60 === 0 ? `每 ${rule.minutes / 60} 小时` : `每 ${rule.minutes} 分钟`
+  }
+}
+
+const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
+
+/** Schedules (R49) and webhooks (R50): both send a conversation an Event, which it answers like a message. */
 export function ScheduledView({ store }: { store: Store }) {
+  const { schedules, webhooks, conversations } = store.state
+  const title = (id: string) => conversations.find((c) => c.id === id)?.title || '未命名会话'
+  const chats = conversations.map((c) => ({ value: c.id, label: c.title || '未命名会话' }))
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const [error, setError] = useState<string | null>(null)
   return (
     <div className="page">
       <TopBar>
         <h2 className="page-title">定时任务</h2>
       </TopBar>
       <div className="page-body">
-        <p className="notice">定时任务还在开发中，上线后会出现在这里。</p>
+        <p className="muted small">到点时，任务的内容会作为一条事件发进所选会话，助手像回答消息一样处理它。时区：{tz}</p>
+        {error && <p className="notice">{error}</p>}
+        {schedules.length > 0 && (
+          <ul className="list rows">
+            {schedules.map((s) => (
+              <li key={s.id} className="row">
+                <div className="row-main">
+                  <strong>{s.name}</strong>
+                  <span className="muted small">
+                    <a href={href({ name: 'chat', id: s.treeId })}>{title(s.treeId)}</a> · {ruleText(s.rule)} · 下次 {s.enabled ? when(s.nextRunAt) : '已暂停'}
+                  </span>
+                  {s.lastRunAt !== null && (
+                    <span className={'small ' + (s.lastResult?.startsWith('失败') ? 'error-text' : 'muted')}>
+                      上次 {when(s.lastRunAt)}：{s.lastResult}
+                    </span>
+                  )}
+                </div>
+                <Toggle checked={s.enabled} label={s.name} onChange={(v) => void store.setScheduleEnabled(s.id, v).catch((e: unknown) => setError(message(e)))} />
+                <button className="icon-btn" aria-label={`删除 ${s.name}`} onClick={() => void store.deleteSchedule(s.id).catch((e: unknown) => setError(message(e)))}>
+                  <IconTrash width={16} height={16} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {chats.length ? <ScheduleForm store={store} chats={chats} tz={tz} /> : <p className="muted">先开始一个会话，再为它创建定时任务。</p>}
+
+        <h3 className="section-title">Webhook</h3>
+        <p className="muted small">外部服务（CI、监控、表单）用签名的 POST 请求给会话发事件。每个会话一个地址，重新生成会让旧地址失效。</p>
+        <WebhookSection store={store} chats={chats} title={title} webhooks={webhooks} />
+      </div>
+    </div>
+  )
+}
+
+type Chat = { value: string; label: string }
+
+function ScheduleForm({ store, chats, tz }: { store: Store; chats: Chat[]; tz: string }) {
+  const [treeId, setTreeId] = useState(chats[0]!.value)
+  const [name, setName] = useState('')
+  const [prompt, setPrompt] = useState('')
+  const [kind, setKind] = useState<ScheduleRule['kind']>('daily')
+  const [time, setTime] = useState('09:00')
+  const [days, setDays] = useState<number[]>([1])
+  const [minutes, setMinutes] = useState('60')
+  const [at, setAt] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const chat = chats.some((c) => c.value === treeId) ? treeId : chats[0]!.value
+
+  const rule = (): ScheduleRule => {
+    switch (kind) {
+      case 'once':
+        return { kind, at: new Date(at).getTime() }
+      case 'daily':
+        return { kind, time }
+      case 'weekly':
+        return { kind, days, time }
+      case 'interval':
+        return { kind, minutes: Number(minutes) }
+    }
+  }
+  return (
+    <form
+      className="schedule-form"
+      onSubmit={(e) => {
+        e.preventDefault()
+        setBusy(true)
+        setError(null)
+        store
+          .createSchedule(chat, { name: name.trim(), prompt: prompt.trim(), rule: rule(), tz })
+          .then(() => {
+            setName('')
+            setPrompt('')
+          }, (e: unknown) => setError(message(e)))
+          .finally(() => setBusy(false))
+      }}
+    >
+      <h3 className="section-title">新建定时任务</h3>
+      <div className="schedule-grid">
+        <label className="field">
+          <span>名称</span>
+          <input value={name} placeholder="例如：每日简报" onChange={(e) => setName(e.target.value)} />
+        </label>
+        <div className="field">
+          <span>发到会话</span>
+          <Select label="发到会话" value={chat} options={chats} onChange={setTreeId} />
+        </div>
+      </div>
+      <label className="field">
+        <span>内容</span>
+        <textarea rows={3} value={prompt} placeholder="例如：汇总今天的待办和日程" onChange={(e) => setPrompt(e.target.value)} />
+      </label>
+      <div className="schedule-grid">
+        <div className="field">
+          <span>重复</span>
+          <Select
+            label="重复"
+            value={kind}
+            options={[
+              { value: 'daily', label: '每天' },
+              { value: 'weekly', label: '每周' },
+              { value: 'interval', label: '按间隔' },
+              { value: 'once', label: '仅一次' },
+            ]}
+            onChange={(v) => setKind(v as ScheduleRule['kind'])}
+          />
+        </div>
+        {(kind === 'daily' || kind === 'weekly') && (
+          <label className="field">
+            <span>时间</span>
+            <input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+          </label>
+        )}
+        {kind === 'interval' && (
+          <label className="field">
+            <span>间隔（分钟，至少 5）</span>
+            <input type="number" min={5} step={5} value={minutes} onChange={(e) => setMinutes(e.target.value)} />
+          </label>
+        )}
+        {kind === 'once' && (
+          <label className="field">
+            <span>执行时间</span>
+            <input type="datetime-local" value={at} onChange={(e) => setAt(e.target.value)} />
+          </label>
+        )}
+      </div>
+      {kind === 'weekly' && (
+        <div className="weekdays" role="group" aria-label="星期">
+          {weekdays.map((d, i) => (
+            <button
+              key={d}
+              type="button"
+              aria-pressed={days.includes(i)}
+              className={'chip' + (days.includes(i) ? ' on' : '')}
+              onClick={() => setDays(days.includes(i) ? days.filter((x) => x !== i) : [...days, i])}
+            >
+              {d}
+            </button>
+          ))}
+        </div>
+      )}
+      {error && <p className="notice">{error}</p>}
+      <div>
+        <button className="btn primary" disabled={busy || !name.trim() || !prompt.trim() || (kind === 'once' && !at) || (kind === 'weekly' && !days.length)}>
+          创建
+        </button>
+      </div>
+    </form>
+  )
+}
+
+function WebhookSection({ store, chats, title, webhooks }: { store: Store; chats: Chat[]; title: (id: string) => string; webhooks: WebhookInfo[] }) {
+  const [treeId, setTreeId] = useState(chats[0]?.value ?? '')
+  const [created, setCreated] = useState<{ webhook: WebhookInfo; secret: string } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const free = chats.filter((c) => !webhooks.some((w) => w.treeId === c.value))
+  const chat = free.some((c) => c.value === treeId) ? treeId : free[0]?.value
+  const generate = (id: string) => {
+    setError(null)
+    void store.createWebhook(id).then(setCreated, (e: unknown) => setError(message(e)))
+  }
+  const url = (w: WebhookInfo) => location.origin + w.path
+  return (
+    <>
+      {error && <p className="notice">{error}</p>}
+      {created && <WebhookSecret url={url(created.webhook)} secret={created.secret} onClose={() => setCreated(null)} />}
+      {webhooks.length > 0 && (
         <ul className="list rows">
-          {store.state.schedules.map((s) => (
-            <li key={s.id} className="row">
+          {webhooks.map((w) => (
+            <li key={w.id} className="row">
               <div className="row-main">
-                <strong>{s.name}</strong>
-                <span className="muted small">
-                  {s.rule} · 下次 {s.enabled ? new Date(s.nextRunAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
-                </span>
-                <span className="muted small">最近：{s.lastResult}</span>
+                <a href={href({ name: 'chat', id: w.treeId })}>
+                  <strong>{title(w.treeId)}</strong>
+                </a>
+                <code className="small ellipsis">{url(w)}</code>
+                <span className="muted small">{w.lastUsedAt ? `上次调用 ${when(w.lastUsedAt)}` : '还没有调用过'}</span>
               </div>
-              <Toggle
-                checked={s.enabled}
-                label={s.name}
-                onChange={(v) => store.setState((st) => ({ ...st, schedules: st.schedules.map((x) => (x.id === s.id ? { ...x, enabled: v } : x)) }))}
-              />
+              <button className="btn" title="生成新的地址和密钥，旧的立即失效" onClick={() => generate(w.treeId)}>
+                <IconRetry width={15} height={15} /> 重新生成
+              </button>
+              <button className="icon-btn" aria-label="删除 Webhook" onClick={() => void store.deleteWebhook(w.id).catch((e: unknown) => setError(message(e)))}>
+                <IconTrash width={16} height={16} />
+              </button>
             </li>
           ))}
         </ul>
-      </div>
+      )}
+      {chat ? (
+        <div className="inline-form webhook-new">
+          <Select label="会话" value={chat} options={free} onChange={setTreeId} />
+          <button className="btn primary" onClick={() => generate(chat)}>
+            生成 Webhook
+          </button>
+        </div>
+      ) : (
+        !chats.length && <p className="muted">先开始一个会话，再为它生成 Webhook。</p>
+      )}
+    </>
+  )
+}
+
+/** The secret is shown only here, once; the server keeps it sealed. */
+function WebhookSecret({ url, secret, onClose }: { url: string; secret: string; onClose: () => void }) {
+  const example = [
+    `BODY='{"title":"部署完成","text":"v1.2 已上线"}'`,
+    `TS=$(date +%s)`,
+    `SIG=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac '${secret}' | sed 's/^.* //')`,
+    `curl -X POST '${url}' \\`,
+    `  -H 'content-type: application/json' \\`,
+    `  -H "x-gense-timestamp: $TS" -H "x-gense-signature: sha256=$SIG" \\`,
+    `  -d "$BODY"`,
+  ].join('\n')
+  return (
+    <div className="webhook-secret">
+      <p>
+        <strong>密钥只显示这一次</strong>，请现在保存。请求需要带上时间戳和 HMAC-SHA256 签名；可选的 <code>idempotency-key</code> 头能防止重复投递。
+      </p>
+      <Markdown text={'```sh\n' + example + '\n```'} />
+      <button className="btn" onClick={onClose}>
+        我已保存
+      </button>
     </div>
   )
 }

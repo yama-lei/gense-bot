@@ -3,10 +3,12 @@
 //   "[长回答] ..."  a long reply that streams for a few seconds
 //   "[错误] ..."    a provider error
 //   "[工具 name] {json}"  calls the tool, then answers "工具结果：<its text>"
+//   the summarize prompt  calls `report` with "分叉总结" and the branch's earlier user messages
 //   anything else   "收到：<text>"
 import type { Message } from '@earendil-works/pi-ai'
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, type FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux'
 import type { ModelSetup } from './models.ts'
+import { SUMMARIZE_PROMPT } from './events.ts'
 
 export const LONG_REPLY = Array.from({ length: 300 }, (_, i) => `第 ${i + 1} 句。`).join('')
 
@@ -29,6 +31,10 @@ export function fauxModels(): ModelSetup {
     }
     const text = lastUserText(context.messages)
     const tool = /^\[工具 (\S+)\]\s*([\s\S]*)$/.exec(text)
+    if (text === SUMMARIZE_PROMPT) {
+      const asked = context.messages.flatMap((m) => (m.role === 'user' && typeof m.content !== 'string' && m.content[0]?.type === 'text' && m.content[0].text !== SUMMARIZE_PROMPT ? [m.content[0].text] : []))
+      return fauxAssistantMessage([fauxToolCall('report', { title: '分叉总结', body: asked.map((t) => `- ${t}`).join('\n') })], { stopReason: 'toolUse' })
+    }
     if (tool) return fauxAssistantMessage([fauxToolCall(tool[1]!, JSON.parse(tool[2] || '{}'))], { stopReason: 'toolUse' })
     if (text.startsWith('[错误]')) return fauxAssistantMessage([], { stopReason: 'error', errorMessage: 'faux provider error' })
     if (text.startsWith('[长回答]')) return fauxAssistantMessage([fauxText(LONG_REPLY)])

@@ -2,7 +2,7 @@
 import { LONG_REPLY, RUN_ERROR_KIND, type TreeMeta } from '@gense/core'
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
-import { accountsScenario, branchesScenario, Client, documentsScenario, fakeUpstream, ledgerScenario, login, pluginEnv, pluginScenario, skillsScenario, stopReason, tempDir, textOf, workspaceScenario } from '../../node/test/helpers.ts'
+import { accountsScenario, branchesScenario, Client, documentsScenario, eventsScenario, fakeUpstream, ledgerScenario, login, pluginEnv, pluginScenario, skillsScenario, stopReason, tempDir, textOf, workspaceScenario } from '../../node/test/helpers.ts'
 import { addUser, wranglerDev, type Dev } from './helpers.ts'
 
 const EMAIL = 'a@example.com'
@@ -126,5 +126,12 @@ test('R42–R45: branches share the workspace and change a file only as they las
   const { cookie } = await login(dev.url, EMAIL, PASSWORD)
   const client = await Client.connect(dev.url, cookie)
   await ledgerScenario(client)
+  client.close()
+})
+
+test('R40, R46–R50: webhooks, branch summaries and schedules arrive as Events', { timeout: 90_000 }, async () => {
+  const { cookie } = await login(dev.url, EMAIL, PASSWORD)
+  const client = await Client.connect(dev.url, cookie)
+  await eventsScenario(client, dev.url)
   client.close()
 })

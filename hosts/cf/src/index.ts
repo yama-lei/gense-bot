@@ -2,7 +2,7 @@
 // one UserHub object per user holds that user's pi-durable Harness and sockets.
 import { DurableObjectSqliteDatabase } from '@earendil-works/chord/sqlite/cloudflare'
 import type { Wake } from '@earendil-works/pi-durable'
-import { accountApi, Auth, Connection, fauxModels, json, pluginDefaultsFromEnv, relayFromEnv, sameOrigin, sessionUser, SqliteFiles, UserSpace, type User } from '@gense/core'
+import { accountApi, Auth, Connection, fauxModels, hooksPath, json, parseHookPath, pluginDefaultsFromEnv, relayFromEnv, sameOrigin, sessionUser, SqliteFiles, UserSpace, type User } from '@gense/core'
 import { DurableObject } from 'cloudflare:workers'
 
 export interface Env {
@@ -28,6 +28,14 @@ const accounts = (env: Env) => env.ACCOUNTS.get(env.ACCOUNTS.idFromName('account
 export default {
   async fetch(request, env) {
     const path = new URL(request.url).pathname
+    const route = parseHookPath(path)
+    if (route) {
+      // A webhook call (R50) is signed by its secret, not by a session; the hub checks the signature.
+      if (!(await accounts(env).exists(route.userId))) return json(404, { error: 'not found' })
+      const headers = new Headers(request.headers)
+      headers.set(USER_HEADER, JSON.stringify({ id: route.userId, email: '' }))
+      return env.HUBS.get(env.HUBS.idFromName(route.userId)).fetch(new Request(request, { headers }))
+    }
     // Password hashing takes longer than a Worker request may on the free plan, so the object does it.
     if (path.startsWith('/api/')) return accounts(env).fetch(request)
     if (path === '/ws') {
@@ -56,6 +64,10 @@ export class Accounts extends DurableObject<Env> {
     return accountApi(this.#auth, request, { adminToken: this.env.ADMIN_TOKEN || undefined })
   }
 
+  async exists(userId: string) {
+    return (await this.#auth.user(userId)) !== null
+  }
+
   async user(cookie: string | null): Promise<User | null> {
     return (await sessionUser(this.#auth, new Request('https://accounts/', { headers: cookie ? { cookie } : {} }))) ?? null
   }
@@ -63,6 +75,8 @@ export class Accounts extends DurableObject<Env> {
 
 export class UserHub extends DurableObject<Env> {
   #space!: UserSpace
+  /** This hub's user, from the Worker's header on every request; webhook paths name it. */
+  #userId: string | undefined
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -80,6 +94,7 @@ export class UserHub extends DurableObject<Env> {
         // Subscription logins need a local callback server or a long-lived flow; a Worker offers neither (R62).
         secretKey: env.TOKEN_ENCRYPTION_KEY || undefined,
         oauth: false,
+        hooksPath: () => (this.#userId ? hooksPath(this.#userId) : undefined),
         // A failed alarm write resets the object; it arms again when it next starts.
         harness: { onWake: (wake) => void this.#arm(wake).catch(() => ctx.abort('Alarm write failed')) },
         arm: (wake) => this.#arm(wake),
@@ -103,6 +118,13 @@ export class UserHub extends DurableObject<Env> {
   override async fetch(request: Request) {
     const user = JSON.parse(request.headers.get(USER_HEADER) ?? 'null') as User | null
     if (!user) return json(401, { error: '未登录' })
+    this.#userId = user.id
+    const route = parseHookPath(new URL(request.url).pathname)
+    if (route) {
+      const forwarded = new Headers(request.headers)
+      forwarded.delete(USER_HEADER)
+      return this.#space.handleWebhook(route.hookId, new Request(request, { headers: forwarded }))
+    }
     const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket]
     server.accept()
     const connection = new Connection({

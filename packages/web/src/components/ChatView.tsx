@@ -3,10 +3,10 @@ import { liveViews, tools, views } from '../plugins'
 import type { DisplayMode, ViewHost } from '../plugins/types'
 import { href, navigate } from '../router'
 import type { Store } from '../store'
-import type { Attachment, Conversation, DriveFile, Effort, ToolCall, Turn, Versions, WebSource } from '../types'
+import type { Attachment, Conversation, DriveFile, Effort, EventData, ToolCall, Turn, Versions, WebSource } from '../types'
 import { modelName, useModels } from '../models'
 import { Composer, effortLabel } from './Composer'
-import { IconAlert, IconArrowDown, IconBranch, IconCheck, IconChevronDown, IconChevronLeft, IconChevronRight, IconCopy, IconDoc, IconFolder, IconEdit, IconInfo, IconMore, IconRetry, IconTool, IconX } from './Icons'
+import { IconAlert, IconArrowDown, IconBranch, IconCheck, IconChevronDown, IconChevronLeft, IconChevronRight, IconClock, IconCopy, IconDoc, IconFolder, IconEdit, IconInfo, IconMore, IconRetry, IconTool, IconX } from './Icons'
 import { BranchMap } from './BranchMap'
 import { Markdown } from './Markdown'
 import { TopBar } from './TopBar'
@@ -124,6 +124,16 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
                 <button className="link-btn" onClick={() => store.showBranch(conv.id, main.id)}>
                   返回主线
                 </button>
+                {shown.role === 'user' && (
+                  <button
+                    className="link-btn"
+                    disabled={shown.status === 'running' || conv.turns.length === 0}
+                    title="让这个分叉整理出结论，交给主线"
+                    onClick={() => store.summarize(conv.id)}
+                  >
+                    总结给主线
+                  </button>
+                )}
               </div>
             )}
             {conv.turns.length === 0 && !store.turnsLoaded(conv.id) && (
@@ -378,19 +388,31 @@ function TurnView({
   const models = useModels()
   const [processOpen, setProcessOpen] = useState(false)
   const active = turn.status === 'queued' || turn.status === 'running'
-  const canChange = actions?.canChange ?? false
+  // An Event or a brief is not the user's message: it has no versions to edit or ask again.
+  const own = !turn.event && turn.brief === undefined
+  const canChange = (actions?.canChange ?? false) && own
+  // An Event that did not wake the conversation has no answer of its own; the next turn reads it.
+  const passive = !!turn.event && !turn.assistantMessage && turn.toolCalls.length === 0 && turn.status === 'succeeded'
 
   return (
     <section className="turn">
       {turn.attachments?.length ? <AttachmentCards files={turn.attachments} /> : null}
       {turn.command || turn.mentions?.length ? <RefChips turn={turn} /> : null}
-      <UserBubble
-        text={turn.userMessage}
-        versions={actions && turn.userVersions}
-        onShow={actions?.show}
-        onEdit={canChange ? (text) => actions!.edit(turn, text) : undefined}
-        busy={actions?.busy ?? false}
-      />
+      {turn.event ? (
+        <EventCard event={turn.event} queued={turn.status === 'queued'} />
+      ) : turn.brief !== undefined ? (
+        <div className="brief-line muted small">
+          <IconBranch width={14} height={14} /> {turn.brief}
+        </div>
+      ) : (
+        <UserBubble
+          text={turn.userMessage}
+          versions={actions && turn.userVersions}
+          onShow={actions?.show}
+          onEdit={canChange ? (text) => actions!.edit(turn, text) : undefined}
+          busy={actions?.busy ?? false}
+        />
+      )}
 
       {showDetails && (
         <div className="turn-details">
@@ -402,7 +424,7 @@ function TurnView({
         </div>
       )}
 
-      <div className="assistant">
+      {!passive && <div className="assistant">
         {turn.status === 'queued' ? (
           <div className="process pending">
             <span className="spinner" /> {statusLabel.queued}
@@ -509,8 +531,34 @@ function TurnView({
             )}
           </div>
         )}
-      </div>
+      </div>}
     </section>
+  )
+}
+
+const eventSource: Record<EventData['source']['kind'], string> = { branch: '分叉', agent: '子代理', schedule: '定时任务', webhook: 'Webhook', system: '系统' }
+
+/** An Event in the transcript (R46): where it came from and its title, opening to its body. */
+function EventCard({ event, queued }: { event: EventData; queued: boolean }) {
+  const [open, setOpen] = useState(false)
+  const Icon = event.source.kind === 'schedule' ? IconClock : event.source.kind === 'webhook' ? IconTool : event.source.kind === 'system' ? IconInfo : IconBranch
+  const from = event.source.kind === 'webhook' || event.source.kind === 'system' ? eventSource[event.source.kind] : `${eventSource[event.source.kind]}「${event.source.label}」`
+  return (
+    <div className={'event-card' + (open ? ' open' : '')}>
+      <button className="event-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <Icon width={16} height={16} />
+        <span className="event-from muted small">{from}</span>
+        <strong className="ellipsis">{event.title}</strong>
+        {queued ? <span className="tag">排队中</span> : !event.wake && <span className="tag">未打断对话</span>}
+        <span className="muted small event-time">{new Date(event.createdAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+        <IconChevronRight width={14} height={14} style={{ transform: open ? 'rotate(90deg)' : undefined }} />
+      </button>
+      {open && event.body && (
+        <div className="event-body">
+          <Markdown text={event.body} />
+        </div>
+      )}
+    </div>
   )
 }
 

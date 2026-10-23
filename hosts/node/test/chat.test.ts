@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 import { configFromEnv } from '../src/config.ts'
 import { startServer } from '../src/server.ts'
-import { accountsScenario, branchesScenario, Client, documentsScenario, fakeUpstream, ledgerScenario, login, pluginEnv, pluginScenario, skillsScenario, tempDir, textOf, workspaceScenario } from './helpers.ts'
+import { accountsScenario, branchesScenario, Client, documentsScenario, eventsScenario, fakeUpstream, ledgerScenario, login, pluginEnv, pluginScenario, skillsScenario, tempDir, textOf, workspaceScenario } from './helpers.ts'
 
 const EMAIL = 'a@example.com'
 const PASSWORD = 'correct horse'
@@ -124,5 +124,12 @@ test('R42–R45: branches share the workspace and change a file only as they las
   const { cookie } = await login(server.url, EMAIL, PASSWORD)
   const client = await Client.connect(server.url, cookie)
   await ledgerScenario(client)
+  client.close()
+})
+
+test('R40, R46–R50: webhooks, branch summaries and schedules arrive as Events', { timeout: 90_000 }, async () => {
+  const { cookie } = await login(server.url, EMAIL, PASSWORD)
+  const client = await Client.connect(server.url, cookie)
+  await eventsScenario(client, server.url)
   client.close()
 })

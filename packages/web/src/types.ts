@@ -1,5 +1,5 @@
 import type { PluginSetting, PluginSettingsState } from '@gense/core/catalog'
-import type { BranchesState, ProviderState, SkillInfo } from '@gense/core/protocol'
+import type { BranchesState, EventData, ProviderState, ScheduleInfo, SkillInfo, WebhookInfo } from '@gense/core/protocol'
 // The UI's data model; see docs/specs/web-ui.md "数据模型草案".
 
 export type TurnStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'interrupted'
@@ -80,6 +80,10 @@ export interface Turn {
   command?: CommandRef
   /** Plugins, chats and workspace files `@`-mentioned in the message (R18); mentioned Drive files are attachments. */
   mentions?: Mention[]
+  /** Set when the turn starts with an Event rather than the user's message (R46): a schedule, a webhook, a branch's report. */
+  event?: EventData
+  /** Set when the app asked on the user's behalf, such as "summarize to the main line" (R40); the label it shows. */
+  brief?: string
 }
 
 /** A Drive file attached to a user message. */
@@ -165,14 +169,8 @@ export interface DriveFile {
   modifiedTime: number
 }
 
-export interface Schedule {
-  id: string
-  name: string
-  rule: string
-  nextRunAt: number
-  enabled: boolean
-  lastResult: string
-}
+export type Schedule = ScheduleInfo
+export type { EventData, ScheduleRule, WebhookInfo } from '@gense/core/protocol'
 
 export type { PluginSetting, PluginSettingsState, PluginValue } from '@gense/core/catalog'
 export type { ProviderState, SkillInfo }
@@ -232,6 +230,8 @@ export interface AppState {
   conversations: Conversation[]
   files: DriveFile[]
   schedules: Schedule[]
+  /** One per conversation at most (R50). */
+  webhooks: WebhookInfo[]
   plugins: PluginInfo[]
   skills: SkillInfo[]
   /** Model services the user can sign in to; their models join `models`. */

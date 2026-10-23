@@ -142,7 +142,8 @@ export function usePiStore(onUnauthorized: () => void): Store {
         }),
       ),
       files: uploads,
-      schedules: [],
+      schedules: host.schedules,
+      webhooks: host.webhooks,
       account: { name: '', email: host.email, driveConnected: false, driveError: null },
       models,
       modelsError: host.connected || !host.trees ? null : '与服务器的连接已断开，正在重连…',
@@ -237,6 +238,15 @@ export function usePiStore(onUnauthorized: () => void): Store {
       if (!branchId || !turn.lastMessageId) return
       void socket.request<BranchMeta>({ t: 'branch.fork', treeId: convId, branchId, at: Number(turn.lastMessageId) }).then((b) => show(convId, b.id), report)
     },
+    summarize: (convId) => {
+      const branchId = socket.state.shown[convId]
+      if (branchId) void socket.request({ t: 'branch.summarize', treeId: convId, branchId, requestId: crypto.randomUUID() }).catch(report)
+    },
+    createSchedule: (treeId, s) => socket.request({ t: 'schedule.create', treeId, ...s }).then(() => {}),
+    setScheduleEnabled: (scheduleId, enabled) => socket.request({ t: 'schedule.update', scheduleId, enabled }).then(() => {}),
+    deleteSchedule: (scheduleId) => socket.request({ t: 'schedule.delete', scheduleId }).then(() => {}),
+    createWebhook: (treeId) => socket.request({ t: 'webhook.create', treeId }),
+    deleteWebhook: (webhookId) => socket.request({ t: 'webhook.delete', webhookId }).then(() => {}),
     stop: (convId) => {
       const branchId = socket.state.shown[convId]
       void socket.request({ t: 'abort', treeId: convId, ...(branchId && { branchId }) }).catch(report)

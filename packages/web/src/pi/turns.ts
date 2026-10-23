@@ -1,7 +1,8 @@
 // Projects a pi-durable conversation view onto the UI's turns: a user entry opens a turn and the assistant and tool
-// entries after it fill it. `pi.live` adds the streaming answer, `pi.inbox` the inputs still waiting.
+// entries after it fill it. `pi.live` adds the streaming answer, `pi.inbox` the inputs still waiting. An Event (R46) or a
+// request the app made for the user (R40) opens a turn too, shown as a card instead of the user's message.
 import { parseNote } from '@gense/core/notes'
-import { RUN_ERROR_KIND, type RunErrorData } from '@gense/core/protocol'
+import { BRIEF_KIND, EVENT_KIND, RUN_ERROR_KIND, type BriefData, type EventData, type RunErrorData } from '@gense/core/protocol'
 import { tools } from '../plugins'
 import type { Attachment, CommandRef, Effort, Mention, ToolCall, Turn, WebSource } from '../types'
 
@@ -21,7 +22,7 @@ type Message = {
 }
 export type Entry = { id: number; conversationId?: number; kind: string; data?: unknown; model?: Message[] }
 type Live = { run?: unknown; generation?: { message?: Message; retry?: { error: string } } }
-type Inbox = { items?: { id: number; mode: string; content?: unknown }[] }
+type Inbox = { items?: { id: number; mode: string; content?: unknown; entry?: { kind: string; data?: unknown } }[] }
 export type View = { entries: Entry[]; docs: Record<string, unknown> }
 
 const textOf = (content: Message['content'] | undefined) =>
@@ -80,6 +81,10 @@ export function toTurns(view: View, defaults: { model: string; effort: Effort })
       turn.lastMessageId = String(e.id)
       turn.anchor = previous ? String(previous.id) : 'start'
       if (e.conversationId !== undefined) turn.writer = e.conversationId
+    } else if (e.kind === EVENT_KIND) {
+      open(String(e.id), '', m?.timestamp ?? Date.now()).event = e.data as EventData
+    } else if (e.kind === BRIEF_KIND) {
+      open(String(e.id), '', m?.timestamp ?? Date.now()).brief = (e.data as BriefData | undefined)?.label ?? ''
     } else if (e.kind === 'pi.assistant' && m) {
       const t = current(e.id)
       if (abortedFrom !== undefined) {
@@ -129,7 +134,12 @@ export function toTurns(view: View, defaults: { model: string; effort: Effort })
 
   const inbox = view.docs['pi.inbox'] as Inbox | undefined
   for (const item of inbox?.items ?? [])
-    if (item.mode !== 'write') {
+    if (item.entry?.kind === EVENT_KIND || item.entry?.kind === BRIEF_KIND) {
+      const turn = open(`queued-${item.id}`, '', Date.now())
+      if (item.entry.kind === EVENT_KIND) turn.event = item.entry.data as EventData
+      else turn.brief = (item.entry.data as BriefData | undefined)?.label ?? ''
+      turn.status = 'queued'
+    } else if (item.mode !== 'write') {
       const input = userInput(item.content)
       withInput(open(`queued-${item.id}`, input.text, Date.now()), input).status = 'queued'
     }

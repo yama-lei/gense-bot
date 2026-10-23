@@ -112,6 +112,59 @@ export interface ToolCallResult {
   isError?: boolean
 }
 
+/** Kind of an entry the app places for a message that is not the user's own input (roadmap-3 D4); data is EventData. */
+export const EVENT_KIND = 'app.event'
+/** Kind of an input the app asks the model on the user's behalf, such as "summarize to the main line" (D3); data is BriefData. */
+export const BRIEF_KIND = 'app.brief'
+
+/** An Event as its card shows it (R46): where it came from, a title and a body. */
+export interface EventData {
+  id: string
+  source: { kind: 'branch' | 'agent' | 'schedule' | 'webhook' | 'system'; id: string; label: string }
+  type: 'report' | 'tick' | 'webhook' | 'notice'
+  title: string
+  body: string
+  /** Whether it started a run; false only lands in the transcript for the next turn (R47). */
+  wake: boolean
+  createdAt: number
+}
+
+export interface BriefData {
+  label: string
+}
+
+/** When a schedule fires (R49), as wall-clock times in the schedule's time zone. Days are 0 (Sunday) to 6. */
+export type ScheduleRule =
+  | { kind: 'once'; at: number }
+  | { kind: 'daily'; time: string }
+  | { kind: 'weekly'; days: number[]; time: string }
+  | { kind: 'interval'; minutes: number }
+
+export interface ScheduleInfo {
+  id: string
+  treeId: string
+  name: string
+  /** What the conversation is asked when it fires. */
+  prompt: string
+  rule: ScheduleRule
+  /** IANA time zone the rule's times are in. */
+  tz: string
+  enabled: boolean
+  nextRunAt: number | null
+  lastRunAt: number | null
+  lastResult: string
+  createdAt: number
+}
+
+/** A conversation's webhook (R50); POST to `path` on the host, signed with its secret. */
+export interface WebhookInfo {
+  id: string
+  treeId: string
+  path: string
+  createdAt: number
+  lastUsedAt: number | null
+}
+
 /** Requests carry an `id`; the host answers each with one `reply`. */
 export type ClientRequest =
   | { t: 'tree.create'; id: number }
@@ -162,6 +215,14 @@ export type ClientRequest =
   | { t: 'auth.answer'; id: number; promptId: string; value?: string }
   | { t: 'auth.cancel'; id: number; loginId: string }
   | { t: 'auth.logout'; id: number; provider: string }
+  /** Asks a user branch to summarize itself and `report` to the main branch (R40). */
+  | { t: 'branch.summarize'; id: number; treeId: string; branchId: string; requestId: string }
+  | { t: 'schedule.create'; id: number; treeId: string; name: string; prompt: string; rule: ScheduleRule; tz: string }
+  | { t: 'schedule.update'; id: number; scheduleId: string; enabled: boolean }
+  | { t: 'schedule.delete'; id: number; scheduleId: string }
+  /** A new webhook for the tree, replacing its old one; resolves to `{ webhook, secret }`, the secret shown only now. */
+  | { t: 'webhook.create'; id: number; treeId: string }
+  | { t: 'webhook.delete'; id: number; webhookId: string }
 
 export type ServerMessage =
   | { t: 'hello'; email: string }
@@ -176,6 +237,8 @@ export type ServerMessage =
   | ({ t: 'branches'; treeId: string } & BranchesState)
   | { t: 'plugins'; plugins: PluginState[] }
   | { t: 'skills'; skills: SkillInfo[] }
+  | { t: 'schedules'; schedules: ScheduleInfo[] }
+  | { t: 'webhooks'; webhooks: WebhookInfo[] }
   /** The watched branch's whole view; later `ops` apply to it. Sent on watch and whenever the host restarts the stream. */
   | { t: 'view'; treeId: string; branchId: string; value: unknown }
   /** Chord operations of one commit, encoded with a per-watch encoder; decode with a decoder reset at each `view`. */

@@ -16,6 +16,7 @@ import {
   type EntryRecord,
   type Extension,
   type HarnessOptions,
+  type Submission,
   type Wake,
 } from '@earendil-works/pi-durable'
 import type { PluginValue } from './catalog.ts'
@@ -23,8 +24,14 @@ import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite'
 import type { ImageContent, TextContent } from '@earendil-works/pi-ai'
 import { Value } from 'typebox/value'
 import {
+  BRIEF_KIND,
+  EVENT_KIND,
   RUN_ERROR_KIND,
   type BranchesState,
+  type EventData,
+  type ScheduleInfo,
+  type ScheduleRule,
+  type WebhookInfo,
   type BranchMeta,
   type BranchRole,
   type BranchStatus,
@@ -37,13 +44,27 @@ import {
 import { DATA_DIR, SKILLS_DIR, toBase64, treeDir, Workspace, type EnvFactory } from './workspace.ts'
 import { artifactExtension, artifactInput, emailExtension, saveArtifact, uiExtension } from './plugins/display.ts'
 import { imageExtension } from './plugins/image.ts'
-import { PluginStore, type PluginStoreOptions } from './plugins/store.ts'
+import { PluginStore, Sealer, type PluginStoreOptions } from './plugins/store.ts'
 import { ModelAccounts } from './credentials.ts'
 import type { ModelSetup } from './models.ts'
 import { fileTools } from './ledger.ts'
+import {
+  checkRule,
+  checkTimeZone,
+  eventText,
+  nextRun,
+  reportTool,
+  scheduleTask,
+  SUMMARIZE_PROMPT,
+  verifySignature,
+  WEBHOOK_MAX_BODY,
+  webhookContent,
+  type EventDraft,
+} from './events.ts'
 import { attachmentsText, commandText, mentionsText, parseNote, type CommandNote, type Mention } from './notes.ts'
 import { skillsSection, SkillStore } from './skills.ts'
 import { webExtension } from './plugins/web.ts'
+import { json } from './http.ts'
 
 const DEFAULT_TITLE = '新对话'
 
@@ -66,6 +87,16 @@ const migrations = [
       "ALTER TABLE trees ADD COLUMN activeBranchId TEXT NOT NULL DEFAULT ''",
       "INSERT INTO branches (id, treeId, conversationId, parentId, forkEntryId, role, mode, title, status, createdAt) SELECT lower(hex(randomblob(16))), id, rootId, NULL, NULL, 'main', 'fork', title, 'idle', createdAt FROM trees",
       'UPDATE trees SET activeBranchId = (SELECT b.id FROM branches b WHERE b.treeId = trees.id)',
+    ],
+  },
+  {
+    // Events, schedules and webhooks (stage 6).
+    version: 3,
+    statements: [
+      'CREATE TABLE events (id TEXT PRIMARY KEY, treeId TEXT NOT NULL, branchId TEXT NOT NULL, data TEXT NOT NULL, wake INTEGER NOT NULL, idempotencyKey TEXT UNIQUE, createdAt INTEGER NOT NULL, deliveredAt INTEGER)',
+      'CREATE INDEX events_branch ON events (branchId, createdAt)',
+      'CREATE TABLE schedules (id TEXT PRIMARY KEY, treeId TEXT NOT NULL, name TEXT NOT NULL, prompt TEXT NOT NULL, rule TEXT NOT NULL, tz TEXT NOT NULL, enabled INTEGER NOT NULL, taskId INTEGER, nextRunAt INTEGER, lastRunAt INTEGER, lastResult TEXT NOT NULL, createdAt INTEGER NOT NULL)',
+      'CREATE TABLE webhooks (id TEXT PRIMARY KEY, treeId TEXT NOT NULL, secret TEXT NOT NULL, createdAt INTEGER NOT NULL, lastUsedAt INTEGER)',
     ],
   },
 ]
@@ -102,6 +133,9 @@ const files = defineExtension({
   ],
 })
 
+/** Events that may wake one branch in a minute; more only land in its transcript (R47). */
+const WAKES_PER_MINUTE = 6
+
 /** How much of a mentioned conversation goes into the message: its latest text. */
 const MENTIONED_CHAT_CHARS = 20_000
 
@@ -125,6 +159,8 @@ export interface SpaceOptions {
    */
   arm?: (wake: Wake) => Promise<void>
   now?: () => number
+  /** Path the host serves this user's webhooks under, `hooksPath(userId)`; without it there are none (R50). */
+  hooksPath?: () => string | undefined
 }
 
 type TreeRow = { id: string; rootId: number; title: string; pinned: number; createdAt: number; updatedAt: number; activeBranchId: string }
@@ -159,9 +195,35 @@ const entryText = (e: EntryRecord) =>
 
 const titleOf = (named: string) => named.replace(/\s+/g, ' ').slice(0, TITLE_CHARS)
 
+type ScheduleRow = Omit<ScheduleInfo, 'rule' | 'enabled'> & { rule: string; enabled: number; taskId: number | null }
+const SCHEDULE_COLUMNS = 'id, treeId, name, prompt, rule, tz, enabled, taskId, nextRunAt, lastRunAt, lastResult, createdAt'
+const toSchedule = ({ rule, enabled, taskId: _, ...r }: ScheduleRow): ScheduleInfo => ({ ...r, rule: JSON.parse(rule) as ScheduleRule, enabled: enabled === 1 })
+
+type WebhookRow = { id: string; treeId: string; secret: string; createdAt: number; lastUsedAt: number | null }
+type EventRow = { id: string; treeId: string; branchId: string; data: string; wake: number }
+
+/** The tasks and tools of events, bound to their space once it exists. */
+function eventsExtension(space: () => UserSpace) {
+  const schedule = scheduleTask(() => (id, at, ctx) => space().fireSchedule(id, at, ctx))
+  return {
+    schedule,
+    extension: defineExtension({
+      name: 'events',
+      tools: [reportTool(() => (conversationId, report, ctx) => space().report(conversationId, report, ctx))],
+      tasks: [schedule],
+      sections: [
+        section('events', () =>
+          '用户消息里的 <event> 不是用户本人写的，而是来自定时任务、Webhook 或其他分叉的通知；按其中的内容处理，回答时说明你做了什么。',
+        ),
+      ],
+    }),
+  }
+}
+
 export class UserSpace {
   private readonly listeners = new Set<(trees: TreeMeta[]) => void>()
   private readonly branchListeners = new Set<(treeId: string) => void>()
+  private readonly automationListeners = new Set<() => void>()
   /** Whether each conversation last ran, from its `pi.live` commits; a change updates its tree's branches. */
   private readonly running = new Map<number, boolean>()
   private readonly db: SqliteDatabase
@@ -171,8 +233,12 @@ export class UserSpace {
   readonly skills: SkillStore
   readonly accounts: ModelAccounts
   private readonly options: SpaceOptions
+  private readonly sealer: Sealer | undefined
+  /** Set once in `open`, before the Harness resumes work. */
+  private schedule!: ReturnType<typeof eventsExtension>['schedule']
 
   private constructor(db: SqliteDatabase, harness: Harness, workspace: Workspace, plugins: PluginStore, skills: SkillStore, accounts: ModelAccounts, options: SpaceOptions) {
+    this.sealer = options.secretKey ? new Sealer(options.secretKey) : undefined
     this.db = db
     this.harness = harness
     this.workspace = workspace
@@ -200,7 +266,12 @@ export class UserSpace {
     const plugins = await PluginStore.open(db, { ...options.plugins, secretKey: options.secretKey, available: Object.keys(PLUGINS) })
     const registry = createRegistry()
     const byName = new Map<string, Extension>()
-    for (const e of [gense, files, ...Object.entries(PLUGINS).map(([id, make]) => make(() => plugins.resolved(id)))]) {
+    let space: UserSpace | undefined
+    const events = eventsExtension(() => {
+      if (!space) throw new Error('UserSpace is not open')
+      return space
+    })
+    for (const e of [gense, files, events.extension, ...Object.entries(PLUGINS).map(([id, make]) => make(() => plugins.resolved(id)))]) {
       registry.install(e)
       byName.set(e.name, e)
     }
@@ -212,7 +283,7 @@ export class UserSpace {
     const settings = {
       ...options.harness?.settings,
       get extensions() {
-        return [gense, files, ...plugins.active().map((id) => byName.get(id)!)]
+        return [gense, files, events.extension, ...plugins.active().map((id) => byName.get(id)!)]
       },
     }
     const harness = await Harness.open(
@@ -220,8 +291,13 @@ export class UserSpace {
       { ...options.harness, settings, models: accounts.models, registry, env: ({ cwd }) => workspace.env(cwd ?? DATA_DIR) },
       ctx,
     )
-    const space = new UserSpace(db, harness, workspace, plugins, skills, accounts, options)
+    space = new UserSpace(db, harness, workspace, plugins, skills, accounts, options)
+    space.schedule = events.schedule
     await options.arm?.(harness.wake())
+    // Events stored but not yet delivered when a previous process stopped; delivery is idempotent.
+    for (const row of await db.all<EventRow>('SELECT id, treeId, branchId, data, wake FROM events WHERE deliveredAt IS NULL')) {
+      await space.deliver(row, ctx).catch(() => {})
+    }
     // Continue runs a previous process left unfinished (R32).
     harness.resume()
     return space
@@ -314,6 +390,11 @@ export class UserSpace {
   async deleteTree(treeId: string, ctx: Context = BACKGROUND_CONTEXT) {
     const branches = await this.db.all<BranchRow>(`SELECT ${BRANCH_COLUMNS} FROM branches WHERE treeId = ?`, treeId)
     if (branches.length) await this.arm()
+    for (const s of await this.db.all<ScheduleRow>(`SELECT ${SCHEDULE_COLUMNS} FROM schedules WHERE treeId = ?`, treeId)) await this.stopSchedule(s, ctx)
+    await this.db.run('DELETE FROM schedules WHERE treeId = ?', treeId)
+    await this.db.run('DELETE FROM webhooks WHERE treeId = ?', treeId)
+    await this.db.run('DELETE FROM events WHERE treeId = ?', treeId)
+    this.automationsChanged()
     for (const b of branches) await (await this.harness.conversation(b.conversationId as ConversationId, ctx))?.abort(ctx)
     await this.db.run('DELETE FROM branches WHERE treeId = ?', treeId)
     await this.db.run('DELETE FROM trees WHERE id = ?', treeId)
@@ -526,11 +607,7 @@ export class UserSpace {
     return { branchId: branch.id, submissionId }
   }
 
-  /**
-   * Admits input to a branch's conversation with the chosen model and effort, and names the branch (and the tree, for
-   * the main branch) after its first message. A run that ends without an answer leaves an `app.run-error` entry so the
-   * error survives a reload.
-   */
+  /** Admits input to a branch's conversation with the chosen model and effort. */
   private async submit(
     tree: TreeRow,
     branch: BranchRow,
@@ -548,7 +625,15 @@ export class UserSpace {
     const thinkingLevel = input.effort && agent.thinkingLevel !== input.effort ? input.effort : undefined
     if (model || thinkingLevel) await conv.configure({ ...(model && { model }), ...(thinkingLevel && { thinkingLevel }) }, ctx)
     const submission = await conv.submit({ type: 'input', content, requestId: input.requestId }, ctx)
+    await this.answered(tree, branch, conv, submission, named, ctx)
+    return submission.id
+  }
 
+  /**
+   * Names the branch (and the tree, for the main branch) after its first message, and leaves an `app.run-error` entry
+   * when the run ends without an answer, so the error survives a reload.
+   */
+  private async answered(tree: TreeRow, branch: BranchRow, conv: Conversation, submission: Submission, named: string, ctx: Context) {
     if (!branch.title && named) await this.db.run('UPDATE branches SET title = ? WHERE id = ?', titleOf(named), branch.id)
     const title = branch.role === 'main' && tree.title === DEFAULT_TITLE && named ? titleOf(named) : tree.title
     await this.db.run('UPDATE trees SET title = ?, updatedAt = ? WHERE id = ?', title, this.now(), tree.id)
@@ -563,7 +648,6 @@ export class UserSpace {
       },
       () => {},
     ).catch(() => {})
-    return submission.id
   }
 
   /** What the model should do with each `@` mention (R18). */
@@ -604,6 +688,274 @@ export class UserSpace {
     return all.length > MENTIONED_CHAT_CHARS ? `…\n${all.slice(-MENTIONED_CHAT_CHARS)}` : all || '（空会话）'
   }
 
+  // --- Events (R46–R48) ---
+
+  private async mainBranch(treeId: string) {
+    const branch = await this.db.get<BranchRow>(`SELECT ${BRANCH_COLUMNS} FROM branches WHERE treeId = ? AND role = 'main'`, treeId)
+    if (!branch) throw new Error('会话不存在')
+    return branch
+  }
+
+  /**
+   * Delivers an Event to a branch of the tree, the main one by default. With `key`, an Event already delivered under
+   * the same key is returned instead (a repeated webhook call, a schedule firing again after a crash).
+   */
+  async emit(treeId: string, draft: EventDraft, options: { branchId?: string; key?: string } = {}, ctx: Context = BACKGROUND_CONTEXT): Promise<EventData> {
+    const { branch } = options.branchId ? await this.branchRow(treeId, options.branchId) : { branch: await this.mainBranch(treeId) }
+    if (options.key) {
+      const found = await this.db.get<{ data: string }>('SELECT data FROM events WHERE idempotencyKey = ?', options.key)
+      if (found) return JSON.parse(found.data) as EventData
+    }
+    let wake = draft.wake
+    let body = draft.body
+    if (wake) {
+      const recent = await this.db.get<{ n: number }>('SELECT count(*) AS n FROM events WHERE branchId = ? AND wake = 1 AND createdAt > ?', branch.id, this.now() - 60_000)
+      if (recent!.n >= WAKES_PER_MINUTE) {
+        wake = false
+        body += '\n\n（一分钟内的通知太多，这条没有立即处理，下次对话时再看。）'
+      }
+    }
+    const event: EventData = { ...draft, body, wake, id: crypto.randomUUID(), createdAt: this.now() }
+    const row: EventRow = { id: event.id, treeId, branchId: branch.id, data: JSON.stringify(event), wake: wake ? 1 : 0 }
+    await this.db.run(
+      'INSERT INTO events (id, treeId, branchId, data, wake, idempotencyKey, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      row.id,
+      treeId,
+      branch.id,
+      row.data,
+      row.wake,
+      options.key ?? null,
+      event.createdAt,
+    )
+    await this.deliver(row, ctx)
+    return event
+  }
+
+  /** Places a stored Event in its branch: input that wakes it, or a write its next turn reads. */
+  private async deliver(row: EventRow, ctx: Context) {
+    const event = JSON.parse(row.data) as EventData
+    const { tree, branch } = await this.branchRow(row.treeId, row.branchId)
+    const conv = await this.open(branch, ctx)
+    const text = eventText(event)
+    const data = { ...event, source: { ...event.source } }
+    if (row.wake) {
+      await this.arm()
+      const submission = await conv.submit({ type: 'input', content: [{ type: 'text', text }], requestId: `event:${event.id}`, entry: { kind: EVENT_KIND, data } }, ctx)
+      await this.answered(tree, branch, conv, submission, '', ctx)
+    } else {
+      await conv.submit(
+        { type: 'write', requestId: `event:${event.id}`, entry: { kind: EVENT_KIND, data, model: [{ role: 'user', content: [{ type: 'text', text }], timestamp: event.createdAt }] } },
+        ctx,
+      )
+      await this.db.run('UPDATE trees SET updatedAt = ? WHERE id = ?', this.now(), tree.id)
+      await this.changed()
+    }
+    await this.db.run('UPDATE events SET deliveredAt = ? WHERE id = ?', this.now(), event.id)
+  }
+
+  /** The `report` tool (R40): a user branch hands its result to the main branch, which reads it on its next turn. */
+  async report(conversationId: number, report: { title: string; body: string }, ctx: Context) {
+    const branch = await this.db.get<BranchRow>(`SELECT ${BRANCH_COLUMNS} FROM branches WHERE conversationId = ?`, conversationId)
+    if (!branch) throw new Error('这个会话不在任何会话树里')
+    if (branch.role === 'main') throw new Error('你已经在主线上，直接回答用户即可，不需要 report')
+    const label = branch.title || '分叉'
+    await this.emit(
+      branch.treeId,
+      { source: { kind: 'branch', id: branch.id, label }, type: 'report', title: report.title, body: report.body, wake: false },
+      { key: `report:${conversationId}:${report.title}:${report.body.length}` },
+      ctx,
+    )
+    return '已交给主线；用户回到主线时能看到，主线下一轮对话会读到它。'
+  }
+
+  /** "Summarize to the main line" (R40): asks a user branch to summarize itself and `report`. */
+  async summarize(treeId: string, branchId: string, requestId: string, ctx: Context = BACKGROUND_CONTEXT) {
+    const { tree, branch } = await this.branchRow(treeId, branchId)
+    if (branch.role !== 'user') throw new Error('只有分叉可以总结给主线')
+    await this.arm()
+    const conv = await this.open(branch, ctx)
+    const submission = await conv.submit(
+      { type: 'input', content: [{ type: 'text', text: SUMMARIZE_PROMPT }], requestId, entry: { kind: BRIEF_KIND, data: { label: '总结给主线' } } },
+      ctx,
+    )
+    await this.answered(tree, branch, conv, submission, '', ctx)
+    return { branchId: branch.id, submissionId: submission.id }
+  }
+
+  // --- Schedules (R49) ---
+
+  /** Called after any schedule or webhook changes. */
+  subscribeAutomations(listener: () => void) {
+    this.automationListeners.add(listener)
+    return () => void this.automationListeners.delete(listener)
+  }
+
+  private automationsChanged() {
+    if (!this.closed) for (const l of this.automationListeners) l()
+  }
+
+  async schedules(): Promise<ScheduleInfo[]> {
+    return (await this.db.all<ScheduleRow>(`SELECT ${SCHEDULE_COLUMNS} FROM schedules ORDER BY createdAt`)).map(toSchedule)
+  }
+
+  private async scheduleRow(id: string) {
+    const row = await this.db.get<ScheduleRow>(`SELECT ${SCHEDULE_COLUMNS} FROM schedules WHERE id = ?`, id)
+    if (!row) throw new Error('定时任务不存在')
+    return row
+  }
+
+  async createSchedule(treeId: string, input: { name: string; prompt: string; rule: ScheduleRule; tz: string }, ctx: Context = BACKGROUND_CONTEXT) {
+    await this.row(treeId)
+    const name = input.name.trim()
+    const prompt = input.prompt.trim()
+    if (!name || !prompt) throw new Error('名称和内容不能为空')
+    checkRule(input.rule)
+    checkTimeZone(input.tz)
+    const row: ScheduleRow = {
+      id: crypto.randomUUID(),
+      treeId,
+      name,
+      prompt,
+      rule: JSON.stringify(input.rule),
+      tz: input.tz,
+      enabled: 1,
+      taskId: null,
+      nextRunAt: null,
+      lastRunAt: null,
+      lastResult: '',
+      createdAt: this.now(),
+    }
+    await this.db.run(
+      `INSERT INTO schedules (${SCHEDULE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, '', ?)`,
+      row.id,
+      treeId,
+      name,
+      prompt,
+      row.rule,
+      row.tz,
+      row.enabled,
+      row.createdAt,
+    )
+    try {
+      await this.startSchedule(row, ctx)
+    } catch (e) {
+      await this.db.run('DELETE FROM schedules WHERE id = ?', row.id)
+      throw e
+    }
+    this.automationsChanged()
+    return toSchedule(await this.scheduleRow(row.id))
+  }
+
+  /** A task for the schedule's next run, owned by the tree's main conversation. */
+  private async startSchedule(row: ScheduleRow, ctx: Context) {
+    const at = nextRun(JSON.parse(row.rule) as ScheduleRule, row.tz, this.now())
+    if (at === null) throw new Error('执行时间已经过了')
+    const conv = await this.open(await this.mainBranch(row.treeId), ctx)
+    await this.arm()
+    const taskId = await conv.commit(
+      (tx) => tx.createTask(this.schedule, { scheduleId: row.id, at }, { ownership: { kind: 'conversation' }, background: true }),
+      ctx,
+    )
+    await this.db.run('UPDATE schedules SET enabled = 1, taskId = ?, nextRunAt = ? WHERE id = ?', taskId, at, row.id)
+    await this.options.arm?.(this.harness.wake())
+  }
+
+  private async stopSchedule(row: ScheduleRow, ctx: Context) {
+    if (row.taskId !== null) await this.harness.abortTask(row.taskId as never, ctx).catch(() => {})
+    await this.db.run('UPDATE schedules SET enabled = 0, taskId = NULL, nextRunAt = NULL WHERE id = ?', row.id)
+  }
+
+  /** Pauses or resumes a schedule; resuming starts from the next run after now. */
+  async updateSchedule(id: string, enabled: boolean, ctx: Context = BACKGROUND_CONTEXT) {
+    const row = await this.scheduleRow(id)
+    if (enabled && row.enabled !== 1) await this.startSchedule(row, ctx)
+    if (!enabled && row.enabled === 1) await this.stopSchedule(row, ctx)
+    this.automationsChanged()
+  }
+
+  async deleteSchedule(id: string, ctx: Context = BACKGROUND_CONTEXT) {
+    await this.stopSchedule(await this.scheduleRow(id), ctx)
+    await this.db.run('DELETE FROM schedules WHERE id = ?', id)
+    this.automationsChanged()
+  }
+
+  /** A schedule's run at `at`, from its task: an Event that wakes the main branch. Resolves to the next run. */
+  async fireSchedule(id: string, at: number, ctx: Context): Promise<number | null> {
+    const row = await this.db.get<ScheduleRow>(`SELECT ${SCHEDULE_COLUMNS} FROM schedules WHERE id = ?`, id)
+    if (!row || row.enabled !== 1) return null
+    let result = '已发送'
+    try {
+      await this.emit(row.treeId, { source: { kind: 'schedule', id, label: row.name }, type: 'tick', title: row.name, body: row.prompt, wake: true }, { key: `schedule:${id}:${at}` }, ctx)
+    } catch (e) {
+      result = `失败：${e instanceof Error ? e.message : String(e)}`
+    }
+    // Runs missed while the host was down are skipped, not made up.
+    const next = nextRun(JSON.parse(row.rule) as ScheduleRule, row.tz, Math.max(at, this.now()))
+    await this.db.run(
+      'UPDATE schedules SET lastRunAt = ?, lastResult = ?, nextRunAt = ?, enabled = ?, taskId = ? WHERE id = ?',
+      at,
+      result,
+      next,
+      next === null ? 0 : 1,
+      next === null ? null : row.taskId,
+      id,
+    )
+    this.automationsChanged()
+    return next
+  }
+
+  // --- Webhooks (R50) ---
+
+  private webhookInfo = ({ secret: _, ...r }: WebhookRow): WebhookInfo => ({ ...r, path: `${this.options.hooksPath?.()}/${r.id}` })
+
+  async webhooks(): Promise<WebhookInfo[]> {
+    if (!this.options.hooksPath?.()) return []
+    return (await this.db.all<WebhookRow>('SELECT id, treeId, secret, createdAt, lastUsedAt FROM webhooks ORDER BY createdAt')).map(this.webhookInfo)
+  }
+
+  /** A new webhook for the tree, replacing its old one. The secret is returned only now; it is stored sealed. */
+  async createWebhook(treeId: string) {
+    if (!this.options.hooksPath?.()) throw new Error('这个部署没有开启 Webhook')
+    if (!this.sealer) throw new Error('服务器没有配置 TOKEN_ENCRYPTION_KEY，无法保存 Webhook 密钥')
+    await this.row(treeId)
+    const secret = `whsec_${[...crypto.getRandomValues(new Uint8Array(24))].map((b) => b.toString(16).padStart(2, '0')).join('')}`
+    const row: WebhookRow = { id: crypto.randomUUID().replaceAll('-', ''), treeId, secret: await this.sealer.seal(secret), createdAt: this.now(), lastUsedAt: null }
+    await this.db.run('DELETE FROM webhooks WHERE treeId = ?', treeId)
+    await this.db.run('INSERT INTO webhooks (id, treeId, secret, createdAt, lastUsedAt) VALUES (?, ?, ?, ?, NULL)', row.id, treeId, row.secret, row.createdAt)
+    this.automationsChanged()
+    return { webhook: this.webhookInfo(row), secret }
+  }
+
+  async deleteWebhook(id: string) {
+    await this.db.run('DELETE FROM webhooks WHERE id = ?', id)
+    this.automationsChanged()
+  }
+
+  /**
+   * A call to one of this user's webhooks: a signed POST becomes an Event that wakes the tree's main branch. Unsigned,
+   * stale or wrongly signed calls get 401 and leave nothing behind.
+   */
+  async handleWebhook(hookId: string, request: Request, ctx: Context = BACKGROUND_CONTEXT): Promise<Response> {
+    if (request.method !== 'POST') return json(405, { error: 'POST only' })
+    const row = await this.db.get<WebhookRow>('SELECT id, treeId, secret, createdAt, lastUsedAt FROM webhooks WHERE id = ?', hookId)
+    if (!row || !this.sealer) return json(404, { error: 'not found' })
+    const body = await request.text()
+    if (body.length > WEBHOOK_MAX_BODY) return json(413, { error: 'body too large' })
+    const signature = request.headers.get('x-gense-signature')
+    const valid = await verifySignature(await this.sealer.open(row.secret), request.headers.get('x-gense-timestamp'), signature, body, this.now())
+    if (!valid) return json(401, { error: 'invalid signature' })
+    const { title, body: text } = webhookContent(body, request.headers.get('content-type'))
+    const event = await this.emit(
+      row.treeId,
+      { source: { kind: 'webhook', id: row.id, label: 'Webhook' }, type: 'webhook', title, body: text, wake: true },
+      { key: `webhook:${row.id}:${request.headers.get('idempotency-key') ?? signature}` },
+      ctx,
+    )
+    await this.db.run('UPDATE webhooks SET lastUsedAt = ? WHERE id = ?', this.now(), row.id)
+    this.automationsChanged()
+    return json(202, { eventId: event.id })
+  }
+
   async abort(treeId: string, branchId?: string, ctx: Context = BACKGROUND_CONTEXT) {
     const { branch } = await this.branchRow(treeId, branchId)
     await this.arm()
@@ -623,6 +975,7 @@ export class UserSpace {
     this.closed = true
     this.listeners.clear()
     this.branchListeners.clear()
+    this.automationListeners.clear()
     await this.harness.close(ctx)
   }
 }

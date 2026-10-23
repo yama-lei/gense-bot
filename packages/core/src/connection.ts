@@ -46,8 +46,14 @@ export class Connection {
         if (this.#watches.has(treeId)) void space.branches(treeId).then((b) => this.#send({ t: 'branches', treeId, ...b }), () => {})
       }),
     )
+    const automations = async () => {
+      this.#send({ t: 'schedules', schedules: await space.schedules() })
+      this.#send({ t: 'webhooks', webhooks: await space.webhooks() })
+    }
+    this.#unsubscribe.push(space.subscribeAutomations(() => void automations().catch(() => {})))
     this.#send({ t: 'plugins', plugins: space.plugins.list() })
     this.#send({ t: 'skills', skills: space.skills.list() })
+    await automations()
     await accounts()
     this.#send({ t: 'trees', trees: await space.trees() })
   }
@@ -105,6 +111,18 @@ export class Connection {
           ...(r.model && { model: r.model }),
           ...(r.effort && { effort: r.effort }),
         })
+      case 'branch.summarize':
+        return space.summarize(r.treeId, r.branchId, r.requestId)
+      case 'schedule.create':
+        return space.createSchedule(r.treeId, { name: r.name, prompt: r.prompt, rule: r.rule, tz: r.tz })
+      case 'schedule.update':
+        return space.updateSchedule(r.scheduleId, r.enabled)
+      case 'schedule.delete':
+        return space.deleteSchedule(r.scheduleId)
+      case 'webhook.create':
+        return space.createWebhook(r.treeId)
+      case 'webhook.delete':
+        return space.deleteWebhook(r.webhookId)
       case 'watch':
         return this.#watch(r.treeId, r.branchId)
       case 'unwatch':

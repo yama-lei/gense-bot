@@ -120,6 +120,10 @@ export class Auth {
     await this.#db.run('DELETE FROM sessions WHERE tokenHash = ?', await sha256(token))
   }
 
+  async user(id: string): Promise<User | null> {
+    return (await this.#db.get<User>('SELECT id, email FROM users WHERE id = ?', id)) ?? null
+  }
+
   async users(): Promise<User[]> {
     return this.#db.all<User>('SELECT id, email FROM users ORDER BY createdAt')
   }

@@ -1,7 +1,7 @@
 // The browser end of the host protocol (packages/core/src/protocol.ts). Reconnects, and re-watches after reconnecting.
 import { applyImmutable, decoder, type Decoder } from '@earendil-works/chord/delta'
 import type { AuthEvent, AuthType } from '@earendil-works/pi-ai'
-import type { BranchesState, ClientRequest, LoginPrompt, ModelInfo, ProviderState, ServerMessage, SkillInfo, TreeMeta } from '@gense/core/protocol'
+import type { BranchesState, ClientRequest, LoginPrompt, ModelInfo, ProviderState, ScheduleInfo, ServerMessage, SkillInfo, TreeMeta, WebhookInfo } from '@gense/core/protocol'
 import type { PluginState } from '@gense/core/catalog'
 import type { View } from './turns'
 
@@ -17,6 +17,8 @@ export interface SocketState {
   /** The user's plugin switches and settings; null until the host sends them. */
   plugins: PluginState[] | null
   skills: SkillInfo[]
+  schedules: ScheduleInfo[]
+  webhooks: WebhookInfo[]
   /** Model services the user can sign in to (R62). */
   providers: ProviderState[]
   connected: boolean
@@ -33,7 +35,7 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 export type Request = DistributiveOmit<ClientRequest, 'id'>
 
 export class HostSocket {
-  state: SocketState = { email: '', models: [], defaultModel: null, trees: null, views: {}, branches: {}, shown: {}, plugins: null, skills: [], providers: [], connected: false }
+  state: SocketState = { email: '', models: [], defaultModel: null, trees: null, views: {}, branches: {}, shown: {}, plugins: null, skills: [], schedules: [], webhooks: [], providers: [], connected: false }
   #ws: WebSocket | undefined
   #next = 1
   #pending = new Map<number, { resolve(v: unknown): void; reject(e: Error): void }>()
@@ -108,6 +110,10 @@ export class HostSocket {
         return this.#set({ plugins: m.plugins })
       case 'skills':
         return this.#set({ skills: m.skills })
+      case 'schedules':
+        return this.#set({ schedules: m.schedules })
+      case 'webhooks':
+        return this.#set({ webhooks: m.webhooks })
       case 'trees':
         return this.#set({ trees: m.trees })
       case 'branches': {

@@ -2,7 +2,7 @@
 import { applyImmutable, decoder, type Decoder } from '@earendil-works/chord/delta'
 import type { PluginState } from '@gense/core/catalog'
 import { parseNote } from '@gense/core/notes'
-import type { BranchesState, BranchMeta, ClientRequest, FileEntry, LoginPrompt, ModelInfo, ProviderState, ServerMessage, SkillInfo, TreeMeta, UploadedFile } from '@gense/core/protocol'
+import { EVENT_KIND, type BranchesState, type BranchMeta, type ClientRequest, type EventData, type FileEntry, type LoginPrompt, type ModelInfo, type ProviderState, type ScheduleInfo, type ServerMessage, type SkillInfo, type TreeMeta, type UploadedFile, type WebhookInfo } from '@gense/core/protocol'
 import assert from 'node:assert/strict'
 import { mkdtemp } from 'node:fs/promises'
 import { createServer } from 'node:http'
@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import WebSocket from 'ws'
 import { docxFile, pdfFile } from '../../../packages/core/test/fixtures.ts'
+import { hmac } from '../../../packages/core/src/events.ts'
 
 export const tempDir = () => mkdtemp(join(tmpdir(), 'gense-test-'))
 
@@ -44,6 +45,8 @@ export class Client {
   skills: SkillInfo[] = []
   models: ModelInfo[] = []
   providers: ProviderState[] = []
+  schedules: ScheduleInfo[] = []
+  webhooks: WebhookInfo[] = []
   /** Login prompts the host is waiting on, by prompt id. */
   readonly prompts = new Map<string, { loginId: string; prompt: LoginPrompt }>()
   /** Every message received, as sent, to check what never reaches the browser. */
@@ -77,6 +80,8 @@ export class Client {
     if (m.t === 'skills') this.skills = m.skills
     if (m.t === 'models') this.models = m.models
     if (m.t === 'providers') this.providers = m.providers
+    if (m.t === 'schedules') this.schedules = m.schedules
+    if (m.t === 'webhooks') this.webhooks = m.webhooks
     if (m.t === 'auth.prompt') this.prompts.set(m.promptId, { loginId: m.loginId, prompt: m.prompt })
     if (m.t === 'auth.prompt.done') this.prompts.delete(m.promptId)
     if (m.t === 'branches') {
@@ -518,4 +523,67 @@ export async function ledgerScenario(client: Client) {
   // R45: no way out of the tree.
   assert.match(await tool(main, 'read', { path: '/data/uploads' }), /只能读取本会话工作区/)
   await client.request({ t: 'tree.delete', treeId: tree.id })
+}
+
+/** Stage 6: a signed webhook call, "summarize to the main line", and a one-off schedule, each an Event in the main branch. */
+export async function eventsScenario(client: Client, url: string) {
+  const tree = await client.request<TreeMeta>({ t: 'tree.create' })
+  await client.request({ t: 'watch', treeId: tree.id })
+  const entries = () => client.views.get(tree.id)?.entries ?? []
+  const idle = (branchId: string) => client.branches.get(tree.id)?.branches.find((b) => b.id === branchId)?.status === 'idle'
+  const { branchId: main } = await client.request<{ branchId: string }>({ t: 'send', treeId: tree.id, text: '开始', requestId: 'e0' })
+  await client.until(() => idle(main) && entries().some((e) => e.kind === 'pi.assistant'), 15_000, 'first answer')
+
+  // R50: only a signed call gets in, and it wakes the main branch.
+  const { webhook, secret } = await client.request<{ webhook: WebhookInfo; secret: string }>({ t: 'webhook.create', treeId: tree.id })
+  await client.until(() => client.webhooks.some((w) => w.id === webhook.id), 5000, 'webhook listed')
+  assert.ok(!client.raw.some((m) => m.includes(secret) && !m.includes('"reply"')), 'the secret is only in the reply')
+  const body = JSON.stringify({ title: '构建失败', text: 'main 分支第 42 次构建' })
+  const unsigned = await fetch(`${url}${webhook.path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body })
+  assert.equal(unsigned.status, 401)
+  const ts = String(Math.floor(Date.now() / 1000))
+  const signature = `sha256=${await hmac(secret, `${ts}.${body}`)}`
+  const signed = await fetch(`${url}${webhook.path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-gense-timestamp': ts, 'x-gense-signature': signature },
+    body,
+  })
+  assert.equal(signed.status, 202)
+  const answer = await client.until(() => entries().find((e) => e.kind === 'pi.assistant' && textOf(e).includes('<event source="webhook"')), 15_000, 'webhook answer')
+  assert.match(textOf(answer), /构建失败/)
+  assert.equal((entries().find((e) => e.kind === EVENT_KIND)!.data as EventData).title, '构建失败')
+
+  // R40: a fork's summary lands in the main branch without starting a run there.
+  await client.until(() => idle(main), 15_000, 'main idle')
+  const at = entries().findLast((e) => e.kind === 'pi.assistant')!.id
+  const fork = await client.request<BranchMeta>({ t: 'branch.fork', treeId: tree.id, branchId: main, at })
+  await client.request({ t: 'watch', treeId: tree.id, branchId: fork.id })
+  await client.request({ t: 'send', treeId: tree.id, branchId: fork.id, text: '比较两个方案', requestId: 'e1' })
+  await client.until(() => idle(fork.id) && entries().some((e) => textOf(e) === '收到：比较两个方案'), 15_000, 'fork answer')
+  await client.request({ t: 'branch.summarize', treeId: tree.id, branchId: fork.id, requestId: 'e2' })
+  await client.until(() => entries().some((e) => e.kind === 'pi.assistant' && textOf(e).includes('已交给主线')), 15_000, 'report sent')
+  await client.request({ t: 'watch', treeId: tree.id, branchId: main })
+  const report = await client.until(
+    () => client.shown.get(tree.id) === main && entries().find((e) => e.kind === EVENT_KIND && (e.data as EventData).type === 'report'),
+    15_000,
+    'report in main',
+  )
+  assert.match((report.data as EventData).body, /比较两个方案/)
+
+  // R49: a one-off schedule fires on the host's own clock (a Durable Object alarm on Workers).
+  const schedule = await client.request<ScheduleInfo>({
+    t: 'schedule.create',
+    treeId: tree.id,
+    name: '提醒',
+    prompt: '该喝水了',
+    rule: { kind: 'once', at: Date.now() + 2000 },
+    tz: 'Asia/Shanghai',
+  })
+  const tick = await client.until(() => entries().find((e) => e.kind === EVENT_KIND && (e.data as EventData).type === 'tick'), 20_000, 'schedule tick')
+  assert.equal((tick.data as EventData).body, '该喝水了')
+  const done = await client.until(() => client.schedules.find((s) => s.id === schedule.id && s.lastRunAt !== null), 10_000, 'schedule done')
+  assert.deepEqual([done.enabled, done.lastResult, done.nextRunAt], [false, '已发送', null])
+
+  await client.request({ t: 'tree.delete', treeId: tree.id })
+  await client.until(() => !client.schedules.some((s) => s.treeId === tree.id) && !client.webhooks.some((w) => w.treeId === tree.id), 5000, 'automations removed')
 }

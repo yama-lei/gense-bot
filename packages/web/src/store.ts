@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import type { AuthType } from '@earendil-works/pi-ai'
 import type { LoginHandlers } from './pi/socket'
 import { usePiStore } from './pi/store'
-import type { AppState, Conversation, DriveFile, Effort, Outgoing, PluginValue, ToolResult, Turn, WorkspacePreview } from './types'
+import type { AppState, Conversation, DriveFile, Effort, Outgoing, PluginValue, ScheduleRule, ToolResult, Turn, WebhookInfo, WorkspacePreview } from './types'
 
 /** What the views need from the data layer; the host-backed store provides it. */
 export interface Store {
@@ -25,6 +25,15 @@ export interface Store {
   /** A new branch continuing from the end of `turn`, shown empty for the next message (R36). */
   fork: (convId: string, turn: Turn) => void
   stop: (convId: string, turnId: string) => void
+  /** Asks the shown fork to sum itself up and hand the result to the main line (R40). */
+  summarize: (convId: string) => void
+  /** Schedules a message to a conversation (R49); rejects with a message for the user. */
+  createSchedule: (convId: string, schedule: { name: string; prompt: string; rule: ScheduleRule; tz: string }) => Promise<void>
+  setScheduleEnabled: (scheduleId: string, enabled: boolean) => Promise<void>
+  deleteSchedule: (scheduleId: string) => Promise<void>
+  /** A conversation's webhook (R50), replacing any it had; the secret is only ever returned here. */
+  createWebhook: (convId: string) => Promise<{ webhook: WebhookInfo; secret: string }>
+  deleteWebhook: (webhookId: string) => Promise<void>
   reset: () => void
   /** `tools/call` from the view rendered by tool call `callId`; the call id makes retries idempotent. */
   callToolFromView: (convId: string, turnId: string, callId: string, name: string, input: unknown) => Promise<ToolResult>

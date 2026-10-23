@@ -1,4 +1,4 @@
-// Cloudflare deployment (roadmap-3 stage 2). Assets serve the built front end; the Worker only sees /api and /ws.
+// Cloudflare deployment (roadmap-3 stage 2). Assets serve the built front end; the Worker only sees /api, /ws and /hooks.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "gense-v3",
@@ -9,7 +9,7 @@
     "directory": "../../packages/web/dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/ws"]
+    "run_worker_first": ["/api/*", "/ws", "/hooks/*"]
   },
   "durable_objects": {
     "bindings": [

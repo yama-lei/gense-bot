@@ -1,7 +1,7 @@
 // Self-hosted deployment (ADR-0004 decision 3): one process, one SQLite file per user, sockets over `ws`.
 import { openNodeSqliteDatabase } from '@earendil-works/chord/sqlite/node'
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node'
-import { accountApi, Auth, Connection, DATA_DIR, json, MountedEnv, sameOrigin, sessionUser, UserSpace } from '@gense/core'
+import { accountApi, Auth, Connection, DATA_DIR, hooksPath, json, MountedEnv, parseHookPath, sameOrigin, sessionUser, UserSpace } from '@gense/core'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, stat } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
@@ -64,7 +64,7 @@ export async function startServer(config: HostConfig) {
         const db = await openNodeSqliteDatabase(join(dir, 'pi.sqlite'))
         const env = (cwd: string) => new MountedEnv(new NodeExecutionEnv({ cwd: files }), { mount: DATA_DIR, target: files, cwd })
         // Node runs subscription logins: their flows either call back to this host or ask for the code (R62).
-        return UserSpace.open(db, { models: config.models(), env, plugins: config.plugins, secretKey: config.secretKey, oauth: true })
+        return UserSpace.open(db, { models: config.models(), env, plugins: config.plugins, secretKey: config.secretKey, oauth: true, hooksPath: () => hooksPath(userId) })
       })()
       opening.catch(() => spaces.delete(userId))
       spaces.set(userId, opening)
@@ -93,9 +93,18 @@ export async function startServer(config: HostConfig) {
     res.end(body)
   }
 
+  /** A webhook call (R50): signed by its secret, not by a session. */
+  async function hook(req: IncomingMessage, route: { userId: string; hookId: string }) {
+    if (!(await auth.user(route.userId))) return json(404, { error: 'not found' })
+    return (await space(route.userId)).handleWebhook(route.hookId, await toRequest(req))
+  }
+
   const server = createServer((req, res) => {
     const path = new URL(req.url ?? '/', 'http://x').pathname
-    const handled = path.startsWith('/api/')
+    const route = parseHookPath(path)
+    const handled = route
+      ? hook(req, route).then((r) => send(res, r))
+      : path.startsWith('/api/')
       ? toRequest(req).then((request) => accountApi(auth, request, { adminToken: config.adminToken })).then((r) => send(res, r))
       : staticFile(res, path)
     handled.catch((error) => {

@@ -468,6 +468,14 @@ code, pre { font-family: var(--mono); }
 .menu.up { top: auto; bottom: calc(100% + 4px); }
 .menu button > span { display: inline-flex; align-items: center; gap: 8px; }
 .fork-banner { display: flex; align-items: center; gap: 6px; justify-content: center; margin-bottom: 18px; }
+.brief-line { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-bottom: 14px; }
+.event-card { border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); margin-bottom: 16px; overflow: hidden; }
+.event-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 14px; text-align: left; min-width: 0; }
+.event-head:hover { background: var(--hover); }
+.event-head strong { flex: 1; min-width: 0; font-weight: 600; }
+.event-from, .event-time { white-space: nowrap; }
+.event-body { padding: 4px 16px 12px; border-top: 1px solid var(--border); }
+@media (max-width: 560px) { .event-time { display: none; } }
 .branch-minimap { display: grid; place-items: center; height: 34px; padding: 0 6px; border-radius: 10px; }
 .branch-minimap:hover { background: var(--hover); }
 .branch-lane line, .branch-lane path { stroke: var(--muted); stroke-width: 2; stroke-linecap: round; vector-effect: non-scaling-stroke; }
@@ -514,6 +522,19 @@ a.file-card:hover { background: var(--hover); }
 .skill-help code { font-size: 12.5px; }
 .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 28px 0 10px; }
 .section-head .section-title { margin: 0; }
+.schedule-form { display: flex; flex-direction: column; gap: 12px; margin-bottom: 8px; }
+.schedule-form .section-title { margin-bottom: 0; }
+.schedule-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.schedule-form input { color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; background: var(--surface); outline: 0; min-height: 38px; }
+.schedule-form input:focus { border-color: var(--muted); }
+.weekdays { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { min-width: 38px; min-height: 34px; padding: 4px 10px; border-radius: 99px; border: 1px solid var(--border); background: var(--surface); font-size: 14px; }
+.chip.on { background: var(--text); color: var(--bg); border-color: var(--text); }
+.webhook-new { align-items: center; }
+.webhook-new > :first-child { flex: 1; min-width: 0; }
+.webhook-secret { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); padding: 14px 16px; margin-bottom: 16px; font-size: 14px; }
+.webhook-secret p { margin: 0 0 10px; }
+@media (max-width: 560px) { .rows .row { flex-wrap: wrap; } }
 
 /* Generative UI (ui_render). Charts use --series-N in fixed order; text keeps text colors. */
 .gen-ui { display: flex; flex-direction: column; gap: 12px; margin: 10px 0; }

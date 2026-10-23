@@ -3,7 +3,7 @@
 // entry the model reads as an <event> block. One that wakes the branch starts a run, or queues while it is busy; one
 // that does not only lands in the transcript for its next turn.
 import type { Context } from '@earendil-works/chord/context'
-import { defineTask, defineTool, type ToolRegistration } from '@earendil-works/pi-durable'
+import { defineTask, defineTool, type ToolExecutionApi, type ToolRegistration } from '@earendil-works/pi-durable'
 import { Type } from 'typebox'
 import type { EventData, ScheduleRule } from './protocol.ts'
 
@@ -173,6 +173,70 @@ export function webhookContent(body: string, contentType: string | null) {
   }
   return { title: 'Webhook', body }
 }
+
+// --- Subagents (R51–R56) ---
+
+/** How many subagents of one tree may run at once. */
+export const MAX_AGENTS = 3
+
+/** The brief a subagent starts from (D3); the faux model recognizes it. */
+export const agentBrief = (title: string, task: string) =>
+  `你是子 agent「${title}」。任务：\n${task}\n\n完成后必须调用 report 工具把结果交给主线（title 写一句话的结论，body 写详细结果）；你不能调用 agent_spawn。`
+
+export type AgentInput = { treeId: string; branchId: string; conversationId: number; title: string; task: string }
+/** How a subagent's run ended. */
+export type AgentEnd = { status: 'done' | 'unanswered'; reason?: string }
+type AgentCheckpoint = { phase: 'run' } | { phase: 'finish'; end: AgentEnd }
+
+/**
+ * A subagent's anchor: a background task of the main conversation that gives the subagent its brief, waits for that run
+ * to end, and reports for it when it did not report itself (R53). Its submission has a fixed request id, so a rerun after
+ * a restart waits for the same run, and the unreported notice has a fixed key, so it is sent once (V6).
+ */
+export const agentTask = (agents: () => { run: (input: AgentInput, ctx: Context) => Promise<AgentEnd>; finish: (input: AgentInput, end: AgentEnd, ctx: Context) => Promise<void> }) =>
+  defineTask<AgentInput, AgentCheckpoint, null>({
+    name: 'app.agent',
+    version: 1,
+    initial: () => ({ phase: 'run' }),
+    phases: {
+      async run(task, runtime, ctx) {
+        const end = await agents().run(task.input, ctx)
+        await runtime.commit(() => ({ status: 'running', checkpoint: { phase: 'finish', end } }), ctx)
+      },
+      async finish(task, runtime, ctx) {
+        await agents().finish(task.input, task.state.checkpoint.end, ctx)
+        await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result: null } }), ctx)
+      },
+    },
+    // Only the tree's removal aborts the anchor; stopping the subagent itself ends its run, which `run` sees.
+    async abort(_task, runtime, ctx) {
+      await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted', reason: 'tree removed' } }), ctx)
+    },
+  })
+
+export type Spawn = (api: ToolExecutionApi, args: { task: string; title: string; mode: 'fork' | 'new' }, ctx: Context) => Promise<string>
+
+export const spawnTool = (spawn: () => Spawn) =>
+  defineTool({
+    name: 'agent_spawn',
+    description:
+      `Start a subagent that works on a self-contained task in the background, in its own branch of this conversation tree, and reports its result back with \`report\`. Returns at once: tell the user what you started and do not wait; each report arrives later as an <event> and wakes you. At most ${MAX_AGENTS} subagents run at once; only the main line can spawn, and subagents cannot spawn their own.`,
+    parameters: Type.Object({
+      task: Type.String({ description: 'Everything the subagent needs to know to do the task and what to report' }),
+      title: Type.String({ description: 'A short name for the subagent, shown to the user' }),
+      mode: Type.Optional(
+        Type.Union([Type.Literal('fork'), Type.Literal('new')], {
+          description: '`fork` (default): the subagent knows this conversation so far. `new`: it sees only the task',
+        }),
+      ),
+    }),
+    // Not rerun after a crash: a second spawn would start a second subagent. The model sees the call was interrupted.
+    replay: 'unsafe',
+    async execute({ task, title, mode }, api, ctx) {
+      const text = await spawn()(api as ToolExecutionApi, { task, title, mode: mode ?? 'fork' }, ctx)
+      return { output: [{ type: 'text', text }] }
+    },
+  }) as unknown as ToolRegistration
 
 // --- report (R40, R52) ---
 

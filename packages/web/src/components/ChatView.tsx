@@ -120,7 +120,7 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
           <div className="thread">
             {shown && main && shown.role !== 'main' && (
               <div className="fork-banner muted small">
-                <IconBranch width={14} height={14} /> 分叉{shown.title ? `「${shown.title}」` : ''}
+                <IconBranch width={14} height={14} /> {shown.role === 'agent' ? '子代理' : '分叉'}{shown.title ? `「${shown.title}」` : ''}
                 <button className="link-btn" onClick={() => store.showBranch(conv.id, main.id)}>
                   返回主线
                 </button>

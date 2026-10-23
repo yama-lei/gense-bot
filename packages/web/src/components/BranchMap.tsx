@@ -14,6 +14,7 @@ interface Lane {
 }
 
 const statusText: Record<BranchMeta['status'], string> = { idle: '空闲', running: '运行中', done: '已完成', failed: '失败', aborted: '已停止' }
+const chipClass: Record<BranchMeta['status'], string> = { idle: 'succeeded', running: 'running', done: 'succeeded', failed: 'failed', aborted: 'interrupted' }
 
 /** Lanes depth first from the main branch, children by age; x is the rank of an entry id among all the tree's points. */
 function layout(state: BranchesState): { lanes: Lane[]; width: number } {
@@ -153,7 +154,7 @@ function TreeDialog({ lanes, shown, onClose, onPick }: { lanes: Lane[]; shown: s
           <div className="tree-summary">
             <div className="tree-summary-head">
               <strong className="ellipsis">{focused.role === 'main' ? '主线' : focused.title || '（空分叉）'}</strong>
-              <span className={'status-chip ' + (focused.status === 'running' ? 'running' : 'succeeded')}>{statusText[focused.status]}</span>
+              <span className={'status-chip ' + chipClass[focused.status]}>{statusText[focused.status]}</span>
               {focused.role === 'agent' && <span className="tag">子代理</span>}
             </div>
             {focused.preview && <p className="small muted">{focused.preview}</p>}

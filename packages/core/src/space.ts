@@ -17,6 +17,7 @@ import {
   type Extension,
   type HarnessOptions,
   type Submission,
+  type ToolExecutionApi,
   type Wake,
 } from '@earendil-works/pi-durable'
 import type { PluginValue } from './catalog.ts'
@@ -49,16 +50,22 @@ import { ModelAccounts } from './credentials.ts'
 import type { ModelSetup } from './models.ts'
 import { fileTools } from './ledger.ts'
 import {
+  agentBrief,
+  agentTask,
   checkRule,
   checkTimeZone,
   eventText,
+  MAX_AGENTS,
   nextRun,
   reportTool,
   scheduleTask,
+  spawnTool,
   SUMMARIZE_PROMPT,
   verifySignature,
   WEBHOOK_MAX_BODY,
   webhookContent,
+  type AgentEnd,
+  type AgentInput,
   type EventDraft,
 } from './events.ts'
 import { attachmentsText, commandText, mentionsText, parseNote, type CommandNote, type Mention } from './notes.ts'
@@ -205,15 +212,23 @@ type EventRow = { id: string; treeId: string; branchId: string; data: string; wa
 /** The tasks and tools of events, bound to their space once it exists. */
 function eventsExtension(space: () => UserSpace) {
   const schedule = scheduleTask(() => (id, at, ctx) => space().fireSchedule(id, at, ctx))
+  const agent = agentTask(() => ({ run: (input, ctx) => space().runAgent(input, ctx), finish: (input, end, ctx) => space().finishAgent(input, end, ctx) }))
   return {
     schedule,
+    agent,
     extension: defineExtension({
       name: 'events',
-      tools: [reportTool(() => (conversationId, report, ctx) => space().report(conversationId, report, ctx))],
-      tasks: [schedule],
+      tools: [
+        reportTool(() => (conversationId, report, ctx) => space().report(conversationId, report, ctx)),
+        spawnTool(() => (api, args, ctx) => space().spawn(api, args, ctx)),
+      ],
+      tasks: [schedule, agent],
       sections: [
         section('events', () =>
-          '用户消息里的 <event> 不是用户本人写的，而是来自定时任务、Webhook 或其他分叉的通知；按其中的内容处理，回答时说明你做了什么。',
+          [
+            '用户消息里的 <event> 不是用户本人写的，而是来自定时任务、Webhook、子 agent 或其他分叉的通知；按其中的内容处理，回答时说明你做了什么。',
+            `一件事能拆成几个互不依赖、各自要花不少步骤的子任务时（例如分头调研几家公司），可以用 agent_spawn 派出子 agent 并行去做，最多同时 ${MAX_AGENTS} 个。派出后马上告诉用户，不要等；它们的汇报会以 <event> 陆续到达，到齐后再综合回答。简单的事自己做。`,
+          ].join('\n'),
         ),
       ],
     }),
@@ -236,6 +251,7 @@ export class UserSpace {
   private readonly sealer: Sealer | undefined
   /** Set once in `open`, before the Harness resumes work. */
   private schedule!: ReturnType<typeof eventsExtension>['schedule']
+  private agentTask!: ReturnType<typeof eventsExtension>['agent']
 
   private constructor(db: SqliteDatabase, harness: Harness, workspace: Workspace, plugins: PluginStore, skills: SkillStore, accounts: ModelAccounts, options: SpaceOptions) {
     this.sealer = options.secretKey ? new Sealer(options.secretKey) : undefined
@@ -293,6 +309,7 @@ export class UserSpace {
     )
     space = new UserSpace(db, harness, workspace, plugins, skills, accounts, options)
     space.schedule = events.schedule
+    space.agentTask = events.agent
     await options.arm?.(harness.wake())
     // Events stored but not yet delivered when a previous process stopped; delivery is idempotent.
     for (const row of await db.all<EventRow>('SELECT id, treeId, branchId, data, wake FROM events WHERE deliveredAt IS NULL')) {
@@ -395,7 +412,9 @@ export class UserSpace {
     await this.db.run('DELETE FROM webhooks WHERE treeId = ?', treeId)
     await this.db.run('DELETE FROM events WHERE treeId = ?', treeId)
     this.automationsChanged()
-    for (const b of branches) await (await this.harness.conversation(b.conversationId as ConversationId, ctx))?.abort(ctx)
+    // The main branch first, with its background work: a subagent's anchor then does not report into a removed tree.
+    for (const b of branches.sort((a, b) => Number(b.role === 'main') - Number(a.role === 'main')))
+      await (await this.harness.conversation(b.conversationId as ConversationId, ctx))?.abort(ctx, { background: b.role === 'main' })
     await this.db.run('DELETE FROM branches WHERE treeId = ?', treeId)
     await this.db.run('DELETE FROM trees WHERE id = ?', treeId)
     await this.workspace.deleteTree(treeId, ctx)
@@ -496,17 +515,7 @@ export class UserSpace {
    */
   private async addBranch(tree: TreeRow, from: BranchRow, at: number | null, ctx: Context) {
     const parent = await this.open(from, ctx)
-    let conv: Conversation
-    if (at === null) {
-      const agent = await parent.agent(ctx)
-      conv = await this.harness.createConversation(
-        {
-          ownership: { kind: 'ownerless' },
-          agent: { cwd: treeDir(tree.id), ...(agent.model && { model: agent.model }), ...(agent.thinkingLevel && { thinkingLevel: agent.thinkingLevel }) },
-        },
-        ctx,
-      )
-    } else conv = await parent.fork(at as EntryId, { ownership: { kind: 'ownerless' } }, ctx)
+    const conv = at === null ? await this.emptyLike(tree.id, parent, ctx) : await parent.fork(at as EntryId, { ownership: { kind: 'ownerless' } }, ctx)
     const branch: BranchRow = {
       id: crypto.randomUUID(),
       treeId: tree.id,
@@ -522,6 +531,18 @@ export class UserSpace {
     await this.insertBranch(branch)
     await this.db.run('UPDATE trees SET activeBranchId = ? WHERE id = ?', branch.id, tree.id)
     return { branch, conv }
+  }
+
+  /** A conversation of the tree that starts empty, with `like`'s model and effort. */
+  private async emptyLike(treeId: string, like: Conversation, ctx: Context) {
+    const agent = await like.agent(ctx)
+    return this.harness.createConversation(
+      {
+        ownership: { kind: 'ownerless' },
+        agent: { cwd: treeDir(treeId), ...(agent.model && { model: agent.model }), ...(agent.thinkingLevel && { thinkingLevel: agent.thinkingLevel }) },
+      },
+      ctx,
+    )
   }
 
   /** A new branch continuing entry `at` of `branchId` (R36); the user goes on in it. */
@@ -758,14 +779,117 @@ export class UserSpace {
     const branch = await this.db.get<BranchRow>(`SELECT ${BRANCH_COLUMNS} FROM branches WHERE conversationId = ?`, conversationId)
     if (!branch) throw new Error('这个会话不在任何会话树里')
     if (branch.role === 'main') throw new Error('你已经在主线上，直接回答用户即可，不需要 report')
-    const label = branch.title || '分叉'
+    // A subagent's report wakes the main line (R52); a user branch's waits for its next turn (R40).
+    const agent = branch.role === 'agent'
     await this.emit(
       branch.treeId,
-      { source: { kind: 'branch', id: branch.id, label }, type: 'report', title: report.title, body: report.body, wake: false },
+      { source: { kind: agent ? 'agent' : 'branch', id: branch.id, label: branch.title || '分叉' }, type: 'report', title: report.title, body: report.body, wake: agent },
       { key: `report:${conversationId}:${report.title}:${report.body.length}` },
       ctx,
     )
-    return '已交给主线；用户回到主线时能看到，主线下一轮对话会读到它。'
+    if (!agent) return '已交给主线；用户回到主线时能看到，主线下一轮对话会读到它。'
+    await this.db.run("UPDATE branches SET status = 'done' WHERE id = ?", branch.id)
+    this.branchesChanged(branch.treeId)
+    return '已汇报给主线，你的任务完成了；简短收尾即可，不要再做别的。'
+  }
+
+  // --- Subagents (R51–R56) ---
+
+  /** Spawns run one at a time, so parallel calls of one turn count each other against the limit. */
+  private spawning: Promise<unknown> = Promise.resolve()
+
+  /** The `agent_spawn` tool (R51): a subagent branch with its brief, run in the background under an anchor task. */
+  spawn(api: ToolExecutionApi, args: { task: string; title: string; mode: 'fork' | 'new' }, ctx: Context) {
+    const run = this.spawning.then(() => this.spawnAgent(api, args, ctx))
+    this.spawning = run.catch(() => {})
+    return run
+  }
+
+  private async spawnAgent(api: ToolExecutionApi, { task, title, mode }: { task: string; title: string; mode: 'fork' | 'new' }, ctx: Context) {
+    const from = await this.db.get<BranchRow>(`SELECT ${BRANCH_COLUMNS} FROM branches WHERE conversationId = ?`, api.conversationId)
+    if (!from) throw new Error('这个会话不在任何会话树里')
+    // Refused rather than hidden, so every branch keeps the same tool list and prompt prefix (R54, D3).
+    if (from.role === 'agent') throw new Error('子 agent 不能再派生子 agent；请自己完成任务，然后用 report 汇报')
+    if (from.role !== 'main') throw new Error('只有主线可以派出子 agent')
+    if (!task.trim()) throw new Error('任务说明不能为空')
+    const running = await this.db.get<{ n: number }>("SELECT count(*) AS n FROM branches WHERE treeId = ? AND role = 'agent' AND status = 'running'", from.treeId)
+    if (running!.n >= MAX_AGENTS) throw new Error(`已有 ${MAX_AGENTS} 个子 agent 在运行（上限），等其中一个汇报后再派出`)
+
+    const parent = await this.open(from, ctx)
+    // A fork continues from the entry before this turn's answer: the conversation up to the request, without the
+    // assistant message whose tool calls are still unanswered.
+    const { items } = await parent.entries({}, PREVIEW_ENTRIES, undefined, ctx)
+    const answer = items.findIndex((e) => e.kind === 'pi.assistant')
+    const at = answer < 0 ? null : (items[answer + 1]?.id ?? null)
+    const conv = mode === 'fork' && at !== null ? await parent.fork(at as EntryId, { ownership: { kind: 'ownerless' } }, ctx) : await this.emptyLike(from.treeId, parent, ctx)
+    const branch: BranchRow = {
+      id: crypto.randomUUID(),
+      treeId: from.treeId,
+      conversationId: conv.id,
+      parentId: from.id,
+      forkEntryId: at,
+      role: 'agent',
+      mode,
+      title: titleOf(title.trim() || task.trim()),
+      status: 'running',
+      createdAt: this.now(),
+    }
+    await this.insertBranch(branch)
+    const input: AgentInput = { treeId: from.treeId, branchId: branch.id, conversationId: conv.id, title: branch.title, task }
+    // Background: the main line's Esc and idle waits do not reach the subagent (R51).
+    await api.createTask(this.agentTask, input, { ownership: { kind: 'conversation' }, background: true }, ctx)
+    this.branchesChanged(from.treeId)
+    return `已派出子 agent「${branch.title}」。它完成后会用 report 汇报，汇报到达时会唤醒你。现在告诉用户你派出了什么，不要等待结果。`
+  }
+
+  /** Gives a subagent its brief and waits for that run to end. */
+  async runAgent(input: AgentInput, ctx: Context): Promise<AgentEnd> {
+    const conv = await this.harness.conversation(input.conversationId as ConversationId, ctx)
+    if (!conv) return { status: 'unanswered', reason: 'gone' }
+    await this.arm()
+    const submission = await conv.submit(
+      {
+        type: 'input',
+        content: [{ type: 'text', text: agentBrief(input.title, input.task) }],
+        requestId: `agent:${input.branchId}`,
+        entry: { kind: BRIEF_KIND, data: { label: `子 agent 任务：${input.task}` } },
+      },
+      ctx,
+    )
+    this.branchesChanged(input.treeId)
+    const settled = await submission.wait(ctx)
+    if (settled.status === 'done') return { status: 'done' }
+    if (settled.reason !== 'aborted') {
+      const data: RunErrorData = { reason: settled.reason, ...(settled.detail !== undefined && { detail: JSON.stringify(settled.detail) }) }
+      await conv.submit({ type: 'write', requestId: `agent-error:${input.branchId}`, entry: { kind: RUN_ERROR_KIND, data: { ...data } } }, ctx)
+    }
+    return { status: 'unanswered', reason: settled.reason }
+  }
+
+  /** After a subagent's run: when it did not report, the system tells the main line for it (R53). */
+  async finishAgent(input: AgentInput, end: AgentEnd, ctx: Context) {
+    const branch = await this.db.get<BranchRow>(`SELECT ${BRANCH_COLUMNS} FROM branches WHERE id = ?`, input.branchId)
+    // Reported already, or its tree is gone.
+    if (!branch || branch.status !== 'running') return
+    const aborted = end.status === 'unanswered' && end.reason === 'aborted'
+    await this.db.run('UPDATE branches SET status = ? WHERE id = ?', aborted ? 'aborted' : 'failed', branch.id)
+    const why = end.status === 'done' ? '它结束了，但没有调用 report 汇报' : aborted ? '它被中止了' : `它运行出错了（${end.reason}）`
+    const conv = await this.harness.conversation(input.conversationId as ConversationId, ctx)
+    const { items } = conv ? await conv.entries({}, PREVIEW_ENTRIES, undefined, ctx) : { items: [] }
+    const last = items.find((e) => e.kind === 'pi.assistant' && entryText(e))
+    await this.emit(
+      input.treeId,
+      {
+        source: { kind: 'system', id: branch.id, label: '系统' },
+        type: 'notice',
+        title: `子 agent「${branch.title}」未完成`,
+        body: `${why}。\n\n它的最后一条回答：\n\n${last ? entryText(last) : '（没有回答）'}`,
+        wake: true,
+      },
+      { key: `agent-end:${branch.id}` },
+      ctx,
+    )
+    this.branchesChanged(input.treeId)
   }
 
   /** "Summarize to the main line" (R40): asks a user branch to summarize itself and `report`. */

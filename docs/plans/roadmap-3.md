@@ -320,7 +320,7 @@ Event {
 | V3 | fork 出来的分叉能命中主线的 prompt cache | **通过。** Anthropic 中转上，主线和 fork 在同一前缀上的 `cacheRead` 都是 5191 个 token；fork 虽然有新的 provider session id，但缓存仍命中。因此子 agent 和用户分叉可以共用前缀，不必特意共享 session id 2026-10-23 在新中转（OpenAI Responses）上重跑：主线 `cacheRead` 2338，fork 只有 444，只命中一部分。OpenAI 的缓存按 `prompt_cache_key`（会话 id）路由，fork 换了 id 就可能落到别的机器。2026-10-23 阶段 4 前验证“同一棵树共用 cache key”：用 `conversationCreated` 把分叉的 `pi.provider.sessionId` 设成父会话的，两次对照中 fork 的 `cacheRead` 都约 1500（不共用约 1400–1600，主线约 7000），没有改善。所以分叉保留各自的 session id，接受部分未命中 | 让同一棵树的分叉共用 session id，或接受缓存未命中 |
 | V4 | 自定义 entry kind 能作为“用户输入”提交，也能作为不触发运行的写入追加 | **通过。** `submit({type:"input", entry:{kind:"app.event",...}})` 照常触发一轮并得到回答，transcript 里记录的是 `app.event`；`submit({type:"write", entry:{kind:"app.note",...}})` 空闲时立即追加、不触发运行，模型看不到它的内容。fork 只带到 fork 点为止的记录。关闭并重新打开同一个 SQLite 文件后，根会话、历史和 fork 都在 | Event 改用普通用户输入，元数据另存宿主表 |
 | V5 | `watch()` 推给前端的数据量 | **通过。** 一轮 4000 字的流式回答约 26 帧、10.5 KB，最大一帧 4.6 KB；在已有 120 多条记录的会话里同样的回答是 26 帧、10.7 KB，所以帧大小不随历史增长。新连接拿到的完整快照约 57 KB（122 条记录）。多个分叉同时运行的情况未测 | 前端改为按需拉取，或合并帧 |
-| V6 | 后台子 agent 的写法（示例 23）在进程被杀后能正确恢复，并且只汇报一次 | 未验证（阶段 7 开始前做） | 调整锚点任务的写法 |
+| V6 | 后台子 agent 的写法（示例 23）在进程被杀后能正确恢复，并且只汇报一次 | **通过。** 2026-10-23：锚点任务用固定的 requestId 提交任务说明、等运行结束，“未完成”通知用固定的去重键。Node 上关闭再打开、Cloudflare 上 SIGKILL workerd 后，子 agent 的回答都接着写完，主线只收到一张卡片（示例在 pi-durable 1.4.0 里编号为 22） | 调整锚点任务的写法 |
 
 ## 开发顺序
 
@@ -333,7 +333,7 @@ Event {
 | 4 | 树形会话：树索引、分叉、版本切换、小地图、弹窗、返回主线 | 3、V3 | R35–R39、R41（2026-10-23 完成；侧边“支线”界面改为树的分叉） |
 | 5 | 共用文件系统、读前检查、软隔离 | 4 | R42–R45（2026-10-23 完成；用 `@` 引用其他会话的文件时，先复制到本会话的 `attachments/` 再读；读一个已删除的文件后可以重新创建它） |
 | 6 | Event：卡片、唤醒、去重、定时任务、webhook；总结给主线 | 4 | R46–R50、R40（R40 要用 `report` 和 Event 卡片，从阶段 4 挪到这里；2026-10-23 完成。每个分支每分钟最多被唤醒 6 次，超出的 Event 只记进对话；webhook 请求体最多 64 KiB，每个会话一个 webhook，密钥只显示一次、加密保存（需要 `TOKEN_ENCRYPTION_KEY`），签名是 `x-gense-signature: sha256=hex(HMAC(密钥, 时间戳.请求体))` 加 `x-gense-timestamp`，可选 `idempotency-key`；错过的定时运行直接跳过，不补发） |
-| 7 | 子 agent：`agent_spawn`、`report`、限制、未汇报处理 | 5、6、V6 | R51–R56 |
+| 7 | 子 agent：`agent_spawn`、`report`、限制、未汇报处理 | 5、6、V6 | R51–R56（2026-10-23 完成。`fork` 模式从本轮回答之前的那条记录分叉，子 agent 看不到主线这一轮还没得到结果的工具调用；“未完成”卡片来源记为系统；`report` 的参数沿用阶段 6 的 `{title, body}`，没有 `status`/`files`） |
 | 8 | 自部署 sandbox：两种镜像、Docker、`bash`、资源限制、休眠 | 5 | R57–R61 |
 | 9 | 整体 UI/UX 走查 | 全部 | 走查记录 |
 

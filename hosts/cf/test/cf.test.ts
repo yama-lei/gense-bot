@@ -1,8 +1,8 @@
 // Stage-2 E2E: the stage-1 behaviour (R31) and crash recovery (R32) on the Workers runtime, through `wrangler dev`.
-import { LONG_REPLY, RUN_ERROR_KIND, type TreeMeta } from '@gense/core'
+import { EVENT_KIND, LONG_REPLY, RUN_ERROR_KIND, type EventData, type TreeMeta } from '@gense/core'
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
-import { accountsScenario, branchesScenario, Client, documentsScenario, eventsScenario, fakeUpstream, ledgerScenario, login, pluginEnv, pluginScenario, skillsScenario, stopReason, tempDir, textOf, workspaceScenario } from '../../node/test/helpers.ts'
+import { accountsScenario, agentsScenario, branchesScenario, Client, documentsScenario, eventsScenario, fakeUpstream, ledgerScenario, login, pluginEnv, pluginScenario, skillsScenario, stopReason, tempDir, textOf, workspaceScenario } from '../../node/test/helpers.ts'
 import { addUser, wranglerDev, type Dev } from './helpers.ts'
 
 const EMAIL = 'a@example.com'
@@ -133,5 +133,39 @@ test('R40, R46–R50: webhooks, branch summaries and schedules arrive as Events'
   const { cookie } = await login(dev.url, EMAIL, PASSWORD)
   const client = await Client.connect(dev.url, cookie)
   await eventsScenario(client, dev.url)
+  client.close()
+})
+
+test('R51–R55: subagents report back to the main line, and one is stopped', { timeout: 90_000 }, async () => {
+  const { cookie } = await login(dev.url, EMAIL, PASSWORD)
+  const client = await Client.connect(dev.url, cookie)
+  await agentsScenario(client)
+  client.close()
+})
+
+test('V6: a subagent cut off by killing workerd finishes after restart and is reported once', { timeout: 120_000 }, async () => {
+  let { cookie } = await login(dev.url, EMAIL, PASSWORD)
+  let client = await Client.connect(dev.url, cookie)
+  const tree = await client.request<TreeMeta>({ t: 'tree.create' })
+  await client.request({ t: 'watch', treeId: tree.id })
+  const { branchId: main } = await client.request<{ branchId: string }>({ t: 'send', treeId: tree.id, text: '[派出] [长回答] 长任务', requestId: 'v6' })
+  const agent = await client.until(() => client.branches.get(tree.id)?.branches.find((b) => b.role === 'agent'), 20_000, 'agent')
+  await client.request({ t: 'watch', treeId: tree.id, branchId: agent.id })
+  await client.until(() => {
+    const live = client.views.get(tree.id)?.docs['pi.live'] as { generation?: { message?: { content?: { text?: string }[] } } } | undefined
+    return client.shown.get(tree.id) === agent.id && (live?.generation?.message?.content?.[0]?.text?.length ?? 0) > 50
+  }, 20_000, 'partial answer')
+  client.close()
+  await dev.stop('SIGKILL')
+
+  dev = await wranglerDev(stateDir, vars)
+  ;({ cookie } = await login(dev.url, EMAIL, PASSWORD))
+  client = await Client.connect(dev.url, cookie)
+  await client.request({ t: 'watch', treeId: tree.id, branchId: main })
+  const notices = () => (client.views.get(tree.id)?.entries ?? []).filter((e) => e.kind === EVENT_KIND)
+  const notice = await client.until(() => client.shown.get(tree.id) === main && notices()[0], 60_000, 'notice after restart')
+  assert.match((notice.data as EventData).body, new RegExp(LONG_REPLY.slice(-20)))
+  await client.until(() => client.branches.get(tree.id)?.branches.find((b) => b.id === main)?.status === 'idle', 30_000, 'main idle')
+  assert.equal(notices().length, 1)
   client.close()
 })

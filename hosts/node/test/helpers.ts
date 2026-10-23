@@ -587,3 +587,28 @@ export async function eventsScenario(client: Client, url: string) {
   await client.request({ t: 'tree.delete', treeId: tree.id })
   await client.until(() => !client.schedules.some((s) => s.treeId === tree.id) && !client.webhooks.some((w) => w.treeId === tree.id), 5000, 'automations removed')
 }
+
+/** R51–R55 through the socket: subagents appear as branches of the tree, report back, and can be stopped. */
+export async function agentsScenario(client: Client) {
+  const tree = await client.request<TreeMeta>({ t: 'tree.create' })
+  await client.request({ t: 'watch', treeId: tree.id })
+  const entries = () => client.views.get(tree.id)?.entries ?? []
+  const agents = () => client.branches.get(tree.id)?.branches.filter((b) => b.role === 'agent') ?? []
+  const { branchId: main } = await client.request<{ branchId: string }>({ t: 'send', treeId: tree.id, text: '[派出] [汇报] 甲公司|[汇报] 乙公司|[长回答] 丙公司', requestId: 'g0' })
+
+  // Two report and wake the main line; the third is still writing, and is stopped from its branch (R55).
+  const reports = () => entries().filter((e) => e.kind === EVENT_KIND && (e.data as EventData).source.kind === 'agent')
+  await client.until(() => reports().length === 2, 20_000, 'two reports')
+  assert.deepEqual(agents().filter((b) => b.status === 'done').map((b) => b.title).sort(), ['乙公司', '甲公司'])
+  const slow = agents().find((b) => b.title === '丙公司')!
+  assert.equal(slow.parentId, main)
+  await client.request({ t: 'abort', treeId: tree.id, branchId: slow.id })
+  const notice = await client.until(() => entries().find((e) => e.kind === EVENT_KIND && (e.data as EventData).source.kind === 'system'), 20_000, 'stop notice')
+  assert.match((notice.data as EventData).title, /丙公司.*未完成/)
+  await client.until(() => agents().find((b) => b.id === slow.id)?.status === 'aborted', 5000, 'aborted')
+  await client.until(() => client.branches.get(tree.id)?.branches.find((b) => b.id === main)?.status === 'idle' && entries().at(-1)?.kind === 'pi.assistant', 20_000, 'main answers')
+
+  // The tree is still one conversation (R35), and its subagents go with it.
+  assert.equal(client.trees.filter((t) => t.id === tree.id).length, 1)
+  await client.request({ t: 'tree.delete', treeId: tree.id })
+}

@@ -5,7 +5,7 @@ import { pluginCatalog } from '@gense/core/catalog'
 import { useRoute } from '../router'
 import type { Store } from '../store'
 import type { UploadedFile } from '@gense/core/protocol'
-import type { AppState, Conversation, DriveFile, Effort, ModelOption, Outgoing, PluginInfo, Preferences, WorkspaceFile } from '../types'
+import type { AppState, Conversation, DriveFile, Effort, ModelOption, Outgoing, PluginInfo, Preferences, ToolResult, Turn, WorkspaceFile } from '../types'
 import { HostSocket } from './socket'
 import { toTurns } from './turns'
 
@@ -31,6 +31,26 @@ function saveBase64(name: string, mimeType: string, base64: string) {
   a.click()
   setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
+
+const VIEW_STATES_KEY = 'gense.viewStates'
+
+/** View state (an edited email, a saved artifact) is kept per browser for now, keyed by `treeId:callId`. */
+const loadViewStates = (): Record<string, unknown> => {
+  try {
+    return JSON.parse(localStorage.getItem(VIEW_STATES_KEY) ?? '{}')
+  } catch {
+    return {}
+  }
+}
+const saveViewStates = (v: Record<string, unknown>) => {
+  try {
+    localStorage.setItem(VIEW_STATES_KEY, JSON.stringify(v))
+  } catch {
+    // Then it lasts only for this tab.
+  }
+}
+const withViewStates = (treeId: string, turns: Turn[], states: Record<string, unknown>) =>
+  turns.map((t) => (t.toolCalls.some((c) => `${treeId}:${c.id}` in states) ? { ...t, toolCalls: t.toolCalls.map((c) => ({ ...c, viewState: states[`${treeId}:${c.id}`] ?? c.viewState })) } : t))
 
 const loadPrefs = (): Partial<Preferences> => {
   try {
@@ -64,6 +84,7 @@ export function usePiStore(onUnauthorized: () => void): Store {
   // Workspace listings of the chats whose file panel was opened; kept fresh while their conversation changes.
   const [workspaces, setWorkspaces] = useState<Record<string, WorkspaceFile[]>>({})
   const [uploads, setUploads] = useState<DriveFile[]>([])
+  const [viewStates, setViewStates] = useState<Record<string, unknown>>(loadViewStates)
   const [local, setLocal] = useState<LocalState>(() => ({
     projects: [],
     memories: [],
@@ -104,7 +125,7 @@ export function usePiStore(onUnauthorized: () => void): Store {
           projectId: null,
           pinned: t.pinned,
           updatedAt: t.updatedAt,
-          turns: host.views[t.id] ? toTurns(host.views[t.id], { model: prefs.model, effort: prefs.defaultEffort }) : [],
+          turns: host.views[t.id] ? withViewStates(t.id, toTurns(host.views[t.id], { model: prefs.model, effort: prefs.defaultEffort }), viewStates) : [],
           ...(workspaces[t.id] && { files: workspaces[t.id] }),
         }),
       ),
@@ -116,7 +137,7 @@ export function usePiStore(onUnauthorized: () => void): Store {
       modelsError: host.connected || !host.trees ? null : '与服务器的连接已断开，正在重连…',
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [local, host, models, plugins, prefs.model, workspaces, uploads],
+    [local, host, models, plugins, prefs.model, workspaces, uploads, viewStates],
   )
   const stateRef = useRef(state)
   stateRef.current = state
@@ -192,8 +213,14 @@ export function usePiStore(onUnauthorized: () => void): Store {
     attach,
     stop: (convId) => void socket.request({ t: 'abort', treeId: convId }).catch(report),
     reset: () => {},
-    callToolFromView: async () => ({ content: LATER, isError: true }),
-    setViewState: () => {},
+    callToolFromView: (convId, _turnId, _callId, name, args) =>
+      socket.request<ToolResult>({ t: 'tool.call', treeId: convId, name, args }).catch((e: unknown) => ({ content: e instanceof Error ? e.message : String(e), isError: true })),
+    setViewState: (convId, _turnId, callId, viewState) =>
+      setViewStates((v) => {
+        const next = { ...v, [`${convId}:${callId}`]: viewState }
+        saveViewStates(next)
+        return next
+      }),
     upload: async (file) => {
       if (file.size > 20 * 1024 * 1024) throw new Error(`${file.name} 超过 20 MB`)
       const uploaded = toDriveFile(await socket.request<UploadedFile>({ t: 'upload', name: file.name, base64: await fileBase64(file) }))

@@ -18,8 +18,10 @@ import type { PluginValue } from './catalog.ts'
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite'
 import { createEditTool, createReadTool, createWriteTool } from '@earendil-works/pi-durable/tools'
 import type { ImageContent, TextContent } from '@earendil-works/pi-ai'
-import { RUN_ERROR_KIND, type Effort, type ModelInfo, type RunErrorData, type TreeMeta } from './protocol.ts'
+import { Value } from 'typebox/value'
+import { RUN_ERROR_KIND, type Effort, type ModelInfo, type RunErrorData, type ToolCallResult, type TreeMeta } from './protocol.ts'
 import { DATA_DIR, SKILLS_DIR, toBase64, treeDir, Workspace, type EnvFactory } from './workspace.ts'
+import { artifactExtension, artifactInput, emailExtension, saveArtifact, uiExtension } from './plugins/display.ts'
 import { imageExtension } from './plugins/image.ts'
 import { PluginStore, type PluginStoreOptions } from './plugins/store.ts'
 import { webExtension } from './plugins/web.ts'
@@ -47,7 +49,13 @@ const PREAMBLE = [
 const gense = defineExtension({ name: 'gense', sections: [section('assistant', () => PREAMBLE)] })
 
 /** Plugins this core implements, by catalog id; each extension reads its user's settings when a tool runs. */
-const PLUGINS: Record<string, (config: () => Record<string, PluginValue>) => Extension> = { web: webExtension, image: imageExtension }
+const PLUGINS: Record<string, (config: () => Record<string, PluginValue>) => Extension> = {
+  artifact: artifactExtension,
+  email: emailExtension,
+  ui: uiExtension,
+  web: webExtension,
+  image: imageExtension,
+}
 
 const files = defineExtension({
   name: 'files',
@@ -203,6 +211,16 @@ export class UserSpace {
   async files(treeId: string) {
     await this.row(treeId)
     return this.workspace
+  }
+
+  /** A tool called by a view rather than the model (MCP Apps `tools/call`); only the ones a view needs. */
+  async callTool(treeId: string, name: string, args: unknown, ctx: Context = BACKGROUND_CONTEXT): Promise<ToolCallResult> {
+    await this.row(treeId)
+    if (name !== 'artifact_save') throw new Error(`界面不能调用 ${name}`)
+    if (!this.plugins.active().includes('artifact')) throw new Error('Artifact 插件已关闭')
+    if (!Value.Check(artifactInput, args)) throw new Error('参数无效')
+    const path = await saveArtifact(await this.workspace.env(treeDir(treeId)), args, ctx)
+    return { content: `已保存到 ${path}`, structuredContent: { path } }
   }
 
   private async conversation(treeId: string, ctx: Context) {

@@ -228,6 +228,28 @@ export async function pluginScenario(client: Client, upstream: { keys: string[] 
   assert.equal(read.base64, DOT_PNG)
   assert.equal(upstream.keys.at(-1), 'image-key')
 
+  // Artifacts: the model shows one, the view saves it into the workspace; saving the same content again reuses the file.
+  const artifact = { title: '提纲', type: 'markdown', content: '# 提纲' }
+  await assert.rejects(client.request({ t: 'tool.call', treeId: tree.id, name: 'artifact_save', args: artifact }), /已关闭/)
+  await client.request({ t: 'plugin.set', pluginId: 'artifact', enabled: true })
+  const shown = await ask(`[工具 artifact_create] ${JSON.stringify(artifact)}`, 5)
+  assert.deepEqual(shown.model![0]!.details, artifact)
+  const saved = await client.request<{ structuredContent: { path: string } }>({ t: 'tool.call', treeId: tree.id, name: 'artifact_save', args: artifact })
+  assert.equal(saved.structuredContent.path, `/data/sessions/${tree.id}/artifacts/提纲.md`)
+  const again = await client.request<{ structuredContent: { path: string } }>({ t: 'tool.call', treeId: tree.id, name: 'artifact_save', args: artifact })
+  assert.equal(again.structuredContent.path, saved.structuredContent.path)
+  const other = await client.request<{ structuredContent: { path: string } }>({ t: 'tool.call', treeId: tree.id, name: 'artifact_save', args: { ...artifact, content: '# 第二版' } })
+  assert.equal(other.structuredContent.path, `/data/sessions/${tree.id}/artifacts/提纲 (2).md`)
+  await assert.rejects(client.request({ t: 'tool.call', treeId: tree.id, name: 'write', args: {} }), /不能调用/)
+
+  // Generative UI: a valid tree is shown as is, an invalid one is refused before the tool runs.
+  await client.request({ t: 'plugin.set', pluginId: 'ui', enabled: true })
+  const ui = { title: '对比', blocks: [{ type: 'stat', label: '价格', value: '¥5' }] }
+  const rendered = await ask(`[工具 ui_render] ${JSON.stringify(ui)}`, 6)
+  assert.deepEqual(rendered.model![0]!.details, ui)
+  const bad = await ask('[工具 ui_render] {"blocks":[{"type":"video"}]}', 7)
+  assert.equal(bad.model![0]!.isError, true)
+
   await client.request({ t: 'plugin.set', pluginId: 'web', enabled: false })
   await client.until(() => plugin('web')?.enabled === false, 5_000, 'web disabled')
   await client.request({ t: 'tree.delete', treeId: tree.id })

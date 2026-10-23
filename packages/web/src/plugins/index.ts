@@ -10,7 +10,6 @@ export const tools: Record<string, { plugin: string; resourceUri?: string }> = {
   artifact_create: { plugin: 'artifact', resourceUri: 'ui://artifact/view' },
   artifact_save: { plugin: 'artifact' },
   email_draft: { plugin: 'email', resourceUri: 'ui://email/draft' },
-  email_saveDraft: { plugin: 'email' },
   image_generate: { plugin: 'image', resourceUri: 'ui://image/view' },
   ui_render: { plugin: 'ui', resourceUri: 'ui://ui/render' },
 }

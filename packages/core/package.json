@@ -5,7 +5,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./protocol": "./src/protocol.ts",
-    "./catalog": "./src/catalog.ts"
+    "./catalog": "./src/catalog.ts",
+    "./ui": "./src/plugins/ui-schema.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts"

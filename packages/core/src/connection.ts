@@ -89,6 +89,8 @@ export class Connection {
         return space.workspace.upload(r.name, fromBase64(r.base64))
       case 'uploads':
         return space.workspace.uploads()
+      case 'tool.call':
+        return space.callTool(r.treeId, r.name, r.args)
       case 'plugin.set':
         return space.plugins.set(r.pluginId, {
           ...(r.enabled !== undefined && { enabled: r.enabled }),

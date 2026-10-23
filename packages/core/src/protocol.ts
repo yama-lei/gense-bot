@@ -47,6 +47,13 @@ export interface UploadedFile {
 }
 
 /** Requests carry an `id`; the host answers each with one `reply`. */
+/** A tool's result as a view sees it (MCP `CallToolResult`). */
+export interface ToolCallResult {
+  content: string
+  structuredContent?: unknown
+  isError?: boolean
+}
+
 export type ClientRequest =
   | { t: 'tree.create'; id: number }
   | { t: 'tree.update'; id: number; treeId: string; title?: string; pinned?: boolean }
@@ -66,6 +73,7 @@ export type ClientRequest =
   | { t: 'uploads'; id: number }
   /** Switches a plugin or changes some of its settings; `null` returns a value to its default or clears a secret. */
   | { t: 'plugin.set'; id: number; pluginId: string; enabled?: boolean; values?: Record<string, PluginValue | null>; secrets?: Record<string, string | null> }
+  | { t: 'tool.call'; id: number; treeId: string; name: string; args: unknown }
 
 export type ServerMessage =
   | { t: 'hello'; email: string; models: ModelInfo[]; defaultModel: ModelInfo | null }

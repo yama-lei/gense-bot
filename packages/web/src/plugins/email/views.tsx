@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { IconAlert, IconCheck, IconMail } from '../../components/Icons'
+import { IconAlert, IconCopy, IconMail } from '../../components/Icons'
 import type { ViewProps } from '../types'
 import type { DraftInput } from '../contracts'
 
@@ -9,30 +9,28 @@ const labels: [keyof DraftInput, string][] = [
   ['body', '正文'],
 ]
 
-type State = { fields?: DraftInput; savedDraftId?: string }
+type State = { fields?: DraftInput }
 
-// Saving to the Drafts folder is the only action; the user sends from their mail app,
-// so what gets sent is always the version they reviewed (docs/design/architecture.md "smail").
+// Nothing is sent from here: the user copies the draft or opens it in their mail app and sends it there, so what
+// gets sent is always the version they reviewed.
 export function EmailDraftView({ toolInput, viewState, host }: ViewProps<DraftInput, DraftInput, State>) {
   const fields = viewState?.fields ?? toolInput
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(fields)
-  const [saving, setSaving] = useState(false)
-  const saved = viewState?.savedDraftId
+  const [copied, setCopied] = useState(false)
+  const mailto = `mailto:${encodeURIComponent(fields.to).replace(/%2C/gi, ',').replace(/%40/g, '@')}?subject=${encodeURIComponent(fields.subject)}&body=${encodeURIComponent(fields.body)}`
 
-  const save = async () => {
-    setSaving(true)
-    const r = await host.callTool('email_saveDraft', fields)
-    setSaving(false)
-    if (!r.isError) host.setViewState({ fields, savedDraftId: (r.structuredContent as { draftId: string }).draftId })
+  const copy = () => {
+    navigator.clipboard?.writeText(`收件人：${fields.to}\n主题：${fields.subject}\n\n${fields.body}`)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
   }
 
   return (
-    <div className={'confirm-card' + (saved ? ' confirmed' : '')}>
+    <div className="confirm-card">
       <div className="confirm-head">
         <IconMail />
         <strong>邮件草稿</strong>
-        {saved && <span className="status-chip succeeded">已存入草稿箱</span>}
       </div>
       <dl>
         {labels.map(([key, label]) => (
@@ -49,7 +47,7 @@ export function EmailDraftView({ toolInput, viewState, host }: ViewProps<DraftIn
         ))}
       </dl>
       <p className="confirm-consequence">
-        <IconAlert width={15} height={15} /> 只写入 smail 草稿箱，不会发送。请在邮箱 App 中检查后自己发送。
+        <IconAlert width={15} height={15} /> 不会自动发送。请复制，或在邮箱 App 中打开后自己检查并发送。
       </p>
       <div className="confirm-actions">
         {editing ? (
@@ -57,7 +55,6 @@ export function EmailDraftView({ toolInput, viewState, host }: ViewProps<DraftIn
             <button
               className="btn primary"
               onClick={() => {
-                // An edited draft is a new version: it must be saved again.
                 host.setViewState({ fields: draft })
                 setEditing(false)
               }}
@@ -70,11 +67,12 @@ export function EmailDraftView({ toolInput, viewState, host }: ViewProps<DraftIn
           </>
         ) : (
           <>
-            {!saved && (
-              <button className="btn primary" disabled={saving} onClick={save}>
-                <IconCheck width={15} height={15} /> {saving ? '写入中…' : '存入草稿箱'}
-              </button>
-            )}
+            <a className="btn primary" href={mailto}>
+              <IconMail width={15} height={15} /> 在邮箱 App 中打开
+            </a>
+            <button className="btn" onClick={copy}>
+              <IconCopy width={15} height={15} /> {copied ? '已复制' : '复制'}
+            </button>
             <button className="btn" onClick={() => (setDraft(fields), setEditing(true))}>
               修改
             </button>

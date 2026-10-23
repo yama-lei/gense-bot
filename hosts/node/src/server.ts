@@ -1,6 +1,6 @@
 // Self-hosted deployment (ADR-0004 decision 3): one process, one SQLite file per user, sockets over `ws`.
 import { openNodeSqliteDatabase } from '@earendil-works/chord/sqlite/node'
-import { Auth, Connection, SESSION_COOKIE, SESSION_MAX_AGE_S, UserSpace, type ModelSetup, type User } from '@gense/core'
+import { accountApi, Auth, Connection, json, sameOrigin, sessionUser, UserSpace, type ModelSetup } from '@gense/core'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, stat } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
@@ -26,36 +26,13 @@ export const openAuth = async (dataDir: string) => {
   return Auth.open(await openNodeSqliteDatabase(join(dataDir, 'app.sqlite')))
 }
 
-const cookies = (req: IncomingMessage) =>
-  Object.fromEntries(
-    (req.headers.cookie ?? '').split(';').flatMap((part) => {
-      const i = part.indexOf('=')
-      return i < 0 ? [] : [[part.slice(0, i).trim(), decodeURIComponent(part.slice(i + 1).trim())]]
-    }),
-  ) as Record<string, string>
-
-const isHttps = (req: IncomingMessage) => req.headers['x-forwarded-proto'] === 'https' || 'encrypted' in req.socket
-
-const sessionCookie = (req: IncomingMessage, token: string, maxAge: number) =>
-  `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${isHttps(req) ? '; Secure' : ''}`
-
-/** Browsers send Origin on WebSocket and fetch POSTs; it must match the host the page came from. */
-const sameOrigin = (req: IncomingMessage) => {
-  const origin = req.headers.origin
-  if (!origin) return true
-  try {
-    return new URL(origin).host === req.headers.host
-  } catch {
-    return false
-  }
-}
-
-const json = (res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) => {
-  res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...headers })
-  res.end(JSON.stringify(body))
-}
-
-async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+/** The request as a web-standard Request, for the handlers core shares between hosts. */
+async function toRequest(req: IncomingMessage) {
+  const headers = new Headers()
+  for (const [k, v] of Object.entries(req.headers)) if (typeof v === 'string') headers.set(k, v)
+  const proto = req.headers['x-forwarded-proto'] === 'https' || 'encrypted' in req.socket ? 'https' : 'http'
+  const url = `${proto}://${req.headers.host ?? 'localhost'}${req.url ?? '/'}`
+  if (req.method === 'GET' || req.method === 'HEAD') return new Request(url, { method: req.method, headers })
   let size = 0
   const chunks: Buffer[] = []
   for await (const chunk of req as AsyncIterable<Buffer>) {
@@ -63,8 +40,12 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
     if (size > MAX_BODY) throw new Error('请求太大')
     chunks.push(chunk)
   }
-  const value = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
-  return value && typeof value === 'object' ? value : {}
+  return new Request(url, { method: req.method, headers, body: Buffer.concat(chunks) })
+}
+
+async function send(res: ServerResponse, response: Response) {
+  res.writeHead(response.status, Object.fromEntries(response.headers))
+  res.end(Buffer.from(await response.arrayBuffer()))
 }
 
 export async function startServer(config: HostConfig) {
@@ -92,34 +73,6 @@ export async function startServer(config: HostConfig) {
     if (existsSync(join(config.dataDir, 'users', user.id, 'pi.sqlite'))) await space(user.id)
   }
 
-  const currentUser = async (req: IncomingMessage): Promise<User | undefined> => {
-    const token = cookies(req)[SESSION_COOKIE]
-    return (token && (await auth.session(token))) || undefined
-  }
-
-  async function api(req: IncomingMessage, res: ServerResponse, path: string) {
-    if (req.method === 'POST' && !sameOrigin(req)) return json(res, 403, { error: '来源不匹配' })
-    if (path === '/api/login' && req.method === 'POST') {
-      const body = await readJson(req)
-      try {
-        const { token, user } = await auth.login(String(body.email ?? ''), String(body.password ?? ''))
-        return json(res, 200, { email: user.email }, { 'set-cookie': sessionCookie(req, token, SESSION_MAX_AGE_S) })
-      } catch (error) {
-        return json(res, 401, { error: error instanceof Error ? error.message : '登录失败' })
-      }
-    }
-    if (path === '/api/logout' && req.method === 'POST') {
-      const token = cookies(req)[SESSION_COOKIE]
-      if (token) await auth.logout(token)
-      return json(res, 200, {}, { 'set-cookie': sessionCookie(req, '', 0) })
-    }
-    if (path === '/api/me' && req.method === 'GET') {
-      const user = await currentUser(req)
-      return user ? json(res, 200, { email: user.email }) : json(res, 401, { error: '未登录' })
-    }
-    return json(res, 404, { error: 'not found' })
-  }
-
   async function staticFile(res: ServerResponse, path: string) {
     const file = normalize(join(config.webDir, decodeURIComponent(path)))
     const inside = file.startsWith(config.webDir + sep)
@@ -127,7 +80,7 @@ export async function startServer(config: HostConfig) {
     // Client-side routes fall back to the app shell.
     const target = found ? file : join(config.webDir, 'index.html')
     const body = await readFile(target).catch(() => undefined)
-    if (!body) return json(res, 404, { error: '前端未构建：运行 npm run build，或用 npm run dev' })
+    if (!body) return send(res, json(404, { error: '前端未构建：运行 npm run build，或用 npm run dev' }))
     const immutable = found && target.includes(`${sep}assets${sep}`)
     res.writeHead(200, {
       'content-type': TYPES[extname(target)] ?? 'application/octet-stream',
@@ -138,9 +91,11 @@ export async function startServer(config: HostConfig) {
 
   const server = createServer((req, res) => {
     const path = new URL(req.url ?? '/', 'http://x').pathname
-    const handled = path.startsWith('/api/') ? api(req, res, path) : staticFile(res, path)
+    const handled = path.startsWith('/api/')
+      ? toRequest(req).then((request) => accountApi(auth, request, { adminToken: config.adminToken })).then((r) => send(res, r))
+      : staticFile(res, path)
     handled.catch((error) => {
-      if (!res.headersSent) json(res, 500, { error: error instanceof Error ? error.message : String(error) })
+      if (!res.headersSent) void send(res, json(500, { error: error instanceof Error ? error.message : String(error) }))
       else res.destroy()
     })
   })
@@ -148,8 +103,8 @@ export async function startServer(config: HostConfig) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 })
   server.on('upgrade', (req, socket, head) => {
     void (async () => {
-      const path = new URL(req.url ?? '/', 'http://x').pathname
-      const user = path === '/ws' && sameOrigin(req) ? await currentUser(req) : undefined
+      const request = await toRequest(req)
+      const user = new URL(request.url).pathname === '/ws' && sameOrigin(request) ? await sessionUser(auth, request) : undefined
       if (!user) {
         socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
         return

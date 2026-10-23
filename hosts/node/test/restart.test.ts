@@ -1,11 +1,10 @@
 // R32: a run cut off by a crash finishes after the host restarts, without asking twice.
 import { openNodeSqliteDatabase } from '@earendil-works/chord/sqlite/node'
-import { Auth, type TreeMeta } from '@gense/core'
+import { Auth, LONG_REPLY, type TreeMeta } from '@gense/core'
 import assert from 'node:assert/strict'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { LONG_REPLY } from '../src/faux.ts'
 import { Client, login, stopReason, tempDir, textOf } from './helpers.ts'
 
 const main = join(import.meta.dirname, '../src/main.ts')

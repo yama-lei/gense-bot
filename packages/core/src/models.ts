@@ -45,3 +45,12 @@ export function relayModels(config: RelayConfig): ModelSetup {
   const options = config.modelIds.map((id) => ({ provider: RELAY_PROVIDER, id, name: id }))
   return { models, options, defaultModel: options[0] ?? null }
 }
+
+/** The relay from the host's environment: PROVIDER_BASE_URL, PROVIDER_AUTH_TOKEN, DEFAULT_PROVIDER_MODEL, PROVIDER_MODELS. */
+export function relayFromEnv(env: Record<string, string | undefined>): ModelSetup {
+  const baseUrl = env.PROVIDER_BASE_URL
+  const apiKey = env.PROVIDER_AUTH_TOKEN
+  if (!baseUrl || !apiKey) throw new Error('PROVIDER_BASE_URL and PROVIDER_AUTH_TOKEN must be set (or GENSE_FAUX=1)')
+  const ids = [env.DEFAULT_PROVIDER_MODEL, ...(env.PROVIDER_MODELS ?? '').split(',')].map((s) => s?.trim()).filter((s): s is string => !!s)
+  return relayModels({ baseUrl, apiKey, modelIds: [...new Set(ids)] })
+}

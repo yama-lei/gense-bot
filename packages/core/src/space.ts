@@ -3,7 +3,7 @@
 import { BACKGROUND_CONTEXT, type Context } from '@earendil-works/chord/context'
 import { applySqliteMigrations, type SqliteDatabase } from '@earendil-works/chord/sqlite'
 import type { Models } from '@earendil-works/pi-ai'
-import { createRegistry, defineExtension, Harness, section, type ConversationId, type HarnessOptions } from '@earendil-works/pi-durable'
+import { createRegistry, defineExtension, Harness, section, type ConversationId, type HarnessOptions, type Wake } from '@earendil-works/pi-durable'
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite'
 import { RUN_ERROR_KIND, type Effort, type ModelInfo, type RunErrorData, type TreeMeta } from './protocol.ts'
 
@@ -31,6 +31,12 @@ export interface SpaceOptions {
   defaultModel: ModelInfo | null
   /** Passed through to the Harness: wake scheduling and settings belong to the host. */
   harness?: Pick<HarnessOptions, 'onWake' | 'setTimer' | 'now' | 'settings' | 'onReport'>
+  /**
+   * For hosts that wake the Harness themselves (a Durable Object alarm): awaited with the wake state before any call
+   * that can start work, since `onWake` only reports after the commit. An early alarm is harmless, a missing one
+   * strands the work.
+   */
+  arm?: (wake: Wake) => Promise<void>
   now?: () => number
 }
 
@@ -57,9 +63,15 @@ export class UserSpace {
     const registry = createRegistry()
     registry.install(gense)
     const harness = await Harness.open(storage, { ...options.harness, models: options.models, registry }, ctx)
+    await options.arm?.(harness.wake())
     // Continue runs a previous process left unfinished (R32).
     harness.resume()
     return new UserSpace(db, harness, options)
+  }
+
+  /** Arms the host's wake-up before a call that can start work. */
+  private async arm() {
+    await this.options.arm?.({ ...this.harness.wake(), active: true })
   }
 
   private now() {
@@ -108,7 +120,10 @@ export class UserSpace {
   /** Removes the tree from the sidebar. pi-durable has no delete, so its conversation stays in storage. */
   async deleteTree(treeId: string, ctx: Context = BACKGROUND_CONTEXT) {
     const row = await this.db.get<TreeRow>(`SELECT ${COLUMNS} FROM trees WHERE id = ?`, treeId)
-    if (row) await (await this.harness.conversation(row.rootId as ConversationId, ctx))?.abort(ctx)
+    if (row) {
+      await this.arm()
+      await (await this.harness.conversation(row.rootId as ConversationId, ctx))?.abort(ctx)
+    }
     await this.db.run('DELETE FROM trees WHERE id = ?', treeId)
     await this.changed()
   }
@@ -135,6 +150,7 @@ export class UserSpace {
     if (!text) throw new Error('消息不能为空')
     const row = await this.row(treeId)
     const conv = await this.conversation(treeId, ctx)
+    await this.arm()
 
     const agent = await conv.agent(ctx)
     const model = input.model && (agent.model?.provider !== input.model.provider || agent.model?.modelId !== input.model.id)
@@ -161,6 +177,7 @@ export class UserSpace {
   }
 
   async abort(treeId: string, ctx: Context = BACKGROUND_CONTEXT) {
+    await this.arm()
     await (await this.conversation(treeId, ctx)).abort(ctx)
   }
 

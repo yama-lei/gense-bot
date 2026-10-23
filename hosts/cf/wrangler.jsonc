@@ -1,0 +1,22 @@
+// Cloudflare deployment (roadmap-3 stage 2). Assets serve the built front end; the Worker only sees /api and /ws.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gense-v3",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "../../packages/web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/ws"]
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "ACCOUNTS", "class_name": "Accounts" },
+      { "name": "HUBS", "class_name": "UserHub" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Accounts", "UserHub"] }],
+  "observability": { "enabled": true }
+}

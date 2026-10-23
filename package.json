@@ -7,8 +7,9 @@
     "dev": "npm run dev -w @gense/host-node & npm run dev -w @gense/web",
     "build": "npm run build -w @gense/web",
     "start": "npm start -w @gense/host-node",
-    "typecheck": "tsc -p packages/core && tsc -p hosts/node && npm run typecheck -w @gense/web",
-    "test": "npm test -w @gense/host-node",
+    "dev:cf": "npm run build && npm run dev -w @gense/host-cf",
+    "typecheck": "tsc -p packages/core && tsc -p hosts/node && tsc -p hosts/cf && npm run typecheck -w @gense/web",
+    "test": "npm test -w @gense/host-node && npm test -w @gense/host-cf",
     "user:add": "npm run user:add -w @gense/host-node --"
   },
   "devDependencies": {

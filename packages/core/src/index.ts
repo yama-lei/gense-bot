@@ -14,3 +14,4 @@ export { DATA_DIR, SKILLS_DIR, UPLOADS_DIR, treeDir, Workspace, type EnvFactory 
 export * from './catalog.ts'
 export { pluginDefaultsFromEnv, PluginStore, Sealer, type PluginPatch, type PluginStoreOptions } from './plugins/store.ts'
 export { webSearch, webFetch, type DeepSeek } from './plugins/web.ts'
+export { CHANGED, LedgerDoc, MUST_READ } from './ledger.ts'

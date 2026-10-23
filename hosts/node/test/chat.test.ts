@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 import { configFromEnv } from '../src/config.ts'
 import { startServer } from '../src/server.ts'
-import { accountsScenario, branchesScenario, Client, documentsScenario, fakeUpstream, login, pluginEnv, pluginScenario, skillsScenario, tempDir, textOf, workspaceScenario } from './helpers.ts'
+import { accountsScenario, branchesScenario, Client, documentsScenario, fakeUpstream, ledgerScenario, login, pluginEnv, pluginScenario, skillsScenario, tempDir, textOf, workspaceScenario } from './helpers.ts'
 
 const EMAIL = 'a@example.com'
 const PASSWORD = 'correct horse'
@@ -117,5 +117,12 @@ test('R35–R37: edits, regenerations and forks are branches of one conversation
   const { cookie } = await login(server.url, EMAIL, PASSWORD)
   const client = await Client.connect(server.url, cookie)
   await branchesScenario(client)
+  client.close()
+})
+
+test('R42–R45: branches share the workspace and change a file only as they last read it', { timeout: 60_000 }, async () => {
+  const { cookie } = await login(server.url, EMAIL, PASSWORD)
+  const client = await Client.connect(server.url, cookie)
+  await ledgerScenario(client)
   client.close()
 })

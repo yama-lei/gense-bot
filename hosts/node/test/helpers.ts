@@ -483,3 +483,39 @@ export async function branchesScenario(client: Client) {
   assert.equal(client.trees.find((t) => t.id === tree.id)!.title, '甲')
   await client.request({ t: 'tree.delete', treeId: tree.id })
 }
+
+/** R42–R45 through the socket: two branches of a tree share a file, each changing it only as it last read it. */
+export async function ledgerScenario(client: Client) {
+  const tree = await client.request<TreeMeta>({ t: 'tree.create' })
+  await client.request({ t: 'watch', treeId: tree.id })
+  let n = 0
+  const tool = async (branchId: string, name: string, args: object) => {
+    const requestId = `l${++n}`
+    await client.request({ t: 'watch', treeId: tree.id, branchId })
+    await client.until(() => client.shown.get(tree.id) === branchId, 5000, 'branch shown')
+    const answers = () => client.views.get(tree.id)?.entries.filter((e) => e.kind === 'pi.assistant' && textOf(e)) ?? []
+    const before = answers().length
+    await client.request({ t: 'send', treeId: tree.id, branchId, text: `[工具 ${name}] ${JSON.stringify(args)}`, requestId })
+    const answer = await client.until(
+      () => answers().length > before && client.branches.get(tree.id)?.branches.find((b) => b.id === branchId)?.status === 'idle' && answers().at(-1),
+      15_000,
+      `${name} answer`,
+    )
+    return textOf(answer)
+  }
+  const { branchId: main } = await client.request<{ branchId: string }>({ t: 'send', treeId: tree.id, text: '开始', requestId: 'l0' })
+  await client.until(() => client.branches.get(tree.id)?.branches.find((b) => b.id === main)?.status === 'idle' && client.views.get(tree.id)?.entries.some((e) => e.kind === 'pi.assistant'), 15_000, 'first answer')
+  const at = client.views.get(tree.id)!.entries.findLast((e) => e.kind === 'pi.assistant')!.id
+  const fork = await client.request<BranchMeta>({ t: 'branch.fork', treeId: tree.id, branchId: main, at })
+
+  assert.match(await tool(main, 'write', { path: 'f.txt', content: 'one' }), /Successfully wrote/)
+  // R42: the fork sees the file; R43: it must read it first.
+  assert.match(await tool(fork.id, 'write', { path: 'f.txt', content: 'two' }), /请先用 read/)
+  assert.match(await tool(fork.id, 'read', { path: 'f.txt' }), /one/)
+  assert.match(await tool(fork.id, 'write', { path: 'f.txt', content: 'two' }), /Successfully wrote/)
+  // R44: the main branch read nothing since its write, and the file changed.
+  assert.match(await tool(main, 'edit', { path: 'f.txt', edits: [{ oldText: 'two', newText: 'three' }] }), /被修改/)
+  // R45: no way out of the tree.
+  assert.match(await tool(main, 'read', { path: '/data/uploads' }), /只能读取本会话工作区/)
+  await client.request({ t: 'tree.delete', treeId: tree.id })
+}

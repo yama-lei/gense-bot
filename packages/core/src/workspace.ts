@@ -158,6 +158,23 @@ export class Workspace {
     return out
   }
 
+  /**
+   * A workspace file the user `@`-mentioned (R45): one of this tree's own, or one of another tree's copied into this
+   * tree's `attachments/`, since the file tools stay inside the tree. Resolves to the path the model reads.
+   */
+  async mentioned(treeId: string, path: string, ctx: Context = BACKGROUND_CONTEXT) {
+    const own = treeDir(treeId)
+    const source = resolvePath(own, path)
+    if (isUnder(source, own) && source !== own) return source
+    const sessions = `${DATA_DIR}/sessions`
+    if (!isUnder(source, sessions) || source.split('/').length < 5) throw new Error('只能引用会话工作区里的文件')
+    const env = await this.#env(own)
+    const bytes = unwrap(await env.readBinaryFile(source, ctx))
+    const copy = `${own}/attachments/${basename(source)}`
+    unwrap(await env.writeFile(copy, bytes, ctx))
+    return copy
+  }
+
   async uploads(ctx: Context = BACKGROUND_CONTEXT): Promise<UploadedFile[]> {
     const env = await this.#env(UPLOADS_DIR)
     const listed = await env.listDir(UPLOADS_DIR, ctx)

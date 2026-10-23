@@ -20,8 +20,6 @@ import {
 } from '@earendil-works/pi-durable'
 import type { PluginValue } from './catalog.ts'
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite'
-import { createEditTool, createWriteTool } from '@earendil-works/pi-durable/tools'
-import { createDocumentReadTool } from './documents.ts'
 import type { ImageContent, TextContent } from '@earendil-works/pi-ai'
 import { Value } from 'typebox/value'
 import {
@@ -42,6 +40,7 @@ import { imageExtension } from './plugins/image.ts'
 import { PluginStore, type PluginStoreOptions } from './plugins/store.ts'
 import { ModelAccounts } from './credentials.ts'
 import type { ModelSetup } from './models.ts'
+import { fileTools } from './ledger.ts'
 import { attachmentsText, commandText, mentionsText, parseNote, type CommandNote, type Mention } from './notes.ts'
 import { skillsSection, SkillStore } from './skills.ts'
 import { webExtension } from './plugins/web.ts'
@@ -89,11 +88,12 @@ const PLUGINS: Record<string, (config: () => Record<string, PluginValue>) => Ext
 
 const files = defineExtension({
   name: 'files',
-  tools: [createDocumentReadTool(), createWriteTool(), createEditTool()],
+  tools: fileTools(),
   sections: [
     section('workspace', () =>
       [
-        '这个会话有自己的工作区目录，也就是你的当前目录。需要保存的内容用 write 写成文件，用户能在文件面板里看到和下载。',
+        '这个会话有自己的工作区目录，也就是你的当前目录，同一棵会话树的各个分叉共用它。需要保存的内容用 write 写成文件，用户能在文件面板里看到和下载。',
+        '修改或删除已有文件之前要先 read 它；如果文件在你读过之后被别人改过，write/edit/delete 会报错，重新 read 后再改。',
         `用户附加到消息的文件在工作区的 attachments/ 下。共享的 Skills 在 ${SKILLS_DIR}，只读。`,
         '用户消息里的 <command> 是用户选的 / 命令，<mentions> 是用户用 @ 提到的插件、文件或其他会话，按其中的说明处理。',
       ].join('\n'),
@@ -518,7 +518,7 @@ export class UserSpace {
     const attached = input.attachments?.length ? await this.workspace.attach(treeId, input.attachments, ctx) : []
     const content: (TextContent | ImageContent)[] = [{ type: 'text', text }]
     if (input.command) content.push({ type: 'text', text: commandText(input.command) })
-    if (input.mentions?.length) content.push({ type: 'text', text: mentionsText(await this.mentioned(input.mentions, ctx)) })
+    if (input.mentions?.length) content.push({ type: 'text', text: mentionsText(await this.mentioned(treeId, input.mentions, ctx)) })
     if (attached.length) content.push({ type: 'text', text: attachmentsText(attached.map((a) => a.path)) })
     for (const a of attached) if (a.mimeType.startsWith('image/')) content.push({ type: 'image', data: toBase64(a.bytes), mimeType: a.mimeType })
     const named = text || input.command?.label || attached.map((a) => a.path.slice(a.path.lastIndexOf('/') + 1)).join('、')
@@ -567,13 +567,17 @@ export class UserSpace {
   }
 
   /** What the model should do with each `@` mention (R18). */
-  private async mentioned(mentions: Mention[], ctx: Context) {
+  private async mentioned(treeId: string, mentions: Mention[], ctx: Context) {
     const active = this.plugins.active()
     return Promise.all(
       mentions.map(async (m) => {
         let detail: string
         if (m.kind === 'plugin') detail = active.includes(m.id) ? '本轮优先使用这个插件的工具。' : '这个插件现在没有开启；如果需要它，请用户先在“定制”页开启。'
-        else if (m.kind === 'workspace') detail = `用 read 读取 ${m.id}。`
+        else if (m.kind === 'workspace')
+          detail = await this.workspace.mentioned(treeId, m.id, ctx).then(
+            (path) => `用 read 读取 ${path}。`,
+            (e: unknown) => `无法读取这个文件：${e instanceof Error ? e.message : String(e)}`,
+          )
         else detail = await this.transcript(m.id, ctx).then(
           (t) => `用户提到的另一个会话，内容如下，作为本轮的上下文：\n${t}`,
           () => '这个会话已经不存在。',

@@ -775,10 +775,11 @@ function AttachmentCards({ files }: { files: Attachment[] }) {
             {f.size != null && <span className="muted">{formatSize(f.size)}</span>}
           </>
         )
+        // Attachments live in the chat's workspace (`f.id` is the path); the file panel opens them.
         return (
-          <a key={f.id} className="file-card" title={f.name} href={`https://drive.google.com/file/d/${f.id}/view`} target="_blank" rel="noreferrer noopener">
+          <span key={f.id} className="file-card" title={f.id}>
             {body}
-          </a>
+          </span>
         )
       })}
     </div>

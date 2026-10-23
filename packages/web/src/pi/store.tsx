@@ -4,13 +4,32 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { pluginCatalog } from '../plugins/catalog'
 import { useRoute } from '../router'
 import type { Store } from '../store'
-import type { AppState, Conversation, Effort, ModelOption, Outgoing, Preferences } from '../types'
+import type { UploadedFile } from '@gense/core/protocol'
+import type { AppState, Conversation, DriveFile, Effort, ModelOption, Outgoing, Preferences, WorkspaceFile } from '../types'
 import { HostSocket } from './socket'
 import { toTurns } from './turns'
 
 const LATER = '这项功能在迁移到新内核后的阶段 3 恢复'
 const later = () => Promise.reject(new Error(LATER))
 const PREFS_KEY = 'gense.prefs'
+
+const fileBase64 = (file: Blob) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result).slice(String(reader.result).indexOf(',') + 1))
+    reader.onerror = () => reject(reader.error ?? new Error('读取文件失败'))
+    reader.readAsDataURL(file)
+  })
+
+const toDriveFile = (u: UploadedFile): DriveFile => ({ ...u, kind: 'source' })
+
+function saveBase64(name: string, mimeType: string, base64: string) {
+  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))
+  const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }))
+  const a = Object.assign(document.createElement('a'), { href: url, download: name })
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 60_000)
+}
 
 const loadPrefs = (): Partial<Preferences> => {
   try {
@@ -41,6 +60,9 @@ export function usePiStore(onUnauthorized: () => void): Store {
     () => socket.state,
   )
   const [attached, attach] = useState<string | null>(null)
+  // Workspace listings of the chats whose file panel was opened; kept fresh while their conversation changes.
+  const [workspaces, setWorkspaces] = useState<Record<string, WorkspaceFile[]>>({})
+  const [uploads, setUploads] = useState<DriveFile[]>([])
   const [local, setLocal] = useState<LocalState>(() => ({
     projects: [],
     memories: [],
@@ -73,9 +95,10 @@ export function usePiStore(onUnauthorized: () => void): Store {
           pinned: t.pinned,
           updatedAt: t.updatedAt,
           turns: host.views[t.id] ? toTurns(host.views[t.id], { model: prefs.model, effort: prefs.defaultEffort }) : [],
+          ...(workspaces[t.id] && { files: workspaces[t.id] }),
         }),
       ),
-      files: [],
+      files: uploads,
       schedules: [],
       skillsError: null,
       account: { name: '', email: host.email, driveConnected: false, driveError: null },
@@ -83,17 +106,44 @@ export function usePiStore(onUnauthorized: () => void): Store {
       modelsError: host.connected || !host.trees ? null : '与服务器的连接已断开，正在重连…',
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [local, host, models, prefs.model],
+    [local, host, models, prefs.model, workspaces, uploads],
   )
   const stateRef = useRef(state)
   stateRef.current = state
 
   const report = (e: unknown) => console.error(e)
+  const refreshWorkspace = (treeId: string) =>
+    void socket
+      .request<WorkspaceFile[]>({ t: 'files.list', treeId })
+      .then((files) => setWorkspaces((w) => ({ ...w, [treeId]: files })))
+      .catch(report)
+  const refreshUploads = () =>
+    void socket
+      .request<UploadedFile[]>({ t: 'uploads' })
+      .then((list) => setUploads(list.map(toDriveFile)))
+      .catch(report)
+
+  // A tool may have changed the files: reload an open panel's listing whenever its conversation grows.
+  const growth = Object.keys(workspaces)
+    .map((id) => `${id}:${host.views[id]?.entries.length ?? 0}`)
+    .join(',')
+  useEffect(() => {
+    for (const id of Object.keys(workspaces)) if (host.views[id]) refreshWorkspace(id)
+  }, [growth]) // eslint-disable-line react-hooks/exhaustive-deps
   const toModel = (key: string) => host.models.find((m) => `${m.provider}:${m.id}` === key)
   const send = (treeId: string, message: Outgoing, model: string, effort: Effort) => {
     const text = message.command ? `${message.command.prompt}\n\n${message.text}` : message.text
     const picked = toModel(model)
-    return socket.request({ t: 'send', treeId, text, requestId: crypto.randomUUID(), ...(picked && { model: picked }), effort })
+    const attachments = message.attachments?.map((a) => a.id)
+    return socket.request({
+      t: 'send',
+      treeId,
+      text,
+      requestId: crypto.randomUUID(),
+      ...(picked && { model: picked }),
+      effort,
+      ...(attachments?.length && { attachments }),
+    })
   }
 
   const setState = (fn: (s: AppState) => AppState) => {
@@ -134,17 +184,28 @@ export function usePiStore(onUnauthorized: () => void): Store {
     reset: () => {},
     callToolFromView: async () => ({ content: LATER, isError: true }),
     setViewState: () => {},
-    upload: later,
+    upload: async (file) => {
+      if (file.size > 20 * 1024 * 1024) throw new Error(`${file.name} 超过 20 MB`)
+      const uploaded = toDriveFile(await socket.request<UploadedFile>({ t: 'upload', name: file.name, base64: await fileBase64(file) }))
+      setUploads((list) => [uploaded, ...list])
+      return uploaded
+    },
     setDrive: () => report(LATER),
     setPluginConfig: later,
-    refreshFiles: () => {},
+    refreshFiles: refreshUploads,
     refreshSkills: () => {},
     readFile: later,
     searchDrive: async () => [],
-    refreshWorkspace: () => {},
-    workspacePreview: later,
-    deleteWorkspaceFile: later,
-    workspaceFileUrl: () => '',
+    refreshWorkspace,
+    workspacePreview: (treeId, path) => socket.request({ t: 'files.preview', treeId, path }),
+    deleteWorkspaceFile: async (treeId, path) => {
+      await socket.request({ t: 'files.delete', treeId, path })
+      refreshWorkspace(treeId)
+    },
+    downloadWorkspaceFile: async (treeId, path) => {
+      const file = await socket.request<{ name: string; mimeType: string; base64: string }>({ t: 'files.read', treeId, path })
+      saveBase64(file.name, file.mimeType, file.base64)
+    },
     logout: async () => {
       await fetch('/api/logout', { method: 'POST' })
       socket.close()

@@ -2,9 +2,10 @@
 // user message, so a restarted process answers the same way:
 //   "[长回答] ..."  a long reply that streams for a few seconds
 //   "[错误] ..."    a provider error
+//   "[工具 name] {json}"  calls the tool, then answers "工具结果：<its text>"
 //   anything else   "收到：<text>"
 import { createModels, type Message } from '@earendil-works/pi-ai'
-import { fauxAssistantMessage, fauxProvider, fauxText, type FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux'
+import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, type FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux'
 import type { ModelSetup } from './models.ts'
 
 export const LONG_REPLY = Array.from({ length: 300 }, (_, i) => `第 ${i + 1} 句。`).join('')
@@ -19,7 +20,14 @@ export function fauxModels(): ModelSetup {
   const faux = fauxProvider({ models: [{ id: 'faux-1', name: 'Faux' }], tokensPerSecond: 200 })
   const reply: FauxResponseFactory = (context) => {
     faux.appendResponses([reply])
+    const last = context.messages.at(-1)
+    if (last?.role === 'toolResult') {
+      const result = last.content.map((b) => (b.type === 'text' ? b.text : '')).join('')
+      return fauxAssistantMessage([fauxText(`工具结果：${result}`)])
+    }
     const text = lastUserText(context.messages)
+    const tool = /^\[工具 (\S+)\]\s*([\s\S]*)$/.exec(text)
+    if (tool) return fauxAssistantMessage([fauxToolCall(tool[1]!, JSON.parse(tool[2] || '{}'))], { stopReason: 'toolUse' })
     if (text.startsWith('[错误]')) return fauxAssistantMessage([], { stopReason: 'error', errorMessage: 'faux provider error' })
     if (text.startsWith('[长回答]')) return fauxAssistantMessage([fauxText(LONG_REPLY)])
     return fauxAssistantMessage([fauxText(`收到：${text}`)])

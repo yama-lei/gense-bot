@@ -31,12 +31,12 @@ export interface Store {
   /** `tools/call` from the view rendered by tool call `callId`; the call id makes retries idempotent. */
   callToolFromView: (convId: string, turnId: string, callId: string, name: string, input: unknown) => Promise<ToolResult>
   setViewState: (convId: string, turnId: string, callId: string, viewState: unknown) => void
-  /** Saves any file (at most 20 MB) to GenseBot/资料; rejects with a message for the user. */
+  /** Uploads any file (at most 20 MB); attached to a message, it is copied into the chat's workspace. Rejects with a message for the user. */
   upload: (file: File) => Promise<DriveFile>
   setDrive: (connected: boolean) => void
   /** Changes some of a plugin's settings; null returns a value to its default and clears a secret. Rejects with a message for the user. */
   setPluginConfig: (id: string, values: Record<string, PluginValue | null>, secrets: Record<string, string | null>) => Promise<void>
-  /** Reloads GenseBot/资料 and Artifacts from Drive. */
+  /** Reloads the uploaded files into `AppState.files`. */
   refreshFiles: () => void
   /** Reloads the skills in GenseBot/Skills. */
   refreshSkills: () => void
@@ -48,10 +48,10 @@ export interface Store {
   refreshWorkspace: (convId: string) => void
   /** The start of a workspace file; rejects with a message for the user. */
   workspacePreview: (convId: string, path: string) => Promise<WorkspacePreview>
-  /** Deletes a file or folder under /workspace; rejects with a message for the user. */
+  /** Deletes a file or folder in the chat's workspace; rejects with a message for the user. */
   deleteWorkspaceFile: (convId: string, path: string) => Promise<void>
-  /** Where the browser downloads a workspace file from. */
-  workspaceFileUrl: (convId: string, path: string) => string
+  /** Saves a workspace or Skill file to the user's computer; rejects with a message for the user. */
+  downloadWorkspaceFile: (convId: string, path: string) => Promise<void>
   /** Ends the session; the app returns to the login page. */
   logout: () => Promise<void>
   /** Connections the store keeps mounted (the open chat); App renders it. */

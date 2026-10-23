@@ -2,7 +2,7 @@
 // one UserHub object per user holds that user's pi-durable Harness and sockets.
 import { DurableObjectSqliteDatabase } from '@earendil-works/chord/sqlite/cloudflare'
 import type { Wake } from '@earendil-works/pi-durable'
-import { accountApi, Auth, Connection, fauxModels, json, relayFromEnv, sameOrigin, sessionUser, UserSpace, type ModelSetup, type User } from '@gense/core'
+import { accountApi, Auth, Connection, fauxModels, json, relayFromEnv, sameOrigin, sessionUser, SqliteFiles, UserSpace, type ModelSetup, type User } from '@gense/core'
 import { DurableObject } from 'cloudflare:workers'
 
 export interface Env {
@@ -70,8 +70,11 @@ export class UserHub extends DurableObject<Env> {
       const current = await ctx.storage.getAlarm()
       if (current === null || current > fallback) await ctx.storage.setAlarm(fallback)
       this.#setup = env.GENSE_FAUX === '1' ? fauxModels() : relayFromEnv(env as unknown as Record<string, string | undefined>)
-      this.#space = await UserSpace.open(new DurableObjectSqliteDatabase(ctx.storage), {
+      const db = new DurableObjectSqliteDatabase(ctx.storage)
+      const files = await SqliteFiles.open(db, { id: `hub:${ctx.id.toString()}` })
+      this.#space = await UserSpace.open(db, {
         models: this.#setup.models,
+        env: (cwd) => files.env({ cwd }),
         defaultModel: this.#setup.defaultModel,
         // A failed alarm write resets the object; it arms again when it next starts.
         harness: { onWake: (wake) => void this.#arm(wake).catch(() => ctx.abort('Alarm write failed')) },

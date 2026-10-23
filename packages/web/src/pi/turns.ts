@@ -2,7 +2,7 @@
 // entries after it fill it. `pi.live` adds the streaming answer, `pi.inbox` the inputs still waiting.
 import { RUN_ERROR_KIND, type RunErrorData } from '@gense/core/protocol'
 import { tools } from '../plugins'
-import type { Effort, ToolCall, Turn } from '../types'
+import type { Attachment, Effort, ToolCall, Turn } from '../types'
 
 type Block = { type: string; text?: string; id?: string; name?: string; arguments?: unknown }
 type Message = {
@@ -28,6 +28,20 @@ const textOf = (content: Message['content'] | undefined) =>
 const inputText = (content: unknown) =>
   typeof content === 'string' ? content : Array.isArray(content) ? textOf(content as Block[]) : ''
 
+/** A user message's text and the workspace paths of its attachments (see core `attachmentsText`). */
+const userInput = (content: Message['content'] | undefined) => {
+  const blocks = typeof content === 'string' ? [{ type: 'text', text: content }] : ((content ?? []) as Block[])
+  let text = ''
+  const attachments: Attachment[] = []
+  for (const b of blocks) {
+    if (b.type !== 'text') continue
+    const listed = /^<attachments>\n([\s\S]*)\n<\/attachments>$/.exec(b.text ?? '')
+    if (!listed) text += b.text ?? ''
+    else for (const path of listed[1]!.split('\n')) attachments.push({ id: path, name: path.slice(path.lastIndexOf('/') + 1), mimeType: '', size: null })
+  }
+  return { text, attachments }
+}
+
 const reasonText: Record<string, string> = { stale: '服务重启，这条消息没有完成', aborted: '已停止' }
 
 export function toTurns(view: View, defaults: { model: string; effort: Effort }): Turn[] {
@@ -46,7 +60,9 @@ export function toTurns(view: View, defaults: { model: string; effort: Effort })
   for (const e of view.entries) {
     const m = e.model?.[0]
     if (e.kind === 'pi.user') {
-      open(String(e.id), textOf(m?.content), m?.timestamp ?? Date.now())
+      const input = userInput(m?.content)
+      const turn = open(String(e.id), input.text, m?.timestamp ?? Date.now())
+      if (input.attachments.length) turn.attachments = input.attachments
     } else if (e.kind === 'pi.assistant' && m) {
       const t = current(e.id)
       if (abortedFrom !== undefined) {

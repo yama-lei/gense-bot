@@ -18,15 +18,51 @@ export interface ModelInfo {
 
 export type Effort = 'low' | 'medium' | 'high'
 
+/** A file in a tree's workspace or the Skills, for the file panel. Paths are the agent's (`/data/...`). */
+export interface FileEntry {
+  path: string
+  size: number
+  mtime: number
+  /** Under the read-only Skills. */
+  readOnly: boolean
+}
+
+export interface FilePreview {
+  text: string
+  size: number
+  /** Only the start of the file is in `text`. */
+  truncated: boolean
+  /** Not UTF-8 text; `text` is empty. */
+  binary: boolean
+}
+
+/** An uploaded file; `id` is its path under /data/uploads. */
+export interface UploadedFile {
+  id: string
+  name: string
+  mimeType: string
+  size: number
+  modifiedTime: number
+}
+
 /** Requests carry an `id`; the host answers each with one `reply`. */
 export type ClientRequest =
   | { t: 'tree.create'; id: number }
   | { t: 'tree.update'; id: number; treeId: string; title?: string; pinned?: boolean }
   | { t: 'tree.delete'; id: number; treeId: string }
-  | { t: 'send'; id: number; treeId: string; text: string; requestId: string; model?: ModelInfo; effort?: Effort }
+  /** `attachments` are upload ids; they are copied into the tree's workspace. */
+  | { t: 'send'; id: number; treeId: string; text: string; requestId: string; model?: ModelInfo; effort?: Effort; attachments?: string[] }
   | { t: 'abort'; id: number; treeId: string }
   | { t: 'watch'; id: number; treeId: string }
   | { t: 'unwatch'; id: number; treeId: string }
+  | { t: 'files.list'; id: number; treeId: string }
+  | { t: 'files.preview'; id: number; treeId: string; path: string }
+  /** Resolves to `{ name, mimeType, base64 }`. */
+  | { t: 'files.read'; id: number; treeId: string; path: string }
+  | { t: 'files.delete'; id: number; treeId: string; path: string }
+  /** At most 20 MB. Resolves to an UploadedFile. */
+  | { t: 'upload'; id: number; name: string; base64: string }
+  | { t: 'uploads'; id: number }
 
 export type ServerMessage =
   | { t: 'hello'; email: string; models: ModelInfo[]; defaultModel: ModelInfo | null }

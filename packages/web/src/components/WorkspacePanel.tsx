@@ -4,9 +4,10 @@ import type { Conversation, WorkspaceFile, WorkspacePreview } from '../types'
 import { formatSize } from '../util'
 import { IconChevronLeft, IconDoc, IconTrash, IconX } from './Icons'
 
-const sections = [
-  { root: '/workspace', label: '工作区', hint: '本会话的文件，助手可以读写' },
-  { root: '/skills', label: '共享 Skill', hint: '只读，来自设置里启用的 Skill' },
+// Paths are the agent's (core `treeDir`, `SKILLS_DIR`).
+const sections = (convId: string) => [
+  { root: `/data/sessions/${convId}`, label: '工作区', hint: '本会话的文件，助手可以读写', empty: '还没有文件。让助手“记下来”或“写成文件”，它会保存在这里。' },
+  { root: '/data/skills', label: '共享 Skill', hint: '只读，来自设置里启用的 Skill', empty: '没有启用的 Skill。' },
 ]
 
 /** The chat's workspace (roadmap-2 "L0-6 会话工作区"): file list, preview, download and delete. */
@@ -39,7 +40,7 @@ export function WorkspacePanel({ store, conv, onClose }: { store: Store; conv: C
           // Keyed by mtime so a rewrite by the assistant reloads the preview.
           <FilePreview key={current.path + current.mtime} store={store} convId={conv.id} file={current} onDeleted={() => setOpen(null)} />
         ) : (
-          sections.map((s) => {
+          sections(conv.id).map((s) => {
             const list = files.filter((f) => f.path.startsWith(s.root + '/'))
             return (
               <section key={s.root} className="ws-section">
@@ -49,7 +50,7 @@ export function WorkspacePanel({ store, conv, onClose }: { store: Store; conv: C
                 </div>
                 <p className="muted small ws-hint">{s.hint}</p>
                 {list.length === 0 ? (
-                  <p className="muted small ws-empty">{s.root === '/workspace' ? '还没有文件。让助手“记下来”或“写成文件”，它会保存在这里。' : '没有启用的 Skill。'}</p>
+                  <p className="muted small ws-empty">{s.empty}</p>
                 ) : (
                   <ul className="ws-list">
                     {list.map((f) => (
@@ -97,7 +98,7 @@ function FilePreview({ store, convId, file, onDeleted }: { store: Store; convId:
     })
   }
 
-  const name = file.path.slice(file.path.lastIndexOf('/') + 1)
+  const download = () => store.downloadWorkspaceFile(convId, file.path).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
   return (
     <div className="ws-preview">
       <div className="artifact-actions">
@@ -105,9 +106,9 @@ function FilePreview({ store, convId, file, onDeleted }: { store: Store; convId:
           {formatSize(file.size)} · {new Date(file.mtime).toLocaleString()}
           {file.readOnly && ' · 只读'}
         </span>
-        <a className="pill-btn small" href={store.workspaceFileUrl(convId, file.path)} download={name}>
+        <button className="pill-btn small" onClick={download}>
           下载
-        </a>
+        </button>
         {!file.readOnly && (
           <button className="pill-btn small danger" onClick={remove} disabled={deleting}>
             <IconTrash width={14} height={14} /> {deleting ? '删除中…' : '删除'}

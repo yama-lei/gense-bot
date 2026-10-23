@@ -2,7 +2,7 @@
 import { LONG_REPLY, RUN_ERROR_KIND, type TreeMeta } from '@gense/core'
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
-import { Client, login, stopReason, tempDir, textOf } from '../../node/test/helpers.ts'
+import { Client, login, stopReason, tempDir, textOf, workspaceScenario } from '../../node/test/helpers.ts'
 import { addUser, wranglerDev, type Dev } from './helpers.ts'
 
 const EMAIL = 'a@example.com'
@@ -70,5 +70,12 @@ test('R32: an answer cut off by killing workerd completes after restart', { time
   assert.equal(textOf(answer), LONG_REPLY)
   const entries = client.views.get(tree.id)!.entries
   assert.equal(entries.filter((e) => e.kind === 'pi.user').length, 1, 'the question is asked once')
+  client.close()
+})
+
+test('R33: the workspace: tool writes, the file panel, uploads and attachments', { timeout: 60_000 }, async () => {
+  const { cookie } = await login(dev.url, EMAIL, PASSWORD)
+  const client = await Client.connect(dev.url, cookie)
+  await workspaceScenario(client)
   client.close()
 })

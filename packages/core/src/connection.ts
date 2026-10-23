@@ -3,6 +3,7 @@ import { encoder } from '@earendil-works/chord/delta'
 import type { ConversationWatch } from '@earendil-works/pi-durable'
 import type { ClientRequest, ModelInfo, ServerMessage } from './protocol.ts'
 import type { UserSpace } from './space.ts'
+import { fromBase64 } from './workspace.ts'
 
 export interface ConnectionOptions {
   space: UserSpace
@@ -64,6 +65,7 @@ export class Connection {
           requestId: r.requestId,
           ...(r.model && { model: r.model }),
           ...(r.effort && { effort: r.effort }),
+          ...(r.attachments?.length && { attachments: r.attachments }),
         })
       case 'abort':
         return space.abort(r.treeId)
@@ -71,6 +73,18 @@ export class Connection {
         return this.#watch(r.treeId)
       case 'unwatch':
         return this.#unwatch(r.treeId)
+      case 'files.list':
+        return (await space.files(r.treeId)).list(r.treeId)
+      case 'files.preview':
+        return (await space.files(r.treeId)).preview(r.treeId, r.path)
+      case 'files.read':
+        return (await space.files(r.treeId)).read(r.treeId, r.path)
+      case 'files.delete':
+        return (await space.files(r.treeId)).delete(r.treeId, r.path)
+      case 'upload':
+        return space.workspace.upload(r.name, fromBase64(r.base64))
+      case 'uploads':
+        return space.workspace.uploads()
       default:
         throw new Error('未知请求')
     }

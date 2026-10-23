@@ -6,6 +6,9 @@
     ".": "./src/index.ts",
     "./protocol": "./src/protocol.ts"
   },
+  "scripts": {
+    "test": "node --test test/*.test.ts"
+  },
   "dependencies": {
     "@earendil-works/chord": "1.4.0",
     "@earendil-works/pi-ai": "1.4.0",

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 import { configFromEnv } from '../src/config.ts'
 import { startServer } from '../src/server.ts'
-import { Client, login, tempDir, textOf } from './helpers.ts'
+import { Client, login, tempDir, textOf, workspaceScenario } from './helpers.ts'
 
 const EMAIL = 'a@example.com'
 const PASSWORD = 'correct horse'
@@ -70,5 +70,12 @@ test('trees can be renamed, pinned and deleted', async () => {
   await client.request({ t: 'tree.delete', treeId: tree.id })
   await client.until(() => !client.trees.some((t) => t.id === tree.id), 2000, 'delete')
   await assert.rejects(client.request({ t: 'watch', treeId: tree.id }), /会话不存在/)
+  client.close()
+})
+
+test('R33: the workspace: tool writes, the file panel, uploads and attachments', { timeout: 60_000 }, async () => {
+  const { cookie } = await login(server.url, EMAIL, PASSWORD)
+  const client = await Client.connect(server.url, cookie)
+  await workspaceScenario(client)
   client.close()
 })

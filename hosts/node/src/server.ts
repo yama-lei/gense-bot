@@ -1,11 +1,12 @@
 // Self-hosted deployment (ADR-0004 decision 3): one process, one SQLite file per user, sockets over `ws`.
 import { openNodeSqliteDatabase } from '@earendil-works/chord/sqlite/node'
-import { accountApi, Auth, Connection, json, sameOrigin, sessionUser, UserSpace, type ModelSetup } from '@gense/core'
+import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node'
+import { accountApi, Auth, Connection, DATA_DIR, json, MountedEnv, sameOrigin, sessionUser, UserSpace, type ModelSetup } from '@gense/core'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, stat } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { extname, join, normalize, sep } from 'node:path'
+import { extname, join, normalize, resolve, sep } from 'node:path'
 import { WebSocketServer } from 'ws'
 import type { HostConfig } from './config.ts'
 
@@ -59,8 +60,11 @@ export async function startServer(config: HostConfig) {
         const dir = join(config.dataDir, 'users', userId)
         await mkdir(dir, { recursive: true })
         const setup = config.models()
+        const files = resolve(dir, 'files')
+        await mkdir(files, { recursive: true })
         const db = await openNodeSqliteDatabase(join(dir, 'pi.sqlite'))
-        return { space: await UserSpace.open(db, { models: setup.models, defaultModel: setup.defaultModel }), setup }
+        const env = (cwd: string) => new MountedEnv(new NodeExecutionEnv({ cwd: files }), { mount: DATA_DIR, target: files, cwd })
+        return { space: await UserSpace.open(db, { models: setup.models, defaultModel: setup.defaultModel, env }), setup }
       })()
       opening.catch(() => spaces.delete(userId))
       spaces.set(userId, opening)
@@ -100,7 +104,7 @@ export async function startServer(config: HostConfig) {
     })
   })
 
-  const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 })
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 32 * 1024 * 1024 })
   server.on('upgrade', (req, socket, head) => {
     void (async () => {
       const request = await toRequest(req)

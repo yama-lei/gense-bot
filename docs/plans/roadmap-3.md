@@ -1,6 +1,6 @@
 # 路线图 3：pi-durable 核心、树形会话、Event 与 sandbox
 
-状态：草案，2026-10-22，待用户评审。决策依据见 [ADR-0004](../adr/0004-pi-durable-portable-core.md)。[路线图 2](roadmap-2.md) 的功能（R1–R30）在本路线图的阶段 3 迁移到新架构，那里的 Spec 继续有效，下面另有说明的除外。
+状态：用户评审通过，2026-10-23。决策依据见 [ADR-0004](../adr/0004-pi-durable-portable-core.md)。[路线图 2](roadmap-2.md) 的功能（R1–R30）在本路线图的阶段 3 迁移到新架构，那里的 Spec 继续有效，下面另有说明的除外。
 
 ## Intent（2026-10-22 讨论记录）
 
@@ -18,7 +18,15 @@
 | H10 | “GoogleDrive 也要作为 Plugin” | Drive 从内置能力改成插件：文件来源、Skills 来源、Drive 工具 |
 | H11 | “按照用户的话，感觉也不错啊。一个 session 就是一个 dir？……是否要做权限隔离？” | 每个用户一个 sandbox，每棵树一个目录；会话之间只做软隔离（见 D6） |
 
-已确认：Event 卡片默认折叠；子 agent 最多同时 3 个、只能派生一层、唤醒有频率限制；网络出口默认关闭，密钥不进 sandbox；迁移时先迁移现有功能，再做新功能；不考虑兼容旧数据。
+已确认：Event 卡片默认折叠；子 agent 最多同时 3 个、只能派生一层、唤醒有频率限制；密钥不进 sandbox；迁移时先迁移现有功能，再做新功能；不考虑兼容旧数据。
+
+2026-10-23 确认：
+
+- 仓库改成 monorepo（见“分层”）。
+- 深度搜索做成普通工具，接搜索 API，不依赖 Responses 的托管 `web_search`。
+- 前端不显示推理过程。中转不返回思考摘要，这一点不再追。
+- 登录简化为邮箱加密码（D1）。
+- sandbox 权限给全，网络出口不限制；提供精简和完整两种镜像（D7）。这推翻了 2026-10-22 的“网络出口默认关闭”。
 
 ## 术语
 
@@ -36,13 +44,17 @@
 
 ## 分层
 
+monorepo，用 npm workspaces 管理。旧版（Think）在阶段 3 替换线上之前留在 `legacy/`，之后删除。
+
 ```text
-web/            前端：订阅 watch() 推来的变化，渲染消息、树、小地图、文件面板
-core/           平台无关，pi-durable + pi-ai
-  extensions/   会话树 · Event · 子 agent/report · 文件工具（读前检查）· 插件 · Skills · 生成式界面
-  env/          ExecutionEnv：文件读写，可选 exec
-hosts/node      自部署：SQLite 文件 · setTimeout · HTTP/WS · 本地目录 · Docker sandbox（bash）
-hosts/cf        Cloudflare Free：DO SQLite · 闹钟唤醒 · Worker 路由 · DO SQLite 里的工作区（无 bash）
+packages/core/       平台无关，pi-durable + pi-ai
+  extensions/        会话树 · Event · 子 agent/report · 文件工具（读前检查）· 插件 · Skills · 生成式界面
+  env/               ExecutionEnv：文件读写，可选 exec
+packages/web/        前端：订阅 watch() 推来的变化，渲染消息、树、小地图、文件面板
+hosts/node/          自部署：SQLite 文件 · setTimeout · HTTP/WS · 本地目录 · Docker sandbox（bash）
+hosts/cf/            Cloudflare Free：DO SQLite · 闹钟唤醒 · Worker 路由 · DO SQLite 里的工作区（无 bash）
+sandbox/             Docker 镜像：slim 和 full
+legacy/              旧版 web/，阶段 3 后删除
 ```
 
 ## Spec（行为与验收）
@@ -105,8 +117,8 @@ hosts/cf        Cloudflare Free：DO SQLite · 闹钟唤醒 · Worker 路由 · 
 | 编号 | 行为 | 验收操作 → 期望结果 |
 | --- | --- | --- |
 | R57 | bash | 自部署上让助手“用 Python 画个图存成 png”→ 助手用 `bash` 运行，png 出现在文件面板。Cloudflare 部署上模型看不到 `bash`，助手说明这里不能运行代码 |
-| R58 | 网络出口 | sandbox 默认不能访问外网；`curl` 白名单里的域名可以访问；白名单在设置里可改 |
-| R59 | 密钥不进 sandbox | 在 sandbox 里 `env`、读文件都找不到任何插件密钥或模型密钥；需要密钥的请求由宿主代理补上 |
+| R58 | 网络与环境 | sandbox 可以访问外网，不设白名单：`curl https://example.com`、`pip install`、`uv add`、`npm install` 都能成功。精简镜像里有 Python、Node、git、`rg`、`zip`、`uv`；完整镜像另有常用 Python 包和编译工具链。设置里可以切换镜像，切换后下次启动容器生效 |
+| R59 | 密钥不进 sandbox | 在 sandbox 里 `env`、读文件都找不到任何插件密钥或模型密钥 |
 | R60 | 资源与休眠 | 死循环或占满内存的命令到时间被终止，返回错误，服务本身不受影响；空闲一段时间后容器停止，下次 `bash` 时自动启动，文件都在 |
 | R61 | 用户之间隔离 | 两个用户的 sandbox 互相看不到文件和进程 |
 
@@ -136,6 +148,12 @@ interface Host {
   - 有任务运行时，用闹钟每 60 秒心跳一次，同时不晚于最早的 sleep。
   - 闹钟触发时调用 `resume()`。
 - 模型：pi-ai 的 `createModels()` 注册 `.env` 里的 OpenAI 兼容端点和 Anthropic 兼容端点。中转站的已知问题（[中转站问题](../research/openai-relay.md)）要在 pi-ai 上重新验证（V1）。
+- 深度搜索：普通工具 `deep_search`，调用搜索 API（具体服务在阶段 3 选），由模型自己读结果、整理答案。不用 Responses 的托管 `web_search`，所以任何模型都能用。
+- 登录（2026-10-23 决定）：两种部署方式都用同一套邮箱加密码登录，实现在 `core` 里。
+  - 用户表：`email`、密码哈希（scrypt，Workers 上用 WebCrypto 的 PBKDF2 也可以，二选一在阶段 1 定）、`createdAt`。不开放注册，用户由命令行或管理员页面创建。
+  - 会话：登录后发一个 HttpOnly、Secure、SameSite=Lax 的 cookie，服务端存会话记录，可以吊销。WebSocket 握手时校验同一个 cookie。
+  - 登录接口按 IP 和邮箱限速。
+  - Cloudflare 上 Access 可以继续挡在前面做第二层，但不再是必需的；`userId` 来自我们自己的会话，不再来自 Access JWT。
 
 ### D2 树的数据
 
@@ -232,21 +250,24 @@ Event {
 
 ### D7 Sandbox（自部署）
 
-- 每个用户一个 Docker 容器（镜像：Debian + Python + Node + 常用 CLI），`sleep infinity` 作为入口，`/data` 绑定挂载 `<userRoot>`，`skills/` 以只读方式挂载。
+- 镜像有两种，在设置里选，默认精简：
+  - `slim`：Debian + Python 3 + Node LTS + `uv` + git、`rg`、grep、find、zip/unzip、tar、curl、wget、jq、`file`、`less`、vim。
+  - `full`：`slim` 加上 build-essential、ffmpeg、ImageMagick、poppler-utils、pandoc，以及 Python 包 numpy、pandas、matplotlib、requests、beautifulsoup4、lxml、pillow、openpyxl、python-docx、python-pptx、pypdf、pyyaml。
+- 每个用户一个 Docker 容器，`sleep infinity` 作为入口，`/data` 绑定挂载 `<userRoot>`，`skills/` 以只读方式挂载。
 - 隔离：
   - 用户之间的隔离靠容器（可选 gVisor `runsc`）。容器名由登录身份推导，不从 URL 取。
-  - 同一用户的会话之间不做安全隔离。sandbox 是最小的信任单位，容器里的进程等同 root。
+  - 同一用户的会话之间不做安全隔离。sandbox 是最小的信任单位，容器里的进程是 root，可以 `apt install`、`pip install`。
+  - 权限给全只限容器之内：不挂载 Docker socket，不用 `--privileged`，不挂宿主的其他目录。
 - `bash`：
   - `docker exec`，cwd 是本树目录。
   - 带超时（默认 120 秒）。
   - 输出有上限，超出部分截断后写入文件。
   - 进程数、CPU、内存设上限。
-- 网络：容器默认 `--network none`，只连一个内部网络，那里有一个出口代理：
-  - 白名单里的域名放行。
-  - 需要密钥的域名由代理补上请求头。
-  - 其余拒绝。
-  - 白名单在设置里编辑（R58、R59）。
-- 生命周期：第一次 `bash` 时启动，空闲 15 分钟后停止。文件在宿主目录里，容器停止不丢文件；在容器里安装的软件包会丢，需要固定的依赖写进镜像。
+- 网络：普通 bridge 网络，出口不限制（2026-10-23 用户决定）。
+  - 代价：被网页或文件里的提示注入诱导时，agent 可以把工作区文件发到外部。可以接受，因为密钥不在 sandbox 里，工作区里只有用户自己放进去的东西。
+  - 容器不能访问宿主服务端口和内网地址（iptables 拒绝私有网段），避免绕过登录调用宿主 API。
+  - 密钥不进 sandbox（R59）。需要密钥的操作走宿主侧的工具，不走 `bash`。
+- 生命周期：第一次 `bash` 时启动，空闲 15 分钟后停止。文件在宿主目录里，容器停止不丢文件。在容器里 `apt install` 的软件包会丢；`uv`、`pip --user`、`npm` 的缓存和用户级安装放在 `/data/.cache`、`/data/.local` 下，随用户目录保留。
 - `ExecutionEnv` 的文件读写始终直接访问宿主目录，不经过容器，所以文件面板和读前检查不依赖容器是否在运行。
 
 ### D8 插件即 extension
@@ -280,7 +301,7 @@ Event {
 
 | 编号 | 要验证的事 | 结果（2026-10-22） | 不通过时 |
 | --- | --- | --- | --- |
-| V1 | pi-ai 能通过我们的中转调用模型 | **基本通过。** OpenAI 中转（Responses API）和 Anthropic 中转都能：流式输出、工具调用、带工具结果继续对话、设置思考强度。用 `createProvider` 配置 `baseUrl` 和 `apiKey` 即可，不需要自定义 provider。**未验证：** Responses 的托管 `web_search` 工具（pi-ai 的工具只有函数形式，深度搜索可能要自己写一个 provider 或改成普通工具）；中转没有返回思考摘要（`reasoning` 用量为 0，与旧版行为一致）；OpenAI 中转的缓存读取只在极短的提示下测过（为 0，没有结论） | 给 pi-ai 写自定义 provider，或在中转前面加一层修正 |
+| V1 | pi-ai 能通过我们的中转调用模型 | **基本通过。** OpenAI 中转（Responses API）和 Anthropic 中转都能：流式输出、工具调用、带工具结果继续对话、设置思考强度。用 `createProvider` 配置 `baseUrl` 和 `apiKey` 即可，不需要自定义 provider。**未验证：** Responses 的托管 `web_search` 工具（pi-ai 的工具只有函数形式，深度搜索可能要自己写一个 provider 或改成普通工具）；中转没有返回思考摘要（`reasoning` 用量为 0，与旧版行为一致）；OpenAI 中转的缓存读取只在极短的提示下测过（为 0，没有结论）。2026-10-23 决定：深度搜索改成普通工具（D1），不显示推理过程，这两项不再验证 | 给 pi-ai 写自定义 provider，或在中转前面加一层修正 |
 | V2 | pi-durable 能在 Workers Free 计划上运行：打包体积、CPU 时间、DO SQLite 适配器 | 未验证（阶段 2 开始前做） | Cloudflare 部署端降级，或评估 Workers Paid |
 | V3 | fork 出来的分叉能命中主线的 prompt cache | **通过。** Anthropic 中转上，主线和 fork 在同一前缀上的 `cacheRead` 都是 5191 个 token；fork 虽然有新的 provider session id，但缓存仍命中。因此子 agent 和用户分叉可以共用前缀，不必特意共享 session id | 让同一棵树的分叉共用 session id，或接受缓存未命中 |
 | V4 | 自定义 entry kind 能作为“用户输入”提交，也能作为不触发运行的写入追加 | **通过。** `submit({type:"input", entry:{kind:"app.event",...}})` 照常触发一轮并得到回答，transcript 里记录的是 `app.event`；`submit({type:"write", entry:{kind:"app.note",...}})` 空闲时立即追加、不触发运行，模型看不到它的内容。fork 只带到 fork 点为止的记录。关闭并重新打开同一个 SQLite 文件后，根会话、历史和 fork 都在 | Event 改用普通用户输入，元数据另存宿主表 |
@@ -299,16 +320,15 @@ Event {
 | 5 | 共用文件系统、读前检查、软隔离 | 4 | R42–R45 |
 | 6 | Event：卡片、唤醒、去重、定时任务、webhook | 4 | R46–R50 |
 | 7 | 子 agent：`agent_spawn`、`report`、限制、未汇报处理 | 5、6、V6 | R51–R56 |
-| 8 | 自部署 sandbox：Docker、`bash`、出口代理、资源限制、休眠 | 5 | R57–R61 |
+| 8 | 自部署 sandbox：两种镜像、Docker、`bash`、资源限制、休眠 | 5 | R57–R61 |
 | 9 | 整体 UI/UX 走查 | 全部 | 走查记录 |
 
 ## 待定
 
-1. 自部署怎么登录：反向代理加 OIDC（例如 Google），还是我们自己做登录？Cloudflare 上继续用 Cloudflare Access。
-2. 工作区和 Drive 的关系（功能清单问题 8）：工作区是工作目录、Drive 是长期存储，产物什么时候同步到 Drive？
-3. 删除会话时是否先提醒导出工作区（功能清单问题 11）。
-4. “总结给主线”默认不唤醒主线（本文的建议）。是否要在按钮旁边提供“并唤醒”？
-5. 定时任务的时区：默认用浏览器时区记在定时任务里，还是使用全局设置？
+1. 工作区和 Drive 的关系（功能清单问题 8）：工作区是工作目录、Drive 是长期存储，产物什么时候同步到 Drive？
+2. 删除会话时是否先提醒导出工作区（功能清单问题 11）。
+3. “总结给主线”默认不唤醒主线（本文的建议）。是否要在按钮旁边提供“并唤醒”？
+4. 定时任务的时区：默认用浏览器时区记在定时任务里，还是使用全局设置？
 
 ## 不做
 

@@ -19,7 +19,7 @@
 
 ## 已决定的事项
 
-- 登录：Cloudflare Access + Google 登录，只允许预先指定的用户。
+- 登录：Cloudflare Access + Google 登录，只允许预先指定的用户。（2026-10-23 改为邮箱加密码，见路线图 3 D1。）
 - 模型：用户在 `.env` 中提供兼容 Anthropic API 的端点。
 
 ## 不预先决定的事项

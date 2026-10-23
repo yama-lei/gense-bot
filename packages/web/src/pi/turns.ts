@@ -1,8 +1,9 @@
 // Projects a pi-durable conversation view onto the UI's turns: a user entry opens a turn and the assistant and tool
 // entries after it fill it. `pi.live` adds the streaming answer, `pi.inbox` the inputs still waiting.
+import { parseNote } from '@gense/core/notes'
 import { RUN_ERROR_KIND, type RunErrorData } from '@gense/core/protocol'
 import { tools } from '../plugins'
-import type { Attachment, Effort, ToolCall, Turn, WebSource } from '../types'
+import type { Attachment, CommandRef, Effort, Mention, ToolCall, Turn, WebSource } from '../types'
 
 type Block = { type: string; text?: string; id?: string; name?: string; arguments?: unknown }
 type Message = {
@@ -26,21 +27,32 @@ export type View = { entries: Entry[]; docs: Record<string, unknown> }
 const textOf = (content: Message['content'] | undefined) =>
   typeof content === 'string' ? content : (content ?? []).map((b) => (b.type === 'text' ? (b.text ?? '') : '')).join('')
 
-const inputText = (content: unknown) =>
-  typeof content === 'string' ? content : Array.isArray(content) ? textOf(content as Block[]) : ''
-
-/** A user message's text and the workspace paths of its attachments (see core `attachmentsText`). */
-const userInput = (content: Message['content'] | undefined) => {
-  const blocks = typeof content === 'string' ? [{ type: 'text', text: content }] : ((content ?? []) as Block[])
+/** A user message's own text, and the attachments, command and mentions of its note blocks (core `notes.ts`). */
+const userInput = (content: unknown) => {
+  const blocks = typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? (content as Block[]) : []
   let text = ''
   const attachments: Attachment[] = []
+  let command: CommandRef | undefined
+  const mentions: Mention[] = []
   for (const b of blocks) {
     if (b.type !== 'text') continue
-    const listed = /^<attachments>\n([\s\S]*)\n<\/attachments>$/.exec(b.text ?? '')
-    if (!listed) text += b.text ?? ''
-    else for (const path of listed[1]!.split('\n')) attachments.push({ id: path, name: path.slice(path.lastIndexOf('/') + 1), mimeType: '', size: null })
+    const note = parseNote(b.text ?? '')
+    if (!note) {
+      text += b.text ?? ''
+      continue
+    }
+    for (const path of note.attachments) attachments.push({ id: path, name: path.slice(path.lastIndexOf('/') + 1), mimeType: '', size: null })
+    command ??= note.command
+    mentions.push(...note.mentions)
   }
-  return { text, attachments }
+  return { text, attachments, command, mentions }
+}
+
+const withInput = (turn: Turn, input: ReturnType<typeof userInput>) => {
+  if (input.attachments.length) turn.attachments = input.attachments
+  if (input.command) turn.command = input.command
+  if (input.mentions.length) turn.mentions = input.mentions
+  return turn
 }
 
 const reasonText: Record<string, string> = { stale: '服务重启，这条消息没有完成', aborted: '已停止' }
@@ -62,8 +74,7 @@ export function toTurns(view: View, defaults: { model: string; effort: Effort })
     const m = e.model?.[0]
     if (e.kind === 'pi.user') {
       const input = userInput(m?.content)
-      const turn = open(String(e.id), input.text, m?.timestamp ?? Date.now())
-      if (input.attachments.length) turn.attachments = input.attachments
+      withInput(open(String(e.id), input.text, m?.timestamp ?? Date.now()), input)
     } else if (e.kind === 'pi.assistant' && m) {
       const t = current(e.id)
       if (abortedFrom !== undefined) {
@@ -112,6 +123,9 @@ export function toTurns(view: View, defaults: { model: string; effort: Effort })
 
   const inbox = view.docs['pi.inbox'] as Inbox | undefined
   for (const item of inbox?.items ?? [])
-    if (item.mode !== 'write') Object.assign(open(`queued-${item.id}`, inputText(item.content), Date.now()), { status: 'queued' })
+    if (item.mode !== 'write') {
+      const input = userInput(item.content)
+      withInput(open(`queued-${item.id}`, input.text, Date.now()), input).status = 'queued'
+    }
   return turns
 }

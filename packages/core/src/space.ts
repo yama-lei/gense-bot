@@ -24,12 +24,12 @@ import { DATA_DIR, SKILLS_DIR, toBase64, treeDir, Workspace, type EnvFactory } f
 import { artifactExtension, artifactInput, emailExtension, saveArtifact, uiExtension } from './plugins/display.ts'
 import { imageExtension } from './plugins/image.ts'
 import { PluginStore, type PluginStoreOptions } from './plugins/store.ts'
+import { attachmentsText, commandText, mentionsText, parseNote, type CommandNote, type Mention } from './notes.ts'
+import { skillsSection, SkillStore } from './skills.ts'
 import { webExtension } from './plugins/web.ts'
 
 const DEFAULT_TITLE = '新对话'
 
-/** The text block listing a message's attachments; the web client shows them as file cards instead. */
-export const attachmentsText = (paths: string[]) => `<attachments>\n${paths.join('\n')}\n</attachments>`
 const TITLE_CHARS = 30
 
 const migrations = [
@@ -65,10 +65,15 @@ const files = defineExtension({
       [
         '这个会话有自己的工作区目录，也就是你的当前目录。需要保存的内容用 write 写成文件，用户能在文件面板里看到和下载。',
         `用户附加到消息的文件在工作区的 attachments/ 下。共享的 Skills 在 ${SKILLS_DIR}，只读。`,
+        '用户消息里的 <command> 是用户选的 / 命令，<mentions> 是用户用 @ 提到的插件、文件或其他会话，按其中的说明处理。',
       ].join('\n'),
     ),
+    section('skills', ({ env }, ctx) => (env ? skillsSection(env, ctx) : undefined)),
   ],
 })
+
+/** How much of a mentioned conversation goes into the message: its latest text. */
+const MENTIONED_CHAT_CHARS = 20_000
 
 export interface SpaceOptions {
   models: Models
@@ -98,13 +103,15 @@ export class UserSpace {
   readonly harness: Harness
   readonly workspace: Workspace
   readonly plugins: PluginStore
+  readonly skills: SkillStore
   private readonly options: SpaceOptions
 
-  private constructor(db: SqliteDatabase, harness: Harness, workspace: Workspace, plugins: PluginStore, options: SpaceOptions) {
+  private constructor(db: SqliteDatabase, harness: Harness, workspace: Workspace, plugins: PluginStore, skills: SkillStore, options: SpaceOptions) {
     this.db = db
     this.harness = harness
     this.workspace = workspace
     this.plugins = plugins
+    this.skills = skills
     this.options = options
   }
 
@@ -120,6 +127,7 @@ export class UserSpace {
       byName.set(e.name, e)
     }
     const workspace = new Workspace(options.env)
+    const skills = await SkillStore.open(db, async () => workspace.env(DATA_DIR), ctx)
     // Conversations follow the host's selection, read at every resolution: a plugin switched on or off applies from the
     // next turn of every conversation (D8).
     const settings = {
@@ -136,7 +144,7 @@ export class UserSpace {
     await options.arm?.(harness.wake())
     // Continue runs a previous process left unfinished (R32).
     harness.resume()
-    return new UserSpace(db, harness, workspace, plugins, options)
+    return new UserSpace(db, harness, workspace, plugins, skills, options)
   }
 
   /** Arms the host's wake-up before a call that can start work. */
@@ -236,11 +244,19 @@ export class UserSpace {
    */
   async send(
     treeId: string,
-    input: { text: string; requestId: string; model?: ModelInfo; effort?: Effort; attachments?: string[] },
+    input: {
+      text: string
+      requestId: string
+      model?: ModelInfo
+      effort?: Effort
+      attachments?: string[]
+      command?: CommandNote
+      mentions?: Mention[]
+    },
     ctx: Context = BACKGROUND_CONTEXT,
   ) {
     const text = input.text.trim()
-    if (!text && !input.attachments?.length) throw new Error('消息不能为空')
+    if (!text && !input.attachments?.length && !input.command) throw new Error('消息不能为空')
     const row = await this.row(treeId)
     const conv = await this.conversation(treeId, ctx)
     await this.arm()
@@ -254,11 +270,13 @@ export class UserSpace {
 
     const attached = input.attachments?.length ? await this.workspace.attach(treeId, input.attachments, ctx) : []
     const content: (TextContent | ImageContent)[] = [{ type: 'text', text }]
+    if (input.command) content.push({ type: 'text', text: commandText(input.command) })
+    if (input.mentions?.length) content.push({ type: 'text', text: mentionsText(await this.mentioned(input.mentions, ctx)) })
     if (attached.length) content.push({ type: 'text', text: attachmentsText(attached.map((a) => a.path)) })
     for (const a of attached) if (a.mimeType.startsWith('image/')) content.push({ type: 'image', data: toBase64(a.bytes), mimeType: a.mimeType })
     const submission = await conv.submit({ type: 'input', content, requestId: input.requestId }, ctx)
 
-    const named = text || attached.map((a) => a.path.slice(a.path.lastIndexOf('/') + 1)).join('、')
+    const named = text || input.command?.label || attached.map((a) => a.path.slice(a.path.lastIndexOf('/') + 1)).join('、')
     const title = row.title === DEFAULT_TITLE ? named.replace(/\s+/g, ' ').slice(0, TITLE_CHARS) : row.title
     await this.db.run('UPDATE trees SET title = ?, updatedAt = ? WHERE id = ?', title, this.now(), treeId)
     await this.changed()
@@ -272,6 +290,40 @@ export class UserSpace {
       () => {},
     ).catch(() => {})
     return { submissionId: submission.id }
+  }
+
+  /** What the model should do with each `@` mention (R18). */
+  private async mentioned(mentions: Mention[], ctx: Context) {
+    const active = this.plugins.active()
+    return Promise.all(
+      mentions.map(async (m) => {
+        let detail: string
+        if (m.kind === 'plugin') detail = active.includes(m.id) ? '本轮优先使用这个插件的工具。' : '这个插件现在没有开启；如果需要它，请用户先在“定制”页开启。'
+        else if (m.kind === 'workspace') detail = `用 read 读取 ${m.id}。`
+        else detail = await this.transcript(m.id, ctx).then(
+          (t) => `用户提到的另一个会话，内容如下，作为本轮的上下文：\n${t}`,
+          () => '这个会话已经不存在。',
+        )
+        return { ...m, detail }
+      }),
+    )
+  }
+
+  /** A conversation's user and assistant text, newest last, cut to its latest part. */
+  private async transcript(treeId: string, ctx: Context) {
+    const { messages } = await (await this.conversation(treeId, ctx)).context(ctx)
+    const lines: string[] = []
+    for (const m of messages) {
+      if (m.role !== 'user' && m.role !== 'assistant') continue
+      const blocks = typeof m.content === 'string' ? [{ type: 'text' as const, text: m.content }] : m.content
+      const text = blocks
+        .flatMap((b) => (b.type === 'text' && !parseNote(b.text) ? [b.text] : []))
+        .join('\n')
+        .trim()
+      if (text) lines.push(`${m.role === 'user' ? '用户' : '助手'}：${text}`)
+    }
+    const all = lines.join('\n\n')
+    return all.length > MENTIONED_CHAT_CHARS ? `…\n${all.slice(-MENTIONED_CHAT_CHARS)}` : all || '（空会话）'
   }
 
   async abort(treeId: string, ctx: Context = BACKGROUND_CONTEXT) {

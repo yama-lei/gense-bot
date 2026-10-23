@@ -457,10 +457,11 @@ export function ScheduledView({ store }: { store: Store }) {
 }
 
 export function CustomizeView({ store }: { store: Store }) {
-  const { plugins, skills, skillsError, memories, prefs, account } = store.state
+  const { plugins, skills, memories, prefs, account } = store.state
   const [memo, setMemo] = useState('')
   const [editing, setEditing] = useState<string | null>(null)
   const [pluginError, setPluginError] = useState<string | null>(null)
+  const [skillError, setSkillError] = useState<string | null>(null)
   return (
     <div className="page">
       <TopBar>
@@ -514,11 +515,6 @@ export function CustomizeView({ store }: { store: Store }) {
 
         <div className="section-head">
           <h3 className="section-title">Skills</h3>
-          {account.driveConnected && (
-            <button className="pill-btn" onClick={() => store.refreshSkills()}>
-              刷新
-            </button>
-          )}
         </div>
         <p className="muted small">
           Skill 是一份写给助手的任务说明。任务符合时助手会自动启用它，你也可以在输入框里用 / 指定。关闭后助手不会再使用它。
@@ -532,17 +528,23 @@ export function CustomizeView({ store }: { store: Store }) {
                 </strong>
                 <span className="muted small">{s.description}</span>
               </div>
-              <Toggle checked={s.enabled} label={s.name} onChange={(v) => store.setState((st) => ({ ...st, skills: st.skills.map((x) => (x.name === s.name ? { ...x, enabled: v } : x)) }))} />
+              <Toggle
+                checked={s.enabled}
+                label={s.name}
+                onChange={(v) => {
+                  setSkillError(null)
+                  void store.setSkillEnabled(s.name, v).catch((e: unknown) => setSkillError(e instanceof Error ? e.message : String(e)))
+                }}
+              />
             </li>
           ))}
         </ul>
-        {skillsError && <p className="small error-text">{skillsError}</p>}
+        {skillError && <p className="small error-text">{skillError}</p>}
         <ul className="muted small skill-help">
           <li>
-            添加自己的 Skill：在 Drive 的 <code>GenseBot/Skills/</code> 里新建一个文件夹，放入 <code>SKILL.md</code>，开头写上
-            <code>name</code> 和 <code>description</code>（YAML 格式），下面写说明，然后点“刷新”。
+            给某个会话加 Skill：让助手在工作区写 <code>skills/&lt;名称&gt;/SKILL.md</code>，开头写上 <code>name</code> 和{' '}
+            <code>description</code>（YAML 格式），下面写说明。下一轮起它只在这个会话里生效，和共享 Skill 重名时以它为准。
           </li>
-          <li>同一文件夹里的其他文件（最多一层子文件夹）会作为附带资料，助手需要时读取。</li>
         </ul>
 
         <h3 className="section-title">记忆</h3>

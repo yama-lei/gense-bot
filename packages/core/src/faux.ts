@@ -1,5 +1,5 @@
-// Scripted model for E2E tests and offline dev (GENSE_FAUX=1, ADR-0004 decision 6), on either host. Replies depend only on the last
-// user message, so a restarted process answers the same way:
+// Scripted model for E2E tests and offline dev (GENSE_FAUX=1, ADR-0004 decision 6), on either host. Replies depend only on the
+// user's own text of the last user message (its first block; notes follow it), so a restarted process answers the same way:
 //   "[长回答] ..."  a long reply that streams for a few seconds
 //   "[错误] ..."    a provider error
 //   "[工具 name] {json}"  calls the tool, then answers "工具结果：<its text>"
@@ -13,7 +13,9 @@ export const LONG_REPLY = Array.from({ length: 300 }, (_, i) => `第 ${i + 1} �
 const lastUserText = (messages: readonly Message[]) => {
   const m = messages.findLast((m) => m.role === 'user')
   if (!m) return ''
-  return typeof m.content === 'string' ? m.content : m.content.map((b) => (b.type === 'text' ? b.text : '')).join('')
+  if (typeof m.content === 'string') return m.content
+  const first = m.content[0]
+  return first?.type === 'text' ? first.text : ''
 }
 
 export function fauxModels(): ModelSetup {

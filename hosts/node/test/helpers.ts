@@ -1,7 +1,8 @@
 // Drives a real host over HTTP and WebSocket, as the browser does.
 import { applyImmutable, decoder, type Decoder } from '@earendil-works/chord/delta'
 import type { PluginState } from '@gense/core/catalog'
-import type { ClientRequest, FileEntry, ServerMessage, TreeMeta, UploadedFile } from '@gense/core/protocol'
+import { parseNote } from '@gense/core/notes'
+import type { ClientRequest, FileEntry, ServerMessage, SkillInfo, TreeMeta, UploadedFile } from '@gense/core/protocol'
 import assert from 'node:assert/strict'
 import { mkdtemp } from 'node:fs/promises'
 import { createServer } from 'node:http'
@@ -36,6 +37,7 @@ export class Client {
   readonly views = new Map<string, View>()
   trees: TreeMeta[] = []
   plugins: PluginState[] = []
+  skills: SkillInfo[] = []
   readonly #ws: WebSocket
   readonly #decoders = new Map<string, Decoder>()
   readonly #pending = new Map<number, { resolve(v: unknown): void; reject(e: Error): void }>()
@@ -59,6 +61,7 @@ export class Client {
   #receive(m: ServerMessage) {
     if (m.t === 'trees') this.trees = m.trees
     if (m.t === 'plugins') this.plugins = m.plugins
+    if (m.t === 'skills') this.skills = m.skills
     if (m.t === 'view') {
       this.#decoders.set(m.treeId, decoder())
       this.views.set(m.treeId, m.value as View)
@@ -125,14 +128,14 @@ export async function workspaceScenario(client: Client) {
   const wrote = await client.until(() => answers()[0], 15_000, 'tool answer')
   assert.match(textOf(wrote), /^工具结果：Successfully wrote/)
 
-  const files = await client.request<FileEntry[]>({ t: 'files.list', treeId: tree.id })
-  assert.deepEqual(files.map((f) => [f.path, f.size, f.readOnly]), [[`${dir}/notes/a.md`, 15, false]])
+  const own = async () => (await client.request<FileEntry[]>({ t: 'files.list', treeId: tree.id })).filter((f) => !f.readOnly)
+  assert.deepEqual((await own()).map((f) => [f.path, f.size, f.readOnly]), [[`${dir}/notes/a.md`, 15, false]])
   assert.deepEqual(await client.request({ t: 'files.preview', treeId: tree.id, path: 'notes/a.md' }), { text: '# 标题\n正文', size: 15, truncated: false, binary: false })
   const read = await client.request<{ name: string; base64: string }>({ t: 'files.read', treeId: tree.id, path: `${dir}/notes/a.md` })
   assert.equal(Buffer.from(read.base64, 'base64').toString(), '# 标题\n正文')
   await assert.rejects(client.request({ t: 'files.read', treeId: tree.id, path: '../other/x' }), /只能查看/)
   await client.request({ t: 'files.delete', treeId: tree.id, path: 'notes/a.md' })
-  assert.deepEqual(await client.request({ t: 'files.list', treeId: tree.id }), [])
+  assert.deepEqual(await own(), [])
 
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
   const up = await client.request<UploadedFile>({ t: 'upload', name: 'dot.png', base64: png.toString('base64') })
@@ -143,8 +146,7 @@ export async function workspaceScenario(client: Client) {
   const blocks = user.model![0]!.content as { type: string; text?: string }[]
   assert.deepEqual(blocks.map((b) => b.type), ['text', 'text', 'image'])
   assert.equal(blocks[1]!.text, `<attachments>\n${dir}/attachments/dot.png\n</attachments>`)
-  const listed = await client.request<FileEntry[]>({ t: 'files.list', treeId: tree.id })
-  assert.deepEqual(listed.map((f) => [f.path, f.size]), [[`${dir}/attachments/dot.png`, png.length]])
+  assert.deepEqual((await own()).map((f) => [f.path, f.size]), [[`${dir}/attachments/dot.png`, png.length]])
 
   await client.request({ t: 'tree.delete', treeId: tree.id })
   await assert.rejects(client.request({ t: 'files.list', treeId: tree.id }), /会话不存在/)
@@ -253,4 +255,85 @@ export async function pluginScenario(client: Client, upstream: { keys: string[] 
   await client.request({ t: 'plugin.set', pluginId: 'web', enabled: false })
   await client.until(() => plugin('web')?.enabled === false, 5_000, 'web disabled')
   await client.request({ t: 'tree.delete', treeId: tree.id })
+}
+
+/** The system prompt sections in effect at the end of a view: `pi.system` entries replayed in order. */
+export function sections(view: View | undefined) {
+  const shown = new Map<string, string>()
+  for (const e of view?.entries ?? []) {
+    const m = e.model?.[0] as { role?: string; sections?: Record<string, string | null> } | undefined
+    if (m?.role !== 'system' || !m.sections) continue
+    for (const [k, v] of Object.entries(m.sections)) v === null ? shown.delete(k) : shown.set(k, v)
+  }
+  return shown
+}
+
+/**
+ * Stage-3 Skills, `/` and `@` (R17–R19, R28, R29), shared by both hosts: shared Skills are written to /data/skills
+ * and listed in the prompt, a switch removes one, a conversation's own Skill wins on a name clash, and a message's
+ * command and mentions reach the model as note blocks the client parses back.
+ */
+export async function skillsScenario(client: Client) {
+  const skills = await client.until(() => client.skills.length > 0 && client.skills, 10_000, 'skill list')
+  assert.ok(skills.every((s) => s.source === 'builtin' && s.enabled))
+  const name = skills[0]!.name
+
+  const tree = await client.request<TreeMeta>({ t: 'tree.create' })
+  const dir = `/data/sessions/${tree.id}`
+  await client.request({ t: 'watch', treeId: tree.id })
+  const answers = () => client.views.get(tree.id)?.entries.filter((e) => e.kind === 'pi.assistant' && textOf(e)) ?? []
+  const ask = async (text: string, n: number, extra: object = {}) => {
+    await client.request({ t: 'send', treeId: tree.id, text, requestId: `s${n}`, ...extra })
+    return client.until(() => answers()[n - 1], 15_000, `answer ${n}`)
+  }
+  const prompt = () => sections(client.views.get(tree.id)).get('skills') ?? ''
+
+  await ask('你好', 1)
+  assert.match(prompt(), new RegExp(`- ${name}：.*（/data/skills/${name}/SKILL.md）`))
+  const panel = await client.request<FileEntry[]>({ t: 'files.list', treeId: tree.id })
+  assert.ok(panel.some((f) => f.path === `/data/skills/${name}/SKILL.md` && f.readOnly))
+
+  await client.request({ t: 'skill.set', name, enabled: false })
+  await client.until(() => client.skills.find((s) => s.name === name)?.enabled === false, 5_000, 'skill off')
+  assert.ok(!(await client.request<FileEntry[]>({ t: 'files.list', treeId: tree.id })).some((f) => f.path.startsWith(`/data/skills/${name}/`)))
+  await ask('再来', 2)
+  assert.doesNotMatch(prompt(), new RegExp(`- ${name}：`))
+  await assert.rejects(client.request({ t: 'skill.set', name: '不存在', enabled: true }), /未知 Skill/)
+
+  // The conversation's own Skill of the same name replaces the shared one, switched back on.
+  await client.request({ t: 'skill.set', name, enabled: true })
+  const skillMd = `---\nname: ${name}\ndescription: 本会话的版本\n---\n\n正文`
+  await ask(`[工具 write] ${JSON.stringify({ path: `skills/${name}/SKILL.md`, content: skillMd })}`, 3)
+  await ask('看看', 4)
+  assert.match(prompt(), new RegExp(`- ${name}：本会话的版本（${dir}/skills/${name}/SKILL.md）`))
+  assert.equal(prompt().match(new RegExp(`- ${name}：`, 'g'))?.length, 1)
+
+  // `/` and `@`: a plugin that is on and one that is off, a workspace file, and another conversation.
+  await client.request({ t: 'plugin.set', pluginId: 'ui', enabled: true })
+  await client.request({ t: 'plugin.set', pluginId: 'email', enabled: false })
+  const other = await client.request<TreeMeta>({ t: 'tree.create' })
+  await client.request({ t: 'watch', treeId: other.id })
+  await client.request({ t: 'send', treeId: other.id, text: '旧会话里的话', requestId: 'o1' })
+  await client.until(() => client.views.get(other.id)?.entries.some((e) => e.kind === 'pi.assistant' && textOf(e)), 15_000, 'other answer')
+
+  const command = { id: 'summarize', label: '总结会话', prompt: '用户要求总结会话。' }
+  const mentions = [
+    { kind: 'plugin', id: 'ui', label: '生成式界面' },
+    { kind: 'plugin', id: 'email', label: '邮件' },
+    { kind: 'workspace', id: `${dir}/skills/${name}/SKILL.md`, label: 'SKILL.md' },
+    { kind: 'chat', id: other.id, label: '旧会话' },
+  ] as const
+  await ask('', 5, { command, mentions })
+  const user = client.views.get(tree.id)!.entries.filter((e) => e.kind === 'pi.user')[4]!
+  const blocks = (user.model![0]!.content as { type: string; text: string }[]).map((b) => b.text)
+  assert.deepEqual(blocks.slice(1).map((b) => parseNote(b)), [
+    { attachments: [], command: { id: command.id, label: command.label }, mentions: [] },
+    { attachments: [], mentions: [...mentions] },
+  ])
+  assert.match(blocks[1]!, /用户要求总结会话。/)
+  assert.match(blocks[2]!, /本轮优先使用这个插件的工具[\s\S]*没有开启[\s\S]*用 read 读取 [\s\S]*用户：旧会话里的话\n\n助手：收到：旧会话里的话/)
+  assert.equal(client.trees.find((t) => t.id === tree.id)?.title, '你好')
+
+  for (const id of [tree.id, other.id]) await client.request({ t: 'tree.delete', treeId: id })
+  await client.request({ t: 'plugin.set', pluginId: 'ui', enabled: false })
 }

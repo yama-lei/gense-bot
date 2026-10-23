@@ -40,8 +40,8 @@ export interface Store {
   setPluginEnabled: (id: string, enabled: boolean) => Promise<void>
   /** Reloads the uploaded files into `AppState.files`. */
   refreshFiles: () => void
-  /** Reloads the skills in GenseBot/Skills. */
-  refreshSkills: () => void
+  /** Turns a shared Skill on or off; rejects with a message for the user. */
+  setSkillEnabled: (name: string, enabled: boolean) => Promise<void>
   /** Text of any readable Drive file; rejects with a message for the user. */
   readFile: (id: string) => Promise<{ file: DriveFile; text: string }>
   /** Name and full-text search across the user's Drive. */

@@ -17,7 +17,7 @@ export const builtinCommands: Command[] = [
     id: 'research',
     label: '深度搜索',
     hint: '多方检索、交叉核对，给出带来源的结论',
-    prompt: '用户要求深度搜索：用 web_research 研究这个问题，必要时再用 web_search / web_fetch 补充，回答中用链接注明来源。',
+    prompt: '用户要求深度搜索：用 deep_search 从多个角度检索并读取网页，必要时再用 web_search / web_fetch 补充，交叉核对后回答，并用链接注明来源。',
     plugin: 'web',
   },
   {
@@ -43,9 +43,9 @@ export const skillCommand = (s: Pick<SkillInfo, 'name' | 'description'>): Comman
   prompt: `用户要求使用 Skill「${s.name}」：先用 read 读取它的 SKILL.md（路径见系统提示里的 Skill 列表），再按其中的说明完成任务。`,
 })
 
-/** A chat's own skills: folders of /workspace/skills holding a SKILL.md (roadmap-2 "L0-6 会话工作区"). */
+/** A chat's own skills: folders of skills/ in its workspace holding a SKILL.md (roadmap-3 R33: R29). */
 export function localSkillNames(files: WorkspaceFile[] = []): string[] {
-  return files.flatMap((f) => /^\/workspace\/skills\/([^/]+)\/SKILL\.md$/.exec(f.path)?.[1] ?? [])
+  return files.flatMap((f) => (f.readOnly ? [] : (/^\/data\/sessions\/[^/]+\/skills\/([^/]+)\/SKILL\.md$/.exec(f.path)?.[1] ?? [])))
 }
 
 /** Commands offered in a composer: built-ins whose plugin is on, the enabled skills, then the chat's own skills (which win on a name clash). */

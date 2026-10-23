@@ -1,6 +1,7 @@
 // Messages between the browser and a host over one WebSocket (roadmap-3 D9). Type-only: the web client imports it too.
 import type { WireOp } from '@earendil-works/chord/delta'
 import type { PluginState, PluginValue } from './catalog.ts'
+import type { CommandNote, Mention } from './notes.ts'
 
 /** A conversation as the sidebar lists it. In stage 1 a tree is just its main branch. */
 export interface TreeMeta {
@@ -46,7 +47,14 @@ export interface UploadedFile {
   modifiedTime: number
 }
 
-/** Requests carry an `id`; the host answers each with one `reply`. */
+/** A shared Skill on the customize page. */
+export interface SkillInfo {
+  name: string
+  description: string
+  source: 'builtin' | 'drive'
+  enabled: boolean
+}
+
 /** A tool's result as a view sees it (MCP `CallToolResult`). */
 export interface ToolCallResult {
   content: string
@@ -54,12 +62,24 @@ export interface ToolCallResult {
   isError?: boolean
 }
 
+/** Requests carry an `id`; the host answers each with one `reply`. */
 export type ClientRequest =
   | { t: 'tree.create'; id: number }
   | { t: 'tree.update'; id: number; treeId: string; title?: string; pinned?: boolean }
   | { t: 'tree.delete'; id: number; treeId: string }
   /** `attachments` are upload ids; they are copied into the tree's workspace. */
-  | { t: 'send'; id: number; treeId: string; text: string; requestId: string; model?: ModelInfo; effort?: Effort; attachments?: string[] }
+  | {
+      t: 'send'
+      id: number
+      treeId: string
+      text: string
+      requestId: string
+      model?: ModelInfo
+      effort?: Effort
+      attachments?: string[]
+      command?: CommandNote
+      mentions?: Mention[]
+    }
   | { t: 'abort'; id: number; treeId: string }
   | { t: 'watch'; id: number; treeId: string }
   | { t: 'unwatch'; id: number; treeId: string }
@@ -74,11 +94,13 @@ export type ClientRequest =
   /** Switches a plugin or changes some of its settings; `null` returns a value to its default or clears a secret. */
   | { t: 'plugin.set'; id: number; pluginId: string; enabled?: boolean; values?: Record<string, PluginValue | null>; secrets?: Record<string, string | null> }
   | { t: 'tool.call'; id: number; treeId: string; name: string; args: unknown }
+  | { t: 'skill.set'; id: number; name: string; enabled: boolean }
 
 export type ServerMessage =
   | { t: 'hello'; email: string; models: ModelInfo[]; defaultModel: ModelInfo | null }
   | { t: 'trees'; trees: TreeMeta[] }
   | { t: 'plugins'; plugins: PluginState[] }
+  | { t: 'skills'; skills: SkillInfo[] }
   /** The branch's whole view; later `ops` apply to it. Sent on watch and whenever the host restarts the stream. */
   | { t: 'view'; treeId: string; value: unknown }
   /** Chord operations of one commit, encoded with a per-watch encoder; decode with a decoder reset at each `view`. */

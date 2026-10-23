@@ -2,7 +2,7 @@
 import { LONG_REPLY, RUN_ERROR_KIND, type TreeMeta } from '@gense/core'
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
-import { Client, fakeUpstream, login, pluginEnv, pluginScenario, stopReason, tempDir, textOf, workspaceScenario } from '../../node/test/helpers.ts'
+import { Client, fakeUpstream, login, pluginEnv, pluginScenario, skillsScenario, stopReason, tempDir, textOf, workspaceScenario } from '../../node/test/helpers.ts'
 import { addUser, wranglerDev, type Dev } from './helpers.ts'
 
 const EMAIL = 'a@example.com'
@@ -91,5 +91,12 @@ test('R33: plugins: switches, the server key, a sealed user key, and a generated
   const { cookie } = await login(dev.url, EMAIL, PASSWORD)
   const client = await Client.connect(dev.url, cookie)
   await pluginScenario(client, upstream)
+  client.close()
+})
+
+test('R33: Skills, / commands and @ mentions', { timeout: 60_000 }, async () => {
+  const { cookie } = await login(dev.url, EMAIL, PASSWORD)
+  const client = await Client.connect(dev.url, cookie)
+  await skillsScenario(client)
   client.close()
 })

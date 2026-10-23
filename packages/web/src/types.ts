@@ -1,4 +1,5 @@
 import type { PluginSetting, PluginSettingsState } from '@gense/core/catalog'
+import type { SkillInfo } from '@gense/core/protocol'
 // The UI's data model; see docs/specs/web-ui.md "数据模型草案".
 
 export type TurnStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'interrupted'
@@ -192,6 +193,7 @@ export interface Schedule {
 }
 
 export type { PluginSetting, PluginSettingsState, PluginValue } from '@gense/core/catalog'
+export type { SkillInfo }
 /** A plugin as listed on the customize page. */
 export interface PluginInfo {
   id: string
@@ -208,12 +210,6 @@ export interface PluginInfo {
 }
 
 /** An Agent Skill (roadmap-2 R19): built in, or `GenseBot/Skills/<名称>/SKILL.md` in Drive. */
-export interface SkillInfo {
-  name: string
-  description: string
-  source: 'builtin' | 'drive'
-  enabled: boolean
-}
 
 export interface Memory {
   id: string
@@ -256,8 +252,6 @@ export interface AppState {
   schedules: Schedule[]
   plugins: PluginInfo[]
   skills: SkillInfo[]
-  /** Why GenseBot/Skills could not be read; null when fine. */
-  skillsError: string | null
   memories: Memory[]
   prefs: Preferences
   account: Account

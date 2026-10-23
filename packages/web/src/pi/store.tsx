@@ -68,7 +68,7 @@ const savePrefs = (prefs: Preferences) => {
 }
 
 /** Fields the host does not keep in stage 1; views can still edit them in this tab. */
-type LocalState = Pick<AppState, 'projects' | 'memories' | 'skills' | 'prefs'>
+type LocalState = Pick<AppState, 'projects' | 'memories' | 'prefs'>
 
 export function usePiStore(onUnauthorized: () => void): Store {
   const route = useRoute()
@@ -88,7 +88,6 @@ export function usePiStore(onUnauthorized: () => void): Store {
   const [local, setLocal] = useState<LocalState>(() => ({
     projects: [],
     memories: [],
-    skills: [],
     prefs: { language: 'zh-CN', defaultEffort: 'medium', model: '', ...loadPrefs() },
   }))
 
@@ -117,6 +116,7 @@ export function usePiStore(onUnauthorized: () => void): Store {
     () => ({
       ...local,
       plugins,
+      skills: host.skills,
       prefs,
       conversations: (host.trees ?? []).map(
         (t): Conversation => ({
@@ -131,7 +131,6 @@ export function usePiStore(onUnauthorized: () => void): Store {
       ),
       files: uploads,
       schedules: [],
-      skillsError: null,
       account: { name: '', email: host.email, driveConnected: false, driveError: null },
       models,
       modelsError: host.connected || !host.trees ? null : '与服务器的连接已断开，正在重连…',
@@ -163,17 +162,18 @@ export function usePiStore(onUnauthorized: () => void): Store {
   }, [growth]) // eslint-disable-line react-hooks/exhaustive-deps
   const toModel = (key: string) => host.models.find((m) => `${m.provider}:${m.id}` === key)
   const send = (treeId: string, message: Outgoing, model: string, effort: Effort) => {
-    const text = message.command ? `${message.command.prompt}\n\n${message.text}` : message.text
     const picked = toModel(model)
     const attachments = message.attachments?.map((a) => a.id)
     return socket.request({
       t: 'send',
       treeId,
-      text,
+      text: message.text,
       requestId: crypto.randomUUID(),
       ...(picked && { model: picked }),
       effort,
       ...(attachments?.length && { attachments }),
+      ...(message.command && { command: message.command }),
+      ...(message.mentions?.length && { mentions: message.mentions }),
     })
   }
 
@@ -189,8 +189,8 @@ export function usePiStore(onUnauthorized: () => void): Store {
       }
     }
     if (next.prefs !== cur.prefs) savePrefs(next.prefs)
-    const { projects, memories, skills, prefs } = next
-    setLocal({ projects, memories, skills, prefs })
+    const { projects, memories, prefs } = next
+    setLocal({ projects, memories, prefs })
   }
 
   return {
@@ -231,7 +231,7 @@ export function usePiStore(onUnauthorized: () => void): Store {
     setPluginConfig: (pluginId, values, secrets) => socket.request({ t: 'plugin.set', pluginId, values, secrets }).then(() => {}),
     setPluginEnabled: (pluginId, enabled) => socket.request({ t: 'plugin.set', pluginId, enabled }).then(() => {}),
     refreshFiles: refreshUploads,
-    refreshSkills: () => {},
+    setSkillEnabled: (name, enabled) => socket.request({ t: 'skill.set', name, enabled }),
     readFile: later,
     searchDrive: async () => [],
     refreshWorkspace,

@@ -33,8 +33,10 @@ export class Connection {
     this.#unsubscribe.push(
       space.subscribeTrees((trees) => this.#send({ t: 'trees', trees })),
       space.plugins.subscribe(() => this.#send({ t: 'plugins', plugins: space.plugins.list() })),
+      space.skills.subscribe(() => this.#send({ t: 'skills', skills: space.skills.list() })),
     )
     this.#send({ t: 'plugins', plugins: space.plugins.list() })
+    this.#send({ t: 'skills', skills: space.skills.list() })
     this.#send({ t: 'trees', trees: await space.trees() })
   }
 
@@ -70,6 +72,8 @@ export class Connection {
           ...(r.model && { model: r.model }),
           ...(r.effort && { effort: r.effort }),
           ...(r.attachments?.length && { attachments: r.attachments }),
+          ...(r.command && { command: r.command }),
+          ...(r.mentions?.length && { mentions: r.mentions }),
         })
       case 'abort':
         return space.abort(r.treeId)
@@ -91,6 +95,8 @@ export class Connection {
         return space.workspace.uploads()
       case 'tool.call':
         return space.callTool(r.treeId, r.name, r.args)
+      case 'skill.set':
+        return space.skills.set(r.name, r.enabled)
       case 'plugin.set':
         return space.plugins.set(r.pluginId, {
           ...(r.enabled !== undefined && { enabled: r.enabled }),

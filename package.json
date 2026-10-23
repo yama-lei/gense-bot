@@ -1,0 +1,18 @@
+{
+  "name": "gensebot",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*", "hosts/*"],
+  "scripts": {
+    "dev": "npm run dev -w @gense/host-node & npm run dev -w @gense/web",
+    "build": "npm run build -w @gense/web",
+    "start": "npm start -w @gense/host-node",
+    "typecheck": "tsc -p packages/core && tsc -p hosts/node && npm run typecheck -w @gense/web",
+    "test": "npm test -w @gense/host-node",
+    "user:add": "npm run user:add -w @gense/host-node --"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "~6.0.3"
+  }
+}

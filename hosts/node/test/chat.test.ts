@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 import { configFromEnv } from '../src/config.ts'
 import { startServer } from '../src/server.ts'
-import { accountsScenario, Client, documentsScenario, fakeUpstream, login, pluginEnv, pluginScenario, skillsScenario, tempDir, textOf, workspaceScenario } from './helpers.ts'
+import { accountsScenario, branchesScenario, Client, documentsScenario, fakeUpstream, login, pluginEnv, pluginScenario, skillsScenario, tempDir, textOf, workspaceScenario } from './helpers.ts'
 
 const EMAIL = 'a@example.com'
 const PASSWORD = 'correct horse'
@@ -110,5 +110,12 @@ test('R9: Word and PDF attachments are read as text', { timeout: 60_000 }, async
   const { cookie } = await login(server.url, EMAIL, PASSWORD)
   const client = await Client.connect(server.url, cookie)
   await documentsScenario(client)
+  client.close()
+})
+
+test('R35–R37: edits, regenerations and forks are branches of one conversation', { timeout: 60_000 }, async () => {
+  const { cookie } = await login(server.url, EMAIL, PASSWORD)
+  const client = await Client.connect(server.url, cookie)
+  await branchesScenario(client)
   client.close()
 })

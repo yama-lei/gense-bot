@@ -19,7 +19,7 @@ type Message = {
   durationMs?: number
   details?: unknown
 }
-export type Entry = { id: number; kind: string; data?: unknown; model?: Message[] }
+export type Entry = { id: number; conversationId?: number; kind: string; data?: unknown; model?: Message[] }
 type Live = { run?: unknown; generation?: { message?: Message; retry?: { error: string } } }
 type Inbox = { items?: { id: number; mode: string; content?: unknown }[] }
 export type View = { entries: Entry[]; docs: Record<string, unknown> }
@@ -70,11 +70,16 @@ export function toTurns(view: View, defaults: { model: string; effort: Effort })
   }
   const current = (at: number) => turns.at(-1) ?? open(`start-${at}`, '', at)
 
+  let previous: Entry | undefined
   for (const e of view.entries) {
     const m = e.model?.[0]
+    if (turns.length) turns.at(-1)!.lastMessageId = String(e.id)
     if (e.kind === 'pi.user') {
       const input = userInput(m?.content)
-      withInput(open(String(e.id), input.text, m?.timestamp ?? Date.now()), input)
+      const turn = withInput(open(String(e.id), input.text, m?.timestamp ?? Date.now()), input)
+      turn.lastMessageId = String(e.id)
+      turn.anchor = previous ? String(previous.id) : 'start'
+      if (e.conversationId !== undefined) turn.writer = e.conversationId
     } else if (e.kind === 'pi.assistant' && m) {
       const t = current(e.id)
       if (abortedFrom !== undefined) {
@@ -107,6 +112,7 @@ export function toTurns(view: View, defaults: { model: string; effort: Effort })
       if (reason === 'aborted') t.status = 'interrupted'
       else if (t.status !== 'failed') Object.assign(t, { status: 'failed', error: reasonText[reason ?? ''] ?? detail ?? reason ?? '请求失败' })
     }
+    previous = e
   }
 
   const live = view.docs['pi.live'] as Live | undefined

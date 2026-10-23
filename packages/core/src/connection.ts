@@ -42,6 +42,9 @@ export class Connection {
       space.subscribeTrees((trees) => this.#send({ t: 'trees', trees })),
       space.plugins.subscribe(() => this.#send({ t: 'plugins', plugins: space.plugins.list() })),
       space.skills.subscribe(() => this.#send({ t: 'skills', skills: space.skills.list() })),
+      space.subscribeBranches((treeId) => {
+        if (this.#watches.has(treeId)) void space.branches(treeId).then((b) => this.#send({ t: 'branches', treeId, ...b }), () => {})
+      }),
     )
     this.#send({ t: 'plugins', plugins: space.plugins.list() })
     this.#send({ t: 'skills', skills: space.skills.list() })
@@ -84,6 +87,8 @@ export class Connection {
         return space.send(r.treeId, {
           text: r.text,
           requestId: r.requestId,
+          ...(r.branchId && { branchId: r.branchId }),
+          ...(r.replace !== undefined && { replace: r.replace }),
           ...(r.model && { model: r.model }),
           ...(r.effort && { effort: r.effort }),
           ...(r.attachments?.length && { attachments: r.attachments }),
@@ -91,9 +96,17 @@ export class Connection {
           ...(r.mentions?.length && { mentions: r.mentions }),
         })
       case 'abort':
-        return space.abort(r.treeId)
+        return space.abort(r.treeId, r.branchId)
+      case 'branch.fork':
+        return space.fork(r.treeId, r.branchId, r.at)
+      case 'regenerate':
+        return space.regenerate(r.treeId, r.branchId, r.entryId, {
+          requestId: r.requestId,
+          ...(r.model && { model: r.model }),
+          ...(r.effort && { effort: r.effort }),
+        })
       case 'watch':
-        return this.#watch(r.treeId)
+        return this.#watch(r.treeId, r.branchId)
       case 'unwatch':
         return this.#unwatch(r.treeId)
       case 'files.list':
@@ -167,14 +180,19 @@ export class Connection {
     }
   }
 
-  /** Sends the whole view, then the ops of each later commit. Watching again restarts the stream. */
-  async #watch(treeId: string) {
+  /**
+   * Sends the tree's branches, then the whole view of one of them, then the ops of each later commit. Watching again,
+   * the same branch or another, restarts the stream.
+   */
+  async #watch(treeId: string, branchId?: string) {
     await this.#unwatch(treeId)
-    const watch = await this.#o.space.watch(treeId)
+    const { space } = this.#o
+    const { branchId: shown, watch } = await space.watch(treeId, branchId)
     if (this.#closed) return void (await watch.stop())
     this.#watches.set(treeId, watch)
+    this.#send({ t: 'branches', treeId, ...(await space.branches(treeId)) })
     const enc = encoder()
-    this.#send({ t: 'view', treeId, value: watch.value })
+    this.#send({ t: 'view', treeId, branchId: shown, value: watch.value })
     watch.start(async (_value, ops) => this.#send({ t: 'ops', treeId, ops: enc.encode(ops) }))
     void watch.closed.then(() => {
       if (this.#watches.get(treeId) === watch) this.#watches.delete(treeId)

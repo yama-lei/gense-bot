@@ -1,7 +1,7 @@
 // The browser end of the host protocol (packages/core/src/protocol.ts). Reconnects, and re-watches after reconnecting.
 import { applyImmutable, decoder, type Decoder } from '@earendil-works/chord/delta'
 import type { AuthEvent, AuthType } from '@earendil-works/pi-ai'
-import type { ClientRequest, LoginPrompt, ModelInfo, ProviderState, ServerMessage, SkillInfo, TreeMeta } from '@gense/core/protocol'
+import type { BranchesState, ClientRequest, LoginPrompt, ModelInfo, ProviderState, ServerMessage, SkillInfo, TreeMeta } from '@gense/core/protocol'
 import type { PluginState } from '@gense/core/catalog'
 import type { View } from './turns'
 
@@ -11,6 +11,9 @@ export interface SocketState {
   defaultModel: ModelInfo | null
   trees: TreeMeta[] | null
   views: Record<string, View>
+  /** Per watched tree, its branches (R35), and which one `views` shows. */
+  branches: Record<string, BranchesState>
+  shown: Record<string, string>
   /** The user's plugin switches and settings; null until the host sends them. */
   plugins: PluginState[] | null
   skills: SkillInfo[]
@@ -30,12 +33,13 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 export type Request = DistributiveOmit<ClientRequest, 'id'>
 
 export class HostSocket {
-  state: SocketState = { email: '', models: [], defaultModel: null, trees: null, views: {}, plugins: null, skills: [], providers: [], connected: false }
+  state: SocketState = { email: '', models: [], defaultModel: null, trees: null, views: {}, branches: {}, shown: {}, plugins: null, skills: [], providers: [], connected: false }
   #ws: WebSocket | undefined
   #next = 1
   #pending = new Map<number, { resolve(v: unknown): void; reject(e: Error): void }>()
   #decoders = new Map<string, Decoder>()
-  #watched = new Set<string>()
+  /** Watched trees, with the branch asked for (undefined: the tree's active one). */
+  #watched = new Map<string, string | undefined>()
   #listeners = new Set<() => void>()
   #logins = new Map<string, LoginHandlers>()
   #promptLogins = new Map<string, string>()
@@ -66,7 +70,7 @@ export class HostSocket {
       opened = true
       this.#retry = 0
       this.#set({ connected: true })
-      for (const treeId of this.#watched) void this.request({ t: 'watch', treeId }).catch(() => {})
+      for (const [treeId, branchId] of this.#watched) void this.request({ t: 'watch', treeId, ...(branchId && { branchId }) }).catch(() => {})
     }
     ws.onmessage = (event) => this.#receive(JSON.parse(String(event.data)) as ServerMessage)
     ws.onclose = () => {
@@ -106,9 +110,14 @@ export class HostSocket {
         return this.#set({ skills: m.skills })
       case 'trees':
         return this.#set({ trees: m.trees })
+      case 'branches': {
+        const { t: _, treeId, ...state } = m
+        return this.#set({ branches: { ...this.state.branches, [treeId]: state } })
+      }
       case 'view':
         this.#decoders.set(m.treeId, decoder())
-        return this.#set({ views: { ...this.state.views, [m.treeId]: m.value as View } })
+        if (this.#watched.has(m.treeId)) this.#watched.set(m.treeId, m.branchId)
+        return this.#set({ views: { ...this.state.views, [m.treeId]: m.value as View }, shown: { ...this.state.shown, [m.treeId]: m.branchId } })
       case 'ops': {
         const dec = this.#decoders.get(m.treeId)
         if (!dec) return
@@ -146,7 +155,7 @@ export class HostSocket {
   /** Keeps exactly these trees watched. */
   watch(treeIds: string[]) {
     const next = new Set(treeIds)
-    for (const id of this.#watched)
+    for (const id of this.#watched.keys())
       if (!next.has(id)) {
         this.#watched.delete(id)
         this.#decoders.delete(id)
@@ -154,9 +163,16 @@ export class HostSocket {
       }
     for (const id of next)
       if (!this.#watched.has(id)) {
-        this.#watched.add(id)
+        this.#watched.set(id, undefined)
         void this.request({ t: 'watch', treeId: id }).catch(() => {})
       }
+  }
+
+  /** Shows another branch of a watched tree; it becomes the tree's active one. */
+  async showBranch(treeId: string, branchId: string) {
+    if (!this.#watched.has(treeId)) return
+    this.#watched.set(treeId, branchId)
+    await this.request({ t: 'watch', treeId, branchId })
   }
 
   close() {

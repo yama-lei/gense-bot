@@ -29,7 +29,7 @@ interface Props {
   onAttach?: (file: File) => Promise<DriveFile>
   /** Candidates for the `/` and `@` menus; without them typing `/` or `@` opens nothing. */
   suggest?: Suggestions
-  /** Runs a client command (such as 开支线) picked from the `/` menu. */
+  /** Runs a client command picked from the `/` menu. */
   onClientCommand?: (id: string) => void
   busy?: boolean
   onStop?: () => void

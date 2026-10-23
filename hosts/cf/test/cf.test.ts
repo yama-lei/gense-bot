@@ -2,7 +2,7 @@
 import { LONG_REPLY, RUN_ERROR_KIND, type TreeMeta } from '@gense/core'
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
-import { accountsScenario, Client, documentsScenario, fakeUpstream, login, pluginEnv, pluginScenario, skillsScenario, stopReason, tempDir, textOf, workspaceScenario } from '../../node/test/helpers.ts'
+import { accountsScenario, branchesScenario, Client, documentsScenario, fakeUpstream, login, pluginEnv, pluginScenario, skillsScenario, stopReason, tempDir, textOf, workspaceScenario } from '../../node/test/helpers.ts'
 import { addUser, wranglerDev, type Dev } from './helpers.ts'
 
 const EMAIL = 'a@example.com'
@@ -112,5 +112,12 @@ test('R9: Word and PDF attachments are read as text', { timeout: 60_000 }, async
   const { cookie } = await login(dev.url, EMAIL, PASSWORD)
   const client = await Client.connect(dev.url, cookie)
   await documentsScenario(client)
+  client.close()
+})
+
+test('R35–R37: edits, regenerations and forks are branches of one conversation', { timeout: 60_000 }, async () => {
+  const { cookie } = await login(dev.url, EMAIL, PASSWORD)
+  const client = await Client.connect(dev.url, cookie)
+  await branchesScenario(client)
   client.close()
 })

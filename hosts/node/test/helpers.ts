@@ -2,7 +2,7 @@
 import { applyImmutable, decoder, type Decoder } from '@earendil-works/chord/delta'
 import type { PluginState } from '@gense/core/catalog'
 import { parseNote } from '@gense/core/notes'
-import type { ClientRequest, FileEntry, LoginPrompt, ModelInfo, ProviderState, ServerMessage, SkillInfo, TreeMeta, UploadedFile } from '@gense/core/protocol'
+import type { BranchesState, BranchMeta, ClientRequest, FileEntry, LoginPrompt, ModelInfo, ProviderState, ServerMessage, SkillInfo, TreeMeta, UploadedFile } from '@gense/core/protocol'
 import assert from 'node:assert/strict'
 import { mkdtemp } from 'node:fs/promises'
 import { createServer } from 'node:http'
@@ -23,7 +23,7 @@ export async function login(url: string, email: string, password: string) {
   return { status: res.status, body: (await res.json()) as { email?: string; error?: string }, cookie }
 }
 
-type Entry = { kind: string; data?: unknown; model?: { role: string; content: unknown; stopReason?: string; isError?: boolean; details?: unknown }[] }
+type Entry = { id: number; kind: string; data?: unknown; model?: { role: string; content: unknown; stopReason?: string; isError?: boolean; details?: unknown }[] }
 export type View = { entries: Entry[]; docs: Record<string, unknown> }
 
 export const textOf = (e: Entry) => {
@@ -36,6 +36,9 @@ export const stopReason = (e: Entry) => e.model?.[0]?.stopReason
 
 export class Client {
   readonly views = new Map<string, View>()
+  /** Per watched tree, its branches and the one its view shows. */
+  readonly branches = new Map<string, BranchesState>()
+  readonly shown = new Map<string, string>()
   trees: TreeMeta[] = []
   plugins: PluginState[] = []
   skills: SkillInfo[] = []
@@ -76,7 +79,12 @@ export class Client {
     if (m.t === 'providers') this.providers = m.providers
     if (m.t === 'auth.prompt') this.prompts.set(m.promptId, { loginId: m.loginId, prompt: m.prompt })
     if (m.t === 'auth.prompt.done') this.prompts.delete(m.promptId)
+    if (m.t === 'branches') {
+      const { t: _, treeId, ...state } = m
+      this.branches.set(treeId, state)
+    }
     if (m.t === 'view') {
+      this.shown.set(m.treeId, m.branchId)
       this.#decoders.set(m.treeId, decoder())
       this.views.set(m.treeId, m.value as View)
     }
@@ -423,5 +431,55 @@ export async function documentsScenario(client: Client) {
   // The cache is outside the tree's workspace, so the file panel does not show it.
   const listed = await client.request<FileEntry[]>({ t: 'files.list', treeId: tree.id })
   assert.ok(!listed.some((f) => f.path.includes('.cache')))
+  await client.request({ t: 'tree.delete', treeId: tree.id })
+}
+
+/**
+ * Stage-4 tree sessions, shared by both hosts (R35–R37, R41): an edit and a regeneration become sibling versions of a
+ * message, a fork continues from an answer, the shown branch switches, and the sidebar still lists one conversation.
+ */
+export async function branchesScenario(client: Client) {
+  const tree = await client.request<TreeMeta>({ t: 'tree.create' })
+  await client.request({ t: 'watch', treeId: tree.id })
+  const answers = (n: number) => client.until(() => (client.views.get(tree.id)?.entries.filter((e) => e.kind === 'pi.assistant').length ?? 0) >= n && client.views.get(tree.id), 15_000, `${n} answers`)
+  const idle = (branchId: string) => client.until(() => client.branches.get(tree.id)?.branches.find((b) => b.id === branchId)?.status === 'idle', 15_000, 'idle branch')
+  const { branchId: main } = await client.request<{ branchId: string }>({ t: 'send', treeId: tree.id, text: '甲', requestId: 'b1' })
+  await answers(1)
+  await idle(main)
+  await client.request({ t: 'send', treeId: tree.id, text: '乙', requestId: 'b2' })
+  const view = await answers(2)
+  const [, second] = view.entries.filter((e) => e.kind === 'pi.user')
+  const firstAnswer = view.entries.find((e) => e.kind === 'pi.assistant')!
+  await idle(main)
+
+  // Edit 乙: a new branch, which the client then shows.
+  const edit = await client.request<{ branchId: string }>({ t: 'send', treeId: tree.id, branchId: main, replace: second!.id, text: '乙二', requestId: 'b3' })
+  await client.request({ t: 'watch', treeId: tree.id, branchId: edit.branchId })
+  await client.until(() => client.shown.get(tree.id) === edit.branchId, 5000, 'edit shown')
+  const edited = await client.until(() => client.views.get(tree.id)?.entries.findLast((e) => e.kind === 'pi.assistant' && textOf(e) === '收到：乙二'), 15_000, 'edited answer')
+  assert.ok(edited)
+  assert.deepEqual(client.views.get(tree.id)!.entries.filter((e) => e.kind === 'pi.user').map(textOf), ['甲', '乙二'])
+
+  // Regenerate 乙 from the main branch: a third version.
+  const again = await client.request<BranchMeta>({ t: 'regenerate', treeId: tree.id, branchId: main, entryId: second!.id, requestId: 'b4' })
+  // Versions of 乙 are keyed by the entry before it, the first answer.
+  const key = String(firstAnswer.id)
+  const versions = await client.until(() => client.branches.get(tree.id)?.versions[key]?.length === 3 && client.branches.get(tree.id)!.versions[key], 15_000, 'three versions')
+  assert.deepEqual(versions, [main, edit.branchId, again.id])
+  await idle(again.id)
+
+  // Fork after the first answer, and go back to the main line (R41).
+  const fork = await client.request<BranchMeta>({ t: 'branch.fork', treeId: tree.id, branchId: main, at: firstAnswer.id })
+  assert.equal(fork.parentId, main)
+  await client.request({ t: 'watch', treeId: tree.id, branchId: fork.id })
+  await client.until(() => client.shown.get(tree.id) === fork.id && client.views.get(tree.id)!.entries.filter((e) => e.kind === 'pi.user').length === 1, 5000, 'fork shown')
+  await client.request({ t: 'watch', treeId: tree.id, branchId: main })
+  await client.until(() => client.shown.get(tree.id) === main && client.branches.get(tree.id)!.activeBranchId === main, 5000, 'main shown')
+  assert.deepEqual(client.views.get(tree.id)!.entries.filter((e) => e.kind === 'pi.user').map(textOf), ['甲', '乙'])
+
+  const state = client.branches.get(tree.id)!
+  assert.equal(state.branches.length, 4)
+  assert.equal(client.trees.filter((t) => t.id === tree.id).length, 1)
+  assert.equal(client.trees.find((t) => t.id === tree.id)!.title, '甲')
   await client.request({ t: 'tree.delete', treeId: tree.id })
 }

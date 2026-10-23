@@ -1,15 +1,15 @@
-// Store backed by the host's WebSocket (roadmap-3 stage 1). Conversations are pi-durable trees; what stage 1 does not
-// have yet (projects, Drive, plugins, branches, workspaces) keeps its browser-only state or rejects with a notice.
+// Store backed by the host's WebSocket (roadmap-3 stage 1). Conversations are trees of pi-durable branches; what the
+// host does not have yet (projects, Drive) keeps its browser-only state or rejects with a notice.
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { pluginCatalog } from '@gense/core/catalog'
 import { useRoute } from '../router'
 import type { Store } from '../store'
-import type { UploadedFile } from '@gense/core/protocol'
+import type { BranchesState, BranchMeta, UploadedFile } from '@gense/core/protocol'
 import type { AppState, Conversation, DriveFile, Effort, ModelOption, Outgoing, PluginInfo, Preferences, ToolResult, Turn, WorkspaceFile } from '../types'
 import { HostSocket } from './socket'
 import { toTurns } from './turns'
 
-const LATER = '这项功能在迁移到新内核后的阶段 3 恢复'
+const LATER = '这项功能还没有迁移到新内核'
 const later = () => Promise.reject(new Error(LATER))
 const PREFS_KEY = 'gense.prefs'
 
@@ -52,6 +52,15 @@ const saveViewStates = (v: Record<string, unknown>) => {
 const withViewStates = (treeId: string, turns: Turn[], states: Record<string, unknown>) =>
   turns.map((t) => (t.toolCalls.some((c) => `${treeId}:${c.id}` in states) ? { ...t, toolCalls: t.toolCalls.map((c) => ({ ...c, viewState: states[`${treeId}:${c.id}`] ?? c.viewState })) } : t))
 
+/** Each turn's versions: the branches that continue its anchor with their own message, and the one that wrote this one. */
+const withVersions = (turns: Turn[], state: BranchesState | undefined) =>
+  turns.map((t) => {
+    const ids = t.anchor && state?.versions[t.anchor]
+    if (!ids) return t
+    const index = ids.findIndex((id) => state.branches.find((b) => b.id === id)?.conversationId === t.writer)
+    return index < 0 ? t : { ...t, userVersions: { ids, index } }
+  })
+
 const loadPrefs = (): Partial<Preferences> => {
   try {
     return JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}')
@@ -80,7 +89,6 @@ export function usePiStore(onUnauthorized: () => void): Store {
     (l) => socket.subscribe(l),
     () => socket.state,
   )
-  const [attached, attach] = useState<string | null>(null)
   // Workspace listings of the chats whose file panel was opened; kept fresh while their conversation changes.
   const [workspaces, setWorkspaces] = useState<Record<string, WorkspaceFile[]>>({})
   const [uploads, setUploads] = useState<DriveFile[]>([])
@@ -92,9 +100,8 @@ export function usePiStore(onUnauthorized: () => void): Store {
   }))
 
   const chatId = route.name === 'chat' ? route.id : null
-  const watched = [...new Set([chatId, attached])].filter((id): id is string => !!id && !!host.trees?.some((t) => t.id === id))
-  const watchKey = watched.join(',')
-  useEffect(() => socket.watch(watchKey ? watchKey.split(',') : []), [socket, watchKey])
+  const watchKey = chatId && host.trees?.some((t) => t.id === chatId) ? chatId : ''
+  useEffect(() => socket.watch(watchKey ? [watchKey] : []), [socket, watchKey])
 
   const models = useMemo<ModelOption[]>(
     () => host.models.map((m) => ({ ...m, capabilities: { toolCall: true, efforts: ['low', 'medium', 'high'], context: 200_000, image: false } })),
@@ -126,7 +133,11 @@ export function usePiStore(onUnauthorized: () => void): Store {
           projectId: null,
           pinned: t.pinned,
           updatedAt: t.updatedAt,
-          turns: host.views[t.id] ? withViewStates(t.id, toTurns(host.views[t.id], { model: prefs.model, effort: prefs.defaultEffort }), viewStates) : [],
+          turns: host.views[t.id]
+            ? withVersions(withViewStates(t.id, toTurns(host.views[t.id], { model: prefs.model, effort: prefs.defaultEffort }), viewStates), host.branches[t.id])
+            : [],
+          ...(host.branches[t.id] && { branches: host.branches[t.id] }),
+          ...(host.shown[t.id] && { branchId: host.shown[t.id] }),
           ...(workspaces[t.id] && { files: workspaces[t.id] }),
         }),
       ),
@@ -162,12 +173,16 @@ export function usePiStore(onUnauthorized: () => void): Store {
     for (const id of Object.keys(workspaces)) if (host.views[id]) refreshWorkspace(id)
   }, [growth]) // eslint-disable-line react-hooks/exhaustive-deps
   const toModel = (key: string) => host.models.find((m) => `${m.provider}:${m.id}` === key)
-  const send = (treeId: string, message: Outgoing, model: string, effort: Effort) => {
+  const show = (treeId: string, branchId: string) => void socket.showBranch(treeId, branchId).catch(report)
+  const send = (treeId: string, message: Outgoing, model: string, effort: Effort, replace?: number) => {
     const picked = toModel(model)
     const attachments = message.attachments?.map((a) => a.id)
-    return socket.request({
+    const branchId = socket.state.shown[treeId]
+    return socket.request<{ branchId: string }>({
       t: 'send',
       treeId,
+      ...(branchId && { branchId }),
+      ...(replace !== undefined && { replace }),
       text: message.text,
       requestId: crypto.randomUUID(),
       ...(picked && { model: picked }),
@@ -206,13 +221,26 @@ export function usePiStore(onUnauthorized: () => void): Store {
       return tree.id
     },
     reply: (convId, message, model, effort) => void send(convId, message, model, effort).catch(report),
-    regenerate: () => report(LATER),
-    editMessage: () => report(LATER),
-    showVersion: () => {},
-    branch: later,
-    summarizeSide: later,
-    attach,
-    stop: (convId) => void socket.request({ t: 'abort', treeId: convId }).catch(report),
+    regenerate: (convId, turn, model, effort) => {
+      const branchId = socket.state.shown[convId]
+      const picked = toModel(model)
+      if (!branchId) return
+      void socket
+        .request<BranchMeta>({ t: 'regenerate', treeId: convId, branchId, entryId: Number(turn.id), requestId: crypto.randomUUID(), ...(picked && { model: picked }), effort })
+        .then((b) => show(convId, b.id), report)
+    },
+    editMessage: (convId, turn, text, model, effort) =>
+      void send(convId, { text }, model, effort, Number(turn.id)).then((r) => show(convId, r.branchId), report),
+    showBranch: show,
+    fork: (convId, turn) => {
+      const branchId = socket.state.shown[convId]
+      if (!branchId || !turn.lastMessageId) return
+      void socket.request<BranchMeta>({ t: 'branch.fork', treeId: convId, branchId, at: Number(turn.lastMessageId) }).then((b) => show(convId, b.id), report)
+    },
+    stop: (convId) => {
+      const branchId = socket.state.shown[convId]
+      void socket.request({ t: 'abort', treeId: convId, ...(branchId && { branchId }) }).catch(report)
+    },
     reset: () => {},
     callToolFromView: (convId, _turnId, _callId, name, args) =>
       socket.request<ToolResult>({ t: 'tool.call', treeId: convId, name, args }).catch((e: unknown) => ({ content: e instanceof Error ? e.message : String(e), isError: true })),

@@ -4,13 +4,45 @@ import type { AuthEvent, AuthType } from '@earendil-works/pi-ai'
 import type { PluginState, PluginValue } from './catalog.ts'
 import type { CommandNote, Mention } from './notes.ts'
 
-/** A conversation as the sidebar lists it. In stage 1 a tree is just its main branch. */
+/** A conversation as the sidebar lists it: a tree of branches, titled by its main branch (roadmap-3 R35). */
 export interface TreeMeta {
   id: string
   title: string
   pinned: boolean
   createdAt: number
   updatedAt: number
+}
+
+export type BranchRole = 'main' | 'user' | 'agent'
+export type BranchStatus = 'idle' | 'running' | 'done' | 'failed' | 'aborted'
+
+/** One conversation of a tree (roadmap-3 D2). Entry ids are global, so they order fork points across branches. */
+export interface BranchMeta {
+  id: string
+  parentId: string | null
+  /** pi-durable conversation id; view entries carry it, so a client tells which branch wrote an entry. */
+  conversationId: number
+  /** Entry of the parent's transcript it continues from; null when it starts empty (a version of the first message). */
+  forkEntryId: number | null
+  role: BranchRole
+  /** Its first message; empty while it has none. */
+  title: string
+  status: BranchStatus
+  /** Newest entry, and the start of its newest answer, for the tree map. */
+  lastEntryId: number | null
+  preview: string
+  createdAt: number
+}
+
+export interface BranchesState {
+  branches: BranchMeta[]
+  /** Where the user last was; a watch without a branch opens it. */
+  activeBranchId: string
+  /**
+   * Versions of a message (R37): branches that continue the same entry with a message of their own, oldest first.
+   * Keyed by that entry's id, or `start` for the first message.
+   */
+  versions: Record<string, string[]>
 }
 
 export interface ModelInfo {
@@ -85,11 +117,17 @@ export type ClientRequest =
   | { t: 'tree.create'; id: number }
   | { t: 'tree.update'; id: number; treeId: string; title?: string; pinned?: boolean }
   | { t: 'tree.delete'; id: number; treeId: string }
-  /** `attachments` are upload ids; they are copied into the tree's workspace. */
+  /**
+   * `attachments` are upload ids; they are copied into the tree's workspace. Goes to `branchId`, or the active branch.
+   * With `replace` (a user entry id) the message is an edit: it goes to a new branch beside that message (R37).
+   * Resolves to `{ branchId }`.
+   */
   | {
       t: 'send'
       id: number
       treeId: string
+      branchId?: string
+      replace?: number
       text: string
       requestId: string
       model?: ModelInfo
@@ -98,8 +136,13 @@ export type ClientRequest =
       command?: CommandNote
       mentions?: Mention[]
     }
-  | { t: 'abort'; id: number; treeId: string }
-  | { t: 'watch'; id: number; treeId: string }
+  | { t: 'abort'; id: number; treeId: string; branchId?: string }
+  /** A new branch continuing `at` (an entry of `branchId`'s transcript); resolves to its BranchMeta (R36). */
+  | { t: 'branch.fork'; id: number; treeId: string; branchId: string; at: number }
+  /** Asks the user entry `entryId` again in a new branch beside it; resolves to its BranchMeta (R37). */
+  | { t: 'regenerate'; id: number; treeId: string; branchId: string; entryId: number; requestId: string; model?: ModelInfo; effort?: Effort }
+  /** Streams one branch of the tree (`branchId`, or the active one) and makes it the active one. */
+  | { t: 'watch'; id: number; treeId: string; branchId?: string }
   | { t: 'unwatch'; id: number; treeId: string }
   | { t: 'files.list'; id: number; treeId: string }
   | { t: 'files.preview'; id: number; treeId: string; path: string }
@@ -129,10 +172,12 @@ export type ServerMessage =
   /** The login no longer waits for this prompt (it was answered another way, or the login ended). */
   | { t: 'auth.prompt.done'; promptId: string }
   | { t: 'trees'; trees: TreeMeta[] }
+  /** Sent for each watched tree on watch and whenever its branches change. */
+  | ({ t: 'branches'; treeId: string } & BranchesState)
   | { t: 'plugins'; plugins: PluginState[] }
   | { t: 'skills'; skills: SkillInfo[] }
-  /** The branch's whole view; later `ops` apply to it. Sent on watch and whenever the host restarts the stream. */
-  | { t: 'view'; treeId: string; value: unknown }
+  /** The watched branch's whole view; later `ops` apply to it. Sent on watch and whenever the host restarts the stream. */
+  | { t: 'view'; treeId: string; branchId: string; value: unknown }
   /** Chord operations of one commit, encoded with a per-watch encoder; decode with a decoder reset at each `view`. */
   | { t: 'ops'; treeId: string; ops: WireOp[] }
   | { t: 'reply'; id: number; value?: unknown; error?: string }

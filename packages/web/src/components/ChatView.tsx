@@ -3,10 +3,11 @@ import { liveViews, tools, views } from '../plugins'
 import type { DisplayMode, ViewHost } from '../plugins/types'
 import { href, navigate } from '../router'
 import type { Store } from '../store'
-import type { Attachment, BranchNote, Conversation, DriveFile, Effort, ToolCall, Turn, Versions, WebSource } from '../types'
+import type { Attachment, Conversation, DriveFile, Effort, ToolCall, Turn, Versions, WebSource } from '../types'
 import { modelName, useModels } from '../models'
 import { Composer, effortLabel } from './Composer'
-import { IconAlert, IconArrowDown, IconBranch, IconCheck, IconChevronDown, IconChevronLeft, IconChevronRight, IconCopy, IconDoc, IconFolder, IconEdit, IconInfo, IconMore, IconRetry, IconSide, IconTool, IconX } from './Icons'
+import { IconAlert, IconArrowDown, IconBranch, IconCheck, IconChevronDown, IconChevronLeft, IconChevronRight, IconCopy, IconDoc, IconFolder, IconEdit, IconInfo, IconMore, IconRetry, IconTool, IconX } from './Icons'
+import { BranchMap } from './BranchMap'
 import { Markdown } from './Markdown'
 import { TopBar } from './TopBar'
 import { formatSize } from '../util'
@@ -34,30 +35,15 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
   const [panel, setPanel] = useState<{ turnId: string; callId: string } | null>(null)
   const panelTurn = panel && conv.turns.find((t) => t.id === panel.turnId)
   const panelCall = panelTurn?.toolCalls.find((c) => c.id === panel!.callId)
-  // One panel at a time: opening a side thread closes the plugin panel and the other way round.
-  const [sideOpen, setSideOpen] = useState<{ convId: string; id: string } | null>(null)
-  const sideId = sideOpen?.convId === conv.id ? sideOpen.id : null
-  const setSideId = (id: string | null) => setSideOpen(id ? { convId: conv.id, id } : null)
-  const side = sideId ? store.state.conversations.find((c) => c.id === sideId) : undefined
-  const sides = store.state.conversations.filter((c) => c.parent?.kind === 'side' && c.parent.chatId === conv.id)
-  const parent = conv.parent && store.state.conversations.find((c) => c.id === conv.parent!.chatId)
+  // One panel at a time: opening the file panel closes the plugin panel and the other way round.
   const [filesOpen, setFilesOpen] = useState<string | null>(null)
   const showFiles = filesOpen === conv.id
-  const openSide = (id: string) => {
-    setPanel(null)
-    setFilesOpen(null)
-    setSideId(id)
-  }
   const toggleFiles = () => {
     setPanel(null)
-    setSideId(null)
     setFilesOpen(showFiles ? null : conv.id)
   }
-
-  useEffect(() => {
-    store.attach(sideId)
-    return () => store.attach(null)
-  }, [sideId]) // eslint-disable-line react-hooks/exhaustive-deps
+  const shown = conv.branches?.branches.find((b) => b.id === conv.branchId)
+  const main = conv.branches?.branches.find((b) => b.role === 'main')
 
   const actions: TurnActions = {
     regenerate: (turn) => store.regenerate(conv.id, turn, model, effort),
@@ -65,13 +51,11 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
       store.editMessage(conv.id, turn, text, model, effort)
       setAtBottom(true)
     },
-    show: (messageId) => store.showVersion(conv.id, messageId),
-    fork: (turn) => void store.branch(conv.id, turn, 'fork').then((id) => navigate({ name: 'chat', id }), (e: unknown) => console.error('fork failed', e)),
-    side: (turn) => void store.branch(conv.id, turn, 'side').then(openSide, (e: unknown) => console.error('side thread failed', e)),
-    openSide,
+    show: (branchId) => store.showBranch(conv.id, branchId),
+    fork: (turn) => store.fork(conv.id, turn),
     busy,
-    // Old versions are read-only; a running turn has to finish before history changes.
-    canChange: !busy && !conv.viewingOld,
+    // A running turn has to finish before this branch's history branches off.
+    canChange: !busy,
   }
 
   // Host side of the MCP Apps bridge for one rendered tool call.
@@ -87,7 +71,6 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
     sendMessage: (text) => store.reply(conv.id, { text }, model, effort),
     requestDisplayMode: (mode) => {
       if (mode !== 'inline') {
-        setSideId(null)
         setFilesOpen(null)
       }
       setPanel(mode === 'inline' ? null : { turnId: turn.id, callId: call.id })
@@ -111,13 +94,16 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
   }, [last?.assistantMessage, last?.toolCalls.length, last?.status, conv.turns.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className={'chat-layout' + (panelCall || side || showFiles ? ' with-panel' : '')}>
+    <div className={'chat-layout' + (panelCall || showFiles ? ' with-panel' : '')}>
       <div className="page chat">
         <TopBar
           right={
-            <button className={'icon-btn' + (showFiles ? ' active' : '')} aria-label="会话文件" aria-pressed={showFiles} title="会话文件" onClick={toggleFiles}>
-              <IconFolder />
-            </button>
+            <>
+              {conv.branches && conv.branchId && <BranchMap state={conv.branches} shown={conv.branchId} onShow={(id) => store.showBranch(conv.id, id)} />}
+              <button className={'icon-btn' + (showFiles ? ' active' : '')} aria-label="会话文件" aria-pressed={showFiles} title="会话文件" onClick={toggleFiles}>
+                <IconFolder />
+              </button>
+            </>
           }
         >
           <TitleMenu store={store} conv={conv} showDetails={showDetails} onShowDetails={setShowDetails} />
@@ -132,10 +118,12 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
           }}
         >
           <div className="thread">
-            {conv.parent?.kind === 'fork' && (
+            {shown && main && shown.role !== 'main' && (
               <div className="fork-banner muted small">
-                <IconBranch width={14} height={14} /> 分支自{' '}
-                {parent ? <a href={href({ name: 'chat', id: parent.id })}>{parent.title}</a> : '已删除的会话'}
+                <IconBranch width={14} height={14} /> 分叉{shown.title ? `「${shown.title}」` : ''}
+                <button className="link-btn" onClick={() => store.showBranch(conv.id, main.id)}>
+                  返回主线
+                </button>
               </div>
             )}
             {conv.turns.length === 0 && !store.turnsLoaded(conv.id) && (
@@ -143,21 +131,9 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
                 <span className="spinner" /> 正在载入会话…
               </div>
             )}
-            {conv.turns.map((t) =>
-              t.note ? (
-                <NoteCard key={t.id} note={t.note} store={store} onOpen={openSide} />
-              ) : (
-                <TurnView
-                  key={t.id}
-                  turn={t}
-                  store={store}
-                  showDetails={showDetails}
-                  hostFor={hostFor}
-                  actions={actions}
-                  sides={sides.filter((c) => c.parent!.messageId === (t.lastMessageId ?? t.id))}
-                />
-              ),
-            )}
+            {conv.turns.map((t) => (
+              <TurnView key={t.id} turn={t} store={store} showDetails={showDetails} hostFor={hostFor} actions={actions} />
+            ))}
           </div>
         </div>
 
@@ -168,19 +144,6 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
         )}
 
         <div className="chat-composer">
-          {conv.viewingOld ? (
-            <div className="old-version-bar">
-              <span>正在查看较早的版本，只读</span>
-              <button className="pill-btn" onClick={() => store.showVersion(conv.id, '')}>
-                回到当前版本
-              </button>
-              {last && (
-                <button className="pill-btn" onClick={() => actions.fork(last)}>
-                  <IconBranch width={15} height={15} /> 从这里分支
-                </button>
-              )}
-            </div>
-          ) : (
           <Composer
             placeholder="回复…"
             model={model}
@@ -194,16 +157,13 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
               setAtBottom(true)
             }}
             onAttach={store.upload}
-            suggest={suggestions(store, { convId: conv.id, side: !!last && !busy })}
-            onClientCommand={(id) => id === 'side' && last && actions.side(last)}
+            suggest={suggestions(store, { convId: conv.id })}
             footnote
           />
-          )}
         </div>
       </div>
       {showFiles && <WorkspacePanel store={store} conv={conv} onClose={() => setFilesOpen(null)} />}
-      {side && <SideThread store={store} side={side} onClose={() => setSideId(null)} />}
-      {panelCall && panelTurn && !side && (
+      {panelCall && panelTurn && (
         <aside className="side-panel" aria-label="插件面板">
           <div className="side-panel-head">
             <strong className="ellipsis">{(panelCall.input as { title?: string }).title ?? panelCall.name}</strong>
@@ -394,10 +354,9 @@ function TitleMenu({ store, conv, showDetails, onShowDetails }: { store: Store; 
 interface TurnActions {
   regenerate: (turn: Turn) => void
   edit: (turn: Turn, text: string) => void
-  show: (messageId: string) => void
+  /** Shows another branch, a version of a message. */
+  show: (branchId: string) => void
   fork: (turn: Turn) => void
-  side: (turn: Turn) => void
-  openSide: (sideId: string) => void
   /** A turn is running; versions stay put until it settles. */
   busy: boolean
   canChange: boolean
@@ -409,15 +368,12 @@ function TurnView({
   showDetails,
   hostFor,
   actions,
-  sides,
 }: {
   turn: Turn
   store: Store
   showDetails: boolean
   hostFor: (t: Turn, c: ToolCall) => ViewHost
-  /** Omitted inside a side thread panel, which shows the turns without tree controls. */
   actions?: TurnActions
-  sides?: Conversation[]
 }) {
   const models = useModels()
   const [processOpen, setProcessOpen] = useState(false)
@@ -513,9 +469,8 @@ function TurnView({
           </div>
         )}
 
-        {!active && (turn.assistantMessage || turn.status === 'succeeded' || turn.answerVersions) && (
+        {!active && (turn.assistantMessage || turn.status === 'succeeded') && (
           <div className="msg-actions">
-            {actions && turn.answerVersions && <VersionNav versions={turn.answerVersions} onShow={actions.show} disabled={actions.busy} />}
             {turn.assistantMessage && <CopyButton text={turn.assistantMessage} />}
             {canChange && turn.status === 'succeeded' && (
               <button className="icon-btn small" aria-label="重新生成" title="重新生成" onClick={() => actions!.regenerate(turn)}>
@@ -523,16 +478,6 @@ function TurnView({
               </button>
             )}
             {actions && <MoreMenu turn={turn} actions={actions} />}
-          </div>
-        )}
-
-        {sides && sides.length > 0 && (
-          <div className="side-chips">
-            {sides.map((c) => (
-              <button key={c.id} className="side-chip" onClick={() => actions?.openSide(c.id)}>
-                <IconSide width={14} height={14} /> <span className="ellipsis">{c.title}</span>
-              </button>
-            ))}
           </div>
         )}
 
@@ -604,130 +549,13 @@ function MoreMenu({ turn, actions }: { turn: Turn; actions: TurnActions }) {
           <div className="menu up" role="menu">
             <button onClick={pick(actions.fork)}>
               <span>
-                <IconBranch width={15} height={15} /> 分支到新会话
+                <IconBranch width={15} height={15} /> 从这里分叉
               </span>
             </button>
-            {actions.canChange && (
-              <button onClick={pick(actions.side)}>
-                <span>
-                  <IconSide width={15} height={15} /> 开支线
-                </span>
-              </button>
-            )}
           </div>
         </>
       )}
     </span>
-  )
-}
-
-/** A side thread's summary in the main line; the full text is the note message itself. */
-function NoteCard({ note, store, onOpen }: { note: BranchNote; store: Store; onOpen: (sideId: string) => void }) {
-  const [open, setOpen] = useState(false)
-  const exists = store.state.conversations.some((c) => c.id === note.sideChatId)
-  return (
-    <section className="turn">
-      <div className="note-card">
-        <button className="note-head" aria-expanded={open} onClick={() => setOpen(!open)}>
-          <IconSide width={15} height={15} />
-          <span className="ellipsis">支线总结：{note.title}</span>
-          <IconChevronRight width={14} height={14} style={{ transform: open ? 'rotate(90deg)' : undefined }} />
-        </button>
-        {open && <Markdown text={note.summary} />}
-        <div className="note-links small">
-          {note.fileId && (
-            <a href={href({ name: 'files', tab: 'artifact', id: note.fileId })}>
-              <IconDoc width={13} height={13} /> {note.fileName ?? '总结文件'}
-            </a>
-          )}
-          {exists && (
-            <button className="link-btn" onClick={() => onOpen(note.sideChatId)}>
-              打开支线
-            </button>
-          )}
-        </div>
-      </div>
-    </section>
-  )
-}
-
-/** A side thread beside its parent: only the turns after the branch point, with its own composer. */
-function SideThread({ store, side, onClose }: { store: Store; side: Conversation; onClose: () => void }) {
-  const anchor = side.parent!.messageId
-  const from = side.turns.findIndex((t) => (t.lastMessageId ?? t.id) === anchor)
-  const turns = side.turns.slice(from + 1)
-  const last = turns.at(-1)
-  const busy = last?.status === 'queued' || last?.status === 'running'
-  const [picked, setModel] = useState(side.turns.at(-1)?.model ?? '')
-  const model = picked || store.state.prefs.model
-  const [effort, setEffort] = useState<Effort>(store.state.prefs.defaultEffort)
-  const [summarizing, setSummarizing] = useState(false)
-  const [error, setError] = useState('')
-  const noHost: ViewHost = {
-    callTool: async () => ({ content: '支线面板中不支持界面调用', isError: true }),
-    sendMessage: (text) => store.reply(side.id, { text }, model, effort),
-    requestDisplayMode: () => {},
-    setViewState: () => {},
-    readFile: (path) => store.readWorkspaceFile(side.id, path),
-  }
-
-  const summarize = () => {
-    setSummarizing(true)
-    setError('')
-    store
-      .summarizeSide(side.id)
-      .then(onClose)
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-      .finally(() => setSummarizing(false))
-  }
-
-  return (
-    <aside className="side-panel side-thread" aria-label="支线">
-      <div className="side-panel-head">
-        <IconSide width={16} height={16} />
-        <strong className="ellipsis">{side.title}</strong>
-        <button className="pill-btn" disabled={busy || summarizing || turns.length === 0} onClick={summarize}>
-          {summarizing && <span className="spinner" />} 总结回主线
-        </button>
-        <button className="icon-btn" aria-label="关闭支线" onClick={onClose}>
-          <IconX />
-        </button>
-      </div>
-      <div className="side-panel-body">
-        <div className="thread">
-          {error && (
-            <div className="banner error">
-              <IconAlert />
-              <div>
-                <strong>总结失败</strong>
-                <p>{error}</p>
-              </div>
-            </div>
-          )}
-          {turns.length === 0 && <p className="muted side-empty">在这里追问细节，不会打断主线。聊完后点“总结回主线”，要点会写回主会话。</p>}
-          {turns.map((t) => (
-            <TurnView key={t.id} turn={t} store={store} showDetails={false} hostFor={() => noHost} />
-          ))}
-        </div>
-      </div>
-      <div className="chat-composer">
-        <Composer
-          placeholder="在支线里追问…"
-          model={model}
-          effort={effort}
-          onModel={setModel}
-          onEffort={setEffort}
-          busy={busy}
-          onStop={() => last && store.stop(side.id, last.id)}
-          onSend={(message) => {
-            if (turns.length === 0) store.patchConv(side.id, (c) => ({ ...c, title: message.text.replace(/\s+/g, ' ').slice(0, 30) }))
-            store.reply(side.id, message, model, effort)
-          }}
-          onAttach={store.upload}
-          suggest={suggestions(store, { convId: side.id })}
-        />
-      </div>
-    </aside>
   )
 }
 

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { href, type Route } from '../router'
-import { listed, type AppState } from '../types'
+import type { AppState } from '../types'
 import { IconDoc, IconPlus, IconProject, IconSearch, IconSidebar, IconSliders } from './Icons'
 
 interface Props {
@@ -15,7 +15,7 @@ export function Sidebar({ state, route, open, onClose }: Props) {
   const activeChat = route.name === 'chat' ? route.id : null
   const q = query.trim().toLowerCase()
 
-  const recent = listed(state.conversations).sort((a, b) => b.updatedAt - a.updatedAt)
+  const recent = [...state.conversations].sort((a, b) => b.updatedAt - a.updatedAt)
   const matches = q ? recent.filter((c) => c.title.toLowerCase().includes(q) || c.turns.some((t) => (t.userMessage + t.assistantMessage).toLowerCase().includes(q))) : []
   const pinned = state.projects.filter((p) => p.pinned)
   const loose = recent.filter((c) => !c.projectId || c.pinned)

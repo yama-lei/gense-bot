@@ -33,7 +33,6 @@ export const builtinCommands: Command[] = [
     hint: '把到目前为止的对话整理成要点',
     prompt: '用户要求总结会话：把本会话到目前为止的内容整理成简洁的要点（结论、待办、未决问题），不需要调用工具。',
   },
-  { id: 'side', label: '开支线', hint: '从最新一轮开一条支线，不打断主线', prompt: '', client: true },
 ]
 
 export const skillCommand = (s: Pick<SkillInfo, 'name' | 'description'>): Command => ({
@@ -49,9 +48,9 @@ export function localSkillNames(files: WorkspaceFile[] = []): string[] {
 }
 
 /** Commands offered in a composer: built-ins whose plugin is on, the enabled skills, then the chat's own skills (which win on a name clash). */
-export function availableCommands(enabledPlugins: string[], skills: SkillInfo[], client: { side: boolean }, local: string[] = []): Command[] {
+export function availableCommands(enabledPlugins: string[], skills: SkillInfo[], local: string[] = []): Command[] {
   return [
-    ...builtinCommands.filter((c) => (!c.plugin || enabledPlugins.includes(c.plugin)) && (c.id !== 'side' || client.side)),
+    ...builtinCommands.filter((c) => !c.plugin || enabledPlugins.includes(c.plugin)),
     ...skills.filter((s) => s.enabled && !local.includes(s.name)).map(skillCommand),
     ...local.map((name) => skillCommand({ name, description: '本会话的 Skill' })),
   ]

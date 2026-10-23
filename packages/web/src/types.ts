@@ -1,5 +1,5 @@
 import type { PluginSetting, PluginSettingsState } from '@gense/core/catalog'
-import type { ProviderState, SkillInfo } from '@gense/core/protocol'
+import type { BranchesState, ProviderState, SkillInfo } from '@gense/core/protocol'
 // The UI's data model; see docs/specs/web-ui.md "数据模型草案".
 
 export type TurnStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'interrupted'
@@ -66,14 +66,14 @@ export interface Turn {
   model: string
   effort: Effort
   createdAt: number
-  /** Edits of the user message: sibling message ids, oldest first, and which one is shown. */
+  /** Edits and regenerations of the message (R37): the branches that each have their own version, and the shown one. */
   userVersions?: Versions
-  /** Regenerations of the answer, likewise. */
-  answerVersions?: Versions
-  /** Last message of the turn; forks and side threads branch off here. */
+  /** Last entry of the turn; a fork continues from here (R36). */
   lastMessageId?: string
-  /** A side thread's summary brought back to this chat; such a turn has no user message. */
-  note?: BranchNote
+  /** The entry before the user message (`start` for the first), where its versions branch off. */
+  anchor?: string
+  /** The conversation that wrote the user message. */
+  writer?: number
   /** Files sent with the user message (roadmap-2 R8). */
   attachments?: Attachment[]
   /** The `/` command the message was sent with (roadmap-2 R17). */
@@ -114,26 +114,10 @@ export interface Outgoing {
   mentions?: Mention[]
 }
 
+/** Sibling versions of a message: branch ids, oldest first, and which one is shown. */
 export interface Versions {
   ids: string[]
   index: number
-}
-
-/** Summary of a side thread, added to the main chat as its own message. */
-export interface BranchNote {
-  sideChatId: string
-  title: string
-  summary: string
-  /** The Markdown file in GenseBot/Artifacts, when Drive was connected. */
-  fileId?: string
-  fileName?: string
-}
-
-/** Where a chat branched off: a fork is a normal chat, a side thread hangs off its parent. */
-export interface ChatParent {
-  chatId: string
-  messageId: string
-  kind: 'fork' | 'side'
 }
 
 export interface Conversation {
@@ -142,10 +126,11 @@ export interface Conversation {
   projectId: string | null
   pinned: boolean
   updatedAt: number
+  /** The turns of the shown branch. */
   turns: Turn[]
-  parent?: ChatParent
-  /** The turns shown are an older version (read-only), not the live conversation. */
-  viewingOld?: boolean
+  /** The tree's branches (R35) once its view has arrived, and the one shown. */
+  branches?: BranchesState
+  branchId?: string
   /** Files in the chat's workspace; undefined until loaded. */
   files?: WorkspaceFile[]
 }
@@ -168,9 +153,6 @@ export interface WorkspaceFile {
   /** Under the read-only /skills mount. */
   readOnly: boolean
 }
-
-/** Chats the sidebar and project pages list; side threads only show beside their parent. */
-export const listed = (cs: Conversation[]) => cs.filter((c) => c.parent?.kind !== 'side')
 
 /** A Drive file: under GenseBot/资料 (`source`), GenseBot/Artifacts (`artifact`) or elsewhere in Drive (`drive`). */
 export interface DriveFile {

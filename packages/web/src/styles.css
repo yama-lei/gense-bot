@@ -455,7 +455,7 @@ code, pre { font-family: var(--mono); }
 .source-site .site-badge { width: 16px; height: 16px; font-size: 9px; border: 0; }
 .source-title { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Conversation tree: versions, edits, forks and side threads */
+/* Conversation tree: versions, forks and the branch map */
 .pill-btn.primary { background: var(--text); color: var(--bg); border-color: var(--text); }
 .pill-btn:disabled { opacity: .5; cursor: default; }
 .version-nav { display: inline-flex; align-items: center; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -467,20 +467,29 @@ code, pre { font-family: var(--mono); }
 .more-menu { position: relative; }
 .menu.up { top: auto; bottom: calc(100% + 4px); }
 .menu button > span { display: inline-flex; align-items: center; gap: 8px; }
-.side-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-.side-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 260px; padding: 4px 10px; border-radius: 999px; border: 1px dashed var(--border); font-size: 13px; color: var(--muted); }
-.side-chip:hover { background: var(--hover); color: var(--text); }
-.note-card { border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 12px; padding: 10px 14px; background: var(--surface); }
-.note-head { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; font-weight: 500; }
-.note-head .ellipsis { flex: 1; }
-.note-links { display: flex; gap: 14px; align-items: center; margin-top: 6px; color: var(--muted); }
-.note-links a { display: inline-flex; align-items: center; gap: 4px; }
 .fork-banner { display: flex; align-items: center; gap: 6px; justify-content: center; margin-bottom: 18px; }
-.old-version-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface-2); max-width: 760px; margin: 0 auto; }
-.side-thread .side-panel-head strong { font-size: 15px; }
-.side-thread .thread { padding: 18px 16px; }
-.side-thread .chat-composer { padding: 0 12px 12px; }
-.side-empty { margin: 24px 4px; line-height: 1.7; }
+.branch-minimap { display: grid; place-items: center; height: 34px; padding: 0 6px; border-radius: 10px; }
+.branch-minimap:hover { background: var(--hover); }
+.branch-lane line, .branch-lane path { stroke: var(--muted); stroke-width: 2; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.branch-lane.agent line, .branch-lane.agent path { stroke-dasharray: 4 3; }
+.branch-lane.shown line, .branch-lane.shown path { stroke: var(--ok); stroke-width: 3; }
+.branch-lane.running line { stroke: var(--accent); animation: pulse 1.2s infinite; }
+.branch-lane circle { fill: var(--surface); stroke: var(--muted); stroke-width: 2; cursor: pointer; }
+.branch-lane.shown circle { stroke: var(--ok); fill: var(--ok-bg); }
+.branch-lane.focus circle { stroke-width: 3.5; }
+.branch-lane circle:focus-visible { outline: none; stroke: var(--accent); }
+.branch-lane text { fill: var(--text); font-size: 13px; pointer-events: none; }
+.tree-dialog { position: fixed; z-index: 30; inset: 8vh 50% auto auto; transform: translateX(50%); width: min(880px, 92vw); height: min(620px, 84vh); display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 20px 60px rgb(0 0 0 / .2); overflow: hidden; }
+.tree-dialog .side-panel-head strong { flex: 1; }
+.tree-canvas { flex: 1; width: 100%; touch-action: none; cursor: grab; background: var(--bg); }
+.tree-canvas:active { cursor: grabbing; }
+.tree-summary { display: flex; flex-direction: column; gap: 6px; padding: 12px 18px; border-top: 1px solid var(--border); }
+.tree-summary-head { display: flex; align-items: center; gap: 8px; }
+.tree-summary p { margin: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.tree-summary .pill-btn { align-self: flex-start; }
+@media (max-width: 720px) {
+  .tree-dialog { inset: 0; transform: none; width: auto; height: auto; border-radius: 0; border: 0; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+}
 
 /* Attachments */
 .composer.dragging { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }

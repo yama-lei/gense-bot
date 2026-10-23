@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 import { configFromEnv } from '../src/config.ts'
 import { startServer } from '../src/server.ts'
-import { accountsScenario, Client, fakeUpstream, login, pluginEnv, pluginScenario, skillsScenario, tempDir, textOf, workspaceScenario } from './helpers.ts'
+import { accountsScenario, Client, documentsScenario, fakeUpstream, login, pluginEnv, pluginScenario, skillsScenario, tempDir, textOf, workspaceScenario } from './helpers.ts'
 
 const EMAIL = 'a@example.com'
 const PASSWORD = 'correct horse'
@@ -103,5 +103,12 @@ test('R62: signing in to a model service with an API key', { timeout: 60_000 }, 
   const { cookie } = await login(server.url, EMAIL, PASSWORD)
   const client = await Client.connect(server.url, cookie)
   await accountsScenario(client, { oauth: true })
+  client.close()
+})
+
+test('R9: Word and PDF attachments are read as text', { timeout: 60_000 }, async () => {
+  const { cookie } = await login(server.url, EMAIL, PASSWORD)
+  const client = await Client.connect(server.url, cookie)
+  await documentsScenario(client)
   client.close()
 })

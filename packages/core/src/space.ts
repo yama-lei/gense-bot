@@ -15,7 +15,8 @@ import {
 } from '@earendil-works/pi-durable'
 import type { PluginValue } from './catalog.ts'
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite'
-import { createEditTool, createReadTool, createWriteTool } from '@earendil-works/pi-durable/tools'
+import { createEditTool, createWriteTool } from '@earendil-works/pi-durable/tools'
+import { createDocumentReadTool } from './documents.ts'
 import type { ImageContent, TextContent } from '@earendil-works/pi-ai'
 import { Value } from 'typebox/value'
 import { RUN_ERROR_KIND, type Effort, type ModelInfo, type RunErrorData, type ToolCallResult, type TreeMeta } from './protocol.ts'
@@ -60,7 +61,7 @@ const PLUGINS: Record<string, (config: () => Record<string, PluginValue>) => Ext
 
 const files = defineExtension({
   name: 'files',
-  tools: [createReadTool(), createWriteTool(), createEditTool()],
+  tools: [createDocumentReadTool(), createWriteTool(), createEditTool()],
   sections: [
     section('workspace', () =>
       [

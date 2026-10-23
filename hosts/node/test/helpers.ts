@@ -9,6 +9,7 @@ import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import WebSocket from 'ws'
+import { docxFile, pdfFile } from '../../../packages/core/test/fixtures.ts'
 
 export const tempDir = () => mkdtemp(join(tmpdir(), 'gense-test-'))
 
@@ -395,5 +396,32 @@ export async function accountsScenario(client: Client, { oauth }: { oauth: boole
   await client.request({ t: 'auth.logout', provider: 'mistral' })
   await client.until(() => client.providers.find((p) => p.id === 'mistral')?.configured === null, 5_000, 'signed out')
   await client.until(() => client.models.length === host.length, 5_000, 'models back to the host')
+  await client.request({ t: 'tree.delete', treeId: tree.id })
+}
+
+/** R9: an attached Word file and PDF are read as text, pages included, and the second read reuses the extracted text. */
+export async function documentsScenario(client: Client) {
+  const tree = await client.request<TreeMeta>({ t: 'tree.create' })
+  await client.request({ t: 'watch', treeId: tree.id })
+  const answers = () => client.views.get(tree.id)?.entries.filter((e) => e.kind === 'pi.assistant' && textOf(e)) ?? []
+  const files = [
+    ['报告.docx', docxFile()],
+    ['paper.pdf', pdfFile('Attention is all you need')],
+  ] as const
+  const ids = []
+  for (const [name, bytes] of files) ids.push((await client.request<UploadedFile>({ t: 'upload', name, base64: Buffer.from(bytes).toString('base64') })).id)
+  await client.request({ t: 'send', treeId: tree.id, text: '看看附件', requestId: 'd0', attachments: ids })
+  await client.until(() => answers()[0], 15_000, 'first answer')
+
+  const ask = async (n: number, path: string, extra = {}) => {
+    await client.request({ t: 'send', treeId: tree.id, text: `[工具 read] ${JSON.stringify({ path, ...extra })}`, requestId: `d${n}` })
+    return textOf(await client.until(() => answers()[n], 30_000, `read ${path}`))
+  }
+  assert.equal(await ask(1, 'attachments/报告.docx'), '工具结果：第一段 & 续\n甲\t乙\n最后')
+  assert.equal(await ask(2, 'attachments/报告.docx', { offset: 3 }), '工具结果：最后')
+  assert.equal(await ask(3, 'attachments/paper.pdf'), '工具结果：## 第 1 页\nAttention is all you need')
+  // The cache is outside the tree's workspace, so the file panel does not show it.
+  const listed = await client.request<FileEntry[]>({ t: 'files.list', treeId: tree.id })
+  assert.ok(!listed.some((f) => f.path.includes('.cache')))
   await client.request({ t: 'tree.delete', treeId: tree.id })
 }

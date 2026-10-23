@@ -1,5 +1,6 @@
 // Messages between the browser and a host over one WebSocket (roadmap-3 D9). Type-only: the web client imports it too.
 import type { WireOp } from '@earendil-works/chord/delta'
+import type { PluginState, PluginValue } from './catalog.ts'
 
 /** A conversation as the sidebar lists it. In stage 1 a tree is just its main branch. */
 export interface TreeMeta {
@@ -63,10 +64,13 @@ export type ClientRequest =
   /** At most 20 MB. Resolves to an UploadedFile. */
   | { t: 'upload'; id: number; name: string; base64: string }
   | { t: 'uploads'; id: number }
+  /** Switches a plugin or changes some of its settings; `null` returns a value to its default or clears a secret. */
+  | { t: 'plugin.set'; id: number; pluginId: string; enabled?: boolean; values?: Record<string, PluginValue | null>; secrets?: Record<string, string | null> }
 
 export type ServerMessage =
   | { t: 'hello'; email: string; models: ModelInfo[]; defaultModel: ModelInfo | null }
   | { t: 'trees'; trees: TreeMeta[] }
+  | { t: 'plugins'; plugins: PluginState[] }
   /** The branch's whole view; later `ops` apply to it. Sent on watch and whenever the host restarts the stream. */
   | { t: 'view'; treeId: string; value: unknown }
   /** Chord operations of one commit, encoded with a per-watch encoder; decode with a decoder reset at each `view`. */

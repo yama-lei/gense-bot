@@ -1,6 +1,7 @@
 // The browser end of the host protocol (packages/core/src/protocol.ts). Reconnects, and re-watches after reconnecting.
 import { applyImmutable, decoder, type Decoder } from '@earendil-works/chord/delta'
 import type { ClientRequest, ModelInfo, ServerMessage, TreeMeta } from '@gense/core/protocol'
+import type { PluginState } from '@gense/core/catalog'
 import type { View } from './turns'
 
 export interface SocketState {
@@ -9,6 +10,8 @@ export interface SocketState {
   defaultModel: ModelInfo | null
   trees: TreeMeta[] | null
   views: Record<string, View>
+  /** The user's plugin switches and settings; null until the host sends them. */
+  plugins: PluginState[] | null
   connected: boolean
 }
 
@@ -16,7 +19,7 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 export type Request = DistributiveOmit<ClientRequest, 'id'>
 
 export class HostSocket {
-  state: SocketState = { email: '', models: [], defaultModel: null, trees: null, views: {}, connected: false }
+  state: SocketState = { email: '', models: [], defaultModel: null, trees: null, views: {}, plugins: null, connected: false }
   #ws: WebSocket | undefined
   #next = 1
   #pending = new Map<number, { resolve(v: unknown): void; reject(e: Error): void }>()
@@ -70,6 +73,8 @@ export class HostSocket {
     switch (m.t) {
       case 'hello':
         return this.#set({ email: m.email, models: m.models, defaultModel: m.defaultModel })
+      case 'plugins':
+        return this.#set({ plugins: m.plugins })
       case 'trees':
         return this.#set({ trees: m.trees })
       case 'view':

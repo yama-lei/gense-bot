@@ -36,6 +36,8 @@ export interface Store {
   setDrive: (connected: boolean) => void
   /** Changes some of a plugin's settings; null returns a value to its default and clears a secret. Rejects with a message for the user. */
   setPluginConfig: (id: string, values: Record<string, PluginValue | null>, secrets: Record<string, string | null>) => Promise<void>
+  /** Turns a plugin on or off; rejects with a message for the user. */
+  setPluginEnabled: (id: string, enabled: boolean) => Promise<void>
   /** Reloads the uploaded files into `AppState.files`. */
   refreshFiles: () => void
   /** Reloads the skills in GenseBot/Skills. */
@@ -52,6 +54,8 @@ export interface Store {
   deleteWorkspaceFile: (convId: string, path: string) => Promise<void>
   /** Saves a workspace or Skill file to the user's computer; rejects with a message for the user. */
   downloadWorkspaceFile: (convId: string, path: string) => Promise<void>
+  /** A workspace file's content, for views that show files a tool wrote. */
+  readWorkspaceFile: (convId: string, path: string) => Promise<Blob>
   /** Ends the session; the app returns to the login page. */
   logout: () => Promise<void>
   /** Connections the store keeps mounted (the open chat); App renders it. */

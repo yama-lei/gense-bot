@@ -20,11 +20,12 @@ export interface Dev {
   stop(signal?: NodeJS.Signals): Promise<void>
 }
 
-export async function wranglerDev(stateDir: string): Promise<Dev> {
+export async function wranglerDev(stateDir: string, vars: Record<string, string> = {}): Promise<Dev> {
   const port = await freePort()
+  const extra = Object.entries(vars).flatMap(([k, v]) => ['--var', `${k}:${v}`])
   const child = spawn(
     'npx',
-    ['wrangler', 'dev', '--port', String(port), '--ip', '127.0.0.1', '--persist-to', stateDir, '--var', 'GENSE_FAUX:1', '--var', `ADMIN_TOKEN:${ADMIN_TOKEN}`, '--show-interactive-dev-session=false'],
+    ['wrangler', 'dev', '--port', String(port), '--ip', '127.0.0.1', '--persist-to', stateDir, '--var', 'GENSE_FAUX:1', '--var', `ADMIN_TOKEN:${ADMIN_TOKEN}`, '--show-interactive-dev-session=false', ...extra],
     { cwd: new URL('..', import.meta.url), detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NO_PROXY: '*', no_proxy: '*', WRANGLER_SEND_METRICS: 'false' } },
   )
   let log = ''

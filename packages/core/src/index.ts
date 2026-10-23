@@ -8,3 +8,6 @@ export { accountApi, json, parseCookies, sameOrigin, sessionUser, type AccountAp
 export { SqliteExecutionEnv, SqliteFiles, type SqliteFilesOptions } from './fs/sqlite-env.ts'
 export { MountedEnv, type MountOptions } from './fs/mounted-env.ts'
 export { DATA_DIR, SKILLS_DIR, UPLOADS_DIR, treeDir, Workspace, type EnvFactory } from './workspace.ts'
+export * from './catalog.ts'
+export { pluginDefaultsFromEnv, PluginStore, Sealer, type PluginPatch, type PluginStoreOptions } from './plugins/store.ts'
+export { webSearch, webFetch, type DeepSeek } from './plugins/web.ts'

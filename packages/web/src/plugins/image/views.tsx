@@ -1,15 +1,14 @@
-import { IconArrowDown, IconCheck } from '../../components/Icons'
-import { href } from '../../router'
-import type { ViewProps } from '../types'
-import type { ImageInput, ImageResult } from '../contracts'
+import { useEffect, useState } from 'react'
+import { IconArrowDown } from '../../components/Icons'
+import type { ViewHost, ViewProps } from '../types'
+import type { GeneratedImage, ImageInput, ImageResult } from '../contracts'
 
 const ratio: Record<string, string> = { '1536x1024': '3 / 2', '1024x1536': '2 / 3' }
-const extension = (mediaType: string) => ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/svg+xml': 'svg' })[mediaType] ?? 'png'
 
-/** Generated images; a placeholder of the requested shape while the call runs. */
-export function ImageView({ toolInput, toolResult }: ViewProps<ImageInput, ImageResult>) {
+/** Generated images, loaded from the chat's workspace; a placeholder of the requested shape while the call runs. */
+export function ImageView({ toolInput, toolResult, host }: ViewProps<ImageInput, ImageResult>) {
   const result = toolResult?.structuredContent
-  if (!result) {
+  if (!result?.images) {
     return (
       <figure className="image-gen">
         <div className="image-pending" style={{ aspectRatio: ratio[toolInput.size ?? ''] ?? '1 / 1' }}>
@@ -22,25 +21,54 @@ export function ImageView({ toolInput, toolResult }: ViewProps<ImageInput, Image
   return (
     <>
       {result.images.map((img) => (
-        <figure key={img.id} className="image-gen">
-          <a href={img.url} target="_blank" rel="noreferrer" title="查看原图">
-            <img src={img.url} alt={result.prompt} loading="lazy" />
-          </a>
-          <figcaption className="image-meta">
-            <span className="muted small ellipsis" title={result.revisedPrompt ?? result.prompt}>
-              {result.prompt}
-            </span>
-            {img.fileId && (
-              <a className="pill-btn small" href={href({ name: 'files', tab: 'artifact', id: img.fileId })}>
-                <IconCheck width={14} height={14} /> 已存到 Drive
-              </a>
-            )}
-            <a className="pill-btn small" href={img.url} download={img.fileName ?? `image-${img.id}.${extension(img.mediaType)}`}>
-              <IconArrowDown width={14} height={14} /> 下载
-            </a>
-          </figcaption>
-        </figure>
+        <Image key={img.id} img={img} prompt={result.prompt} title={result.revisedPrompt ?? result.prompt} host={host} ratio={ratio[toolInput.size ?? ''] ?? '1 / 1'} />
       ))}
     </>
+  )
+}
+
+function Image({ img, prompt, title, host, ratio }: { img: GeneratedImage; prompt: string; title: string; host: ViewHost; ratio: string }) {
+  const [url, setUrl] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    let objectUrl: string | undefined
+    let live = true
+    host.readFile(img.path).then(
+      (blob) => {
+        if (!live) return
+        objectUrl = URL.createObjectURL(blob.type ? blob : new Blob([blob], { type: img.mediaType }))
+        setUrl(objectUrl)
+      },
+      (e: unknown) => live && setError(e instanceof Error ? e.message : String(e)),
+    )
+    return () => {
+      live = false
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [img.path])
+  const name = img.path.slice(img.path.lastIndexOf('/') + 1)
+  return (
+    <figure className="image-gen">
+      {url ? (
+        <a href={url} target="_blank" rel="noreferrer" title="查看原图">
+          <img src={url} alt={prompt} />
+        </a>
+      ) : (
+        <div className="image-pending" style={{ aspectRatio: ratio, animation: error ? 'none' : undefined }}>
+          {error ? `图片读取失败：${error}` : '正在加载图片…'}
+        </div>
+      )}
+      <figcaption className="image-meta">
+        <span className="muted small ellipsis" title={title}>
+          {prompt}
+        </span>
+        {url && (
+          <a className="pill-btn small" href={url} download={name}>
+            <IconArrowDown width={14} height={14} /> 下载
+          </a>
+        )}
+      </figcaption>
+    </figure>
   )
 }

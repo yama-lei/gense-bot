@@ -4,12 +4,25 @@
 import { BACKGROUND_CONTEXT, type Context } from '@earendil-works/chord/context'
 import { applySqliteMigrations, type SqliteDatabase } from '@earendil-works/chord/sqlite'
 import type { Models } from '@earendil-works/pi-ai'
-import { createRegistry, defineExtension, Harness, section, type ConversationId, type HarnessOptions, type Wake } from '@earendil-works/pi-durable'
+import {
+  createRegistry,
+  defineExtension,
+  Harness,
+  section,
+  type ConversationId,
+  type Extension,
+  type HarnessOptions,
+  type Wake,
+} from '@earendil-works/pi-durable'
+import type { PluginValue } from './catalog.ts'
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite'
 import { createEditTool, createReadTool, createWriteTool } from '@earendil-works/pi-durable/tools'
 import type { ImageContent, TextContent } from '@earendil-works/pi-ai'
 import { RUN_ERROR_KIND, type Effort, type ModelInfo, type RunErrorData, type TreeMeta } from './protocol.ts'
 import { DATA_DIR, SKILLS_DIR, toBase64, treeDir, Workspace, type EnvFactory } from './workspace.ts'
+import { imageExtension } from './plugins/image.ts'
+import { PluginStore, type PluginStoreOptions } from './plugins/store.ts'
+import { webExtension } from './plugins/web.ts'
 
 const DEFAULT_TITLE = '新对话'
 
@@ -33,6 +46,9 @@ const PREAMBLE = [
 
 const gense = defineExtension({ name: 'gense', sections: [section('assistant', () => PREAMBLE)] })
 
+/** Plugins this core implements, by catalog id; each extension reads its user's settings when a tool runs. */
+const PLUGINS: Record<string, (config: () => Record<string, PluginValue>) => Extension> = { web: webExtension, image: imageExtension }
+
 const files = defineExtension({
   name: 'files',
   tools: [createReadTool(), createWriteTool(), createEditTool()],
@@ -51,6 +67,8 @@ export interface SpaceOptions {
   defaultModel: ModelInfo | null
   /** The user's files (roadmap-3 D6): an environment for a virtual working directory under /data. */
   env: EnvFactory
+  /** Plugin settings the host supplies, and the key that seals the user's plugin secrets. */
+  plugins?: Pick<PluginStoreOptions, 'defaults' | 'secretKey'>
   /** Passed through to the Harness: wake scheduling and settings belong to the host. */
   harness?: Pick<HarnessOptions, 'onWake' | 'setTimer' | 'now' | 'settings' | 'onReport'>
   /**
@@ -71,12 +89,14 @@ export class UserSpace {
   private readonly db: SqliteDatabase
   readonly harness: Harness
   readonly workspace: Workspace
+  readonly plugins: PluginStore
   private readonly options: SpaceOptions
 
-  private constructor(db: SqliteDatabase, harness: Harness, workspace: Workspace, options: SpaceOptions) {
+  private constructor(db: SqliteDatabase, harness: Harness, workspace: Workspace, plugins: PluginStore, options: SpaceOptions) {
     this.db = db
     this.harness = harness
     this.workspace = workspace
+    this.plugins = plugins
     this.options = options
   }
 
@@ -84,19 +104,31 @@ export class UserSpace {
   static async open(db: SqliteDatabase, options: SpaceOptions, ctx: Context = BACKGROUND_CONTEXT) {
     await applySqliteMigrations(db, migrations, { table: 'app_migrations' })
     const storage = await SqliteStorage.open(db, { prefix: 'pi_' })
+    const plugins = await PluginStore.open(db, { ...options.plugins, available: Object.keys(PLUGINS) })
     const registry = createRegistry()
-    registry.install(gense)
-    registry.install(files)
+    const byName = new Map<string, Extension>()
+    for (const e of [gense, files, ...Object.entries(PLUGINS).map(([id, make]) => make(() => plugins.resolved(id)))]) {
+      registry.install(e)
+      byName.set(e.name, e)
+    }
     const workspace = new Workspace(options.env)
+    // Conversations follow the host's selection, read at every resolution: a plugin switched on or off applies from the
+    // next turn of every conversation (D8).
+    const settings = {
+      ...options.harness?.settings,
+      get extensions() {
+        return [gense, files, ...plugins.active().map((id) => byName.get(id)!)]
+      },
+    }
     const harness = await Harness.open(
       storage,
-      { ...options.harness, models: options.models, registry, env: ({ cwd }) => workspace.env(cwd ?? DATA_DIR) },
+      { ...options.harness, settings, models: options.models, registry, env: ({ cwd }) => workspace.env(cwd ?? DATA_DIR) },
       ctx,
     )
     await options.arm?.(harness.wake())
     // Continue runs a previous process left unfinished (R32).
     harness.resume()
-    return new UserSpace(db, harness, workspace, options)
+    return new UserSpace(db, harness, workspace, plugins, options)
   }
 
   /** Arms the host's wake-up before a call that can start work. */
@@ -131,7 +163,7 @@ export class UserSpace {
     const conv = await this.harness.createConversation(
       {
         ownership: { kind: 'ownerless' },
-        agent: { extensions: [gense, files], cwd: treeDir(id), ...(model && { model: { provider: model.provider, modelId: model.id } }) },
+        agent: { cwd: treeDir(id), ...(model && { model: { provider: model.provider, modelId: model.id } }) },
       },
       ctx,
     )

@@ -1,8 +1,10 @@
 // Drives a real host over HTTP and WebSocket, as the browser does.
 import { applyImmutable, decoder, type Decoder } from '@earendil-works/chord/delta'
+import type { PluginState } from '@gense/core/catalog'
 import type { ClientRequest, FileEntry, ServerMessage, TreeMeta, UploadedFile } from '@gense/core/protocol'
 import assert from 'node:assert/strict'
 import { mkdtemp } from 'node:fs/promises'
+import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import WebSocket from 'ws'
@@ -19,7 +21,7 @@ export async function login(url: string, email: string, password: string) {
   return { status: res.status, body: (await res.json()) as { email?: string; error?: string }, cookie }
 }
 
-type Entry = { kind: string; data?: unknown; model?: { role: string; content: unknown; stopReason?: string }[] }
+type Entry = { kind: string; data?: unknown; model?: { role: string; content: unknown; stopReason?: string; isError?: boolean; details?: unknown }[] }
 export type View = { entries: Entry[]; docs: Record<string, unknown> }
 
 export const textOf = (e: Entry) => {
@@ -33,6 +35,7 @@ export const stopReason = (e: Entry) => e.model?.[0]?.stopReason
 export class Client {
   readonly views = new Map<string, View>()
   trees: TreeMeta[] = []
+  plugins: PluginState[] = []
   readonly #ws: WebSocket
   readonly #decoders = new Map<string, Decoder>()
   readonly #pending = new Map<number, { resolve(v: unknown): void; reject(e: Error): void }>()
@@ -55,6 +58,7 @@ export class Client {
 
   #receive(m: ServerMessage) {
     if (m.t === 'trees') this.trees = m.trees
+    if (m.t === 'plugins') this.plugins = m.plugins
     if (m.t === 'view') {
       this.#decoders.set(m.treeId, decoder())
       this.views.set(m.treeId, m.value as View)
@@ -144,4 +148,87 @@ export async function workspaceScenario(client: Client) {
 
   await client.request({ t: 'tree.delete', treeId: tree.id })
   await assert.rejects(client.request({ t: 'files.list', treeId: tree.id }), /会话不存在/)
+}
+
+const DOT_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+
+/** Stands in for DeepSeek's tools API and an image endpoint; records the key each request carried. */
+export async function fakeUpstream() {
+  const keys: string[] = []
+  const server = createServer((req, res) => {
+    let body = ''
+    req.on('data', (c: Buffer) => (body += c))
+    req.on('end', () => {
+      keys.push(req.headers.authorization?.replace(/^Bearer /, '') ?? '')
+      const json = (v: unknown) => res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(v))
+      const { query } = JSON.parse(body || '{}') as { query?: string }
+      if (req.url === '/v1/tools/search') json({ results: [{ title: `关于 ${query}`, url: 'https://example.com/pi?utm_source=x#:~:text=pi', summary: '摘要', site_name: 'Example' }] })
+      else if (req.url === '/v1/tools/fetch') json({ title: 'Example', content: '正文内容' })
+      else if (req.url === '/v1/images/generations') json({ data: [{ b64_json: DOT_PNG, revised_prompt: '一个点' }] })
+      else res.writeHead(404).end()
+    })
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const { port } = server.address() as { port: number }
+  return { url: `http://127.0.0.1:${port}`, keys, close: () => new Promise<void>((resolve) => server.close(() => resolve())) }
+}
+
+/** The host's plugin defaults the scenario expects: DEEPSEEK_API_KEY and PROVIDER_* pointing at `fakeUpstream`. */
+export const pluginEnv = (upstream: string) => ({
+  DEEPSEEK_API_KEY: 'server-key',
+  DEEPSEEK_BASE_URL: upstream,
+  PROVIDER_BASE_URL: upstream,
+  PROVIDER_AUTH_TOKEN: 'image-key',
+  TOKEN_ENCRYPTION_KEY: 'test-encryption-key',
+})
+
+/**
+ * Plugins (R33), shared by both hosts: a disabled plugin's tools are missing, enabling web search works with the
+ * server's key and then with the user's own sealed key, and a generated image lands in the workspace.
+ */
+export async function pluginScenario(client: Client, upstream: { keys: string[] }) {
+  const plugin = (id: string) => client.plugins.find((p) => p.id === id)
+  const web = await client.until(() => plugin('web'), 10_000, 'plugin list')
+  assert.deepEqual([web.enabled, web.available, web.issue, web.config.serverKeys], [false, true, null, ['deepseekKey']])
+
+  const tree = await client.request<TreeMeta>({ t: 'tree.create' })
+  await client.request({ t: 'watch', treeId: tree.id })
+  const results = () => client.views.get(tree.id)?.entries.filter((e) => e.kind === 'pi.tool-result') ?? []
+  const answers = () => client.views.get(tree.id)?.entries.filter((e) => e.kind === 'pi.assistant' && textOf(e)) ?? []
+  const ask = async (text: string, n: number) => {
+    await client.request({ t: 'send', treeId: tree.id, text, requestId: `r${n}` })
+    await client.until(() => answers()[n - 1], 15_000, `answer ${n}`)
+    return results().at(-1)!
+  }
+
+  const off = await ask('[工具 web_search] {"query":"pi"}', 1)
+  assert.equal(off.model![0]!.isError, true, 'a disabled plugin has no tools')
+
+  await client.request({ t: 'plugin.set', pluginId: 'web', enabled: true })
+  await client.until(() => plugin('web')?.enabled, 5_000, 'web enabled')
+  const found = await ask('[工具 web_search] {"query":"pi"}', 2)
+  assert.match(textOf(found), /关于 pi\nhttps:\/\/example.com\/pi\n摘要/)
+  assert.deepEqual((found.model![0]!.details as { sources: unknown }).sources, [{ url: 'https://example.com/pi', title: '关于 pi', site: 'Example' }])
+  assert.equal(upstream.keys.at(-1), 'server-key')
+
+  await assert.rejects(client.request({ t: 'plugin.set', pluginId: 'image', values: { baseUrl: 'ftp://x' } }), /无效/)
+  await client.request({ t: 'plugin.set', pluginId: 'web', secrets: { deepseekKey: 'user-key' } })
+  await client.until(() => plugin('web')?.config.secretsSet.includes('deepseekKey'), 5_000, 'secret saved')
+  assert.ok(!JSON.stringify(client.plugins).includes('user-key'), 'secrets never reach the browser')
+  await ask('[工具 web_fetch] {"url":"https://example.com/pi"}', 3)
+  assert.equal(upstream.keys.at(-1), 'user-key')
+
+  await client.request({ t: 'plugin.set', pluginId: 'image', enabled: true })
+  const image = await ask('[工具 image_generate] {"prompt":"一个点"}', 4)
+  const details = image.model![0]!.details as { images: { path: string; mediaType: string }[]; revisedPrompt: string }
+  assert.equal(details.revisedPrompt, '一个点')
+  assert.equal(details.images[0]!.mediaType, 'image/png')
+  assert.match(details.images[0]!.path, new RegExp(`^/data/sessions/${tree.id}/images/.+\\.png$`))
+  const read = await client.request<{ base64: string }>({ t: 'files.read', treeId: tree.id, path: details.images[0]!.path })
+  assert.equal(read.base64, DOT_PNG)
+  assert.equal(upstream.keys.at(-1), 'image-key')
+
+  await client.request({ t: 'plugin.set', pluginId: 'web', enabled: false })
+  await client.until(() => plugin('web')?.enabled === false, 5_000, 'web disabled')
+  await client.request({ t: 'tree.delete', treeId: tree.id })
 }

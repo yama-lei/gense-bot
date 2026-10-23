@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { validSetting } from '../plugins/catalog'
+import { validSetting } from '@gense/core/catalog'
 import type { Store } from '../store'
 import { Select } from './Select'
 import type { PluginInfo, PluginSetting, PluginValue } from '../types'
@@ -16,7 +16,6 @@ export function PluginSettings({ plugin, store, onClose }: { plugin: PluginInfo;
   const [secrets, setSecrets] = useState<SecretDraft>({})
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const models = store.state.models.filter((m) => m.provider === 'openai')
 
   const set = (key: string, v: PluginValue) => setDraft((d) => ({ ...d, [key]: v }))
   const fromServer = (key: string) => serverKeys.includes(key)
@@ -60,19 +59,6 @@ export function PluginSettings({ plugin, store, onClose }: { plugin: PluginInfo;
       }
       case 'select':
         return <Select label={s.label} value={typeof v === 'string' ? v : String(s.default ?? '')} options={s.options ?? []} onChange={(x) => set(s.key, x)} />
-      case 'model':
-        return (
-          <Select
-            label={s.label}
-            value={typeof v === 'string' ? v : ''}
-            options={[
-              { value: '', label: fromServer(s.key) ? '使用服务器默认模型' : '不使用' },
-              ...models.map((m) => ({ value: m.id, label: m.name, description: m.id !== m.name ? m.id : undefined })),
-              ...(typeof v === 'string' && v && !models.some((m) => m.id === v) ? [{ value: v, label: v, description: '不在当前模型列表中' }] : []),
-            ]}
-            onChange={(x) => set(s.key, x)}
-          />
-        )
       case 'secret': {
         const d = secrets[s.key]
         const placeholder = d === null ? '保存后清除' : secretsSet.includes(s.key) ? '已设置，输入新值替换' : fromServer(s.key) ? '使用服务器配置' : '未设置'

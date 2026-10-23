@@ -2,20 +2,27 @@
 import { LONG_REPLY, RUN_ERROR_KIND, type TreeMeta } from '@gense/core'
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
-import { Client, login, stopReason, tempDir, textOf, workspaceScenario } from '../../node/test/helpers.ts'
+import { Client, fakeUpstream, login, pluginEnv, pluginScenario, stopReason, tempDir, textOf, workspaceScenario } from '../../node/test/helpers.ts'
 import { addUser, wranglerDev, type Dev } from './helpers.ts'
 
 const EMAIL = 'a@example.com'
 const PASSWORD = 'correct horse'
 let stateDir: string
 let dev: Dev
+let upstream: Awaited<ReturnType<typeof fakeUpstream>>
+let vars: Record<string, string>
 
 before(async () => {
   stateDir = await tempDir()
-  dev = await wranglerDev(stateDir)
+  upstream = await fakeUpstream()
+  vars = pluginEnv(upstream.url)
+  dev = await wranglerDev(stateDir, vars)
   await addUser(dev.url, EMAIL, PASSWORD)
 })
-after(() => dev.stop())
+after(async () => {
+  await dev.stop()
+  await upstream.close()
+})
 
 test('login, the session check on the socket, and the SPA fallback', async () => {
   assert.equal((await login(dev.url, EMAIL, 'wrong password')).status, 401)
@@ -58,7 +65,7 @@ test('R32: an answer cut off by killing workerd completes after restart', { time
   client.close()
   await dev.stop('SIGKILL')
 
-  dev = await wranglerDev(stateDir)
+  dev = await wranglerDev(stateDir, vars)
   ;({ cookie } = await login(dev.url, EMAIL, PASSWORD))
   client = await Client.connect(dev.url, cookie)
   await client.request({ t: 'watch', treeId: tree.id })
@@ -77,5 +84,12 @@ test('R33: the workspace: tool writes, the file panel, uploads and attachments',
   const { cookie } = await login(dev.url, EMAIL, PASSWORD)
   const client = await Client.connect(dev.url, cookie)
   await workspaceScenario(client)
+  client.close()
+})
+
+test('R33: plugins: switches, the server key, a sealed user key, and a generated image', { timeout: 60_000 }, async () => {
+  const { cookie } = await login(dev.url, EMAIL, PASSWORD)
+  const client = await Client.connect(dev.url, cookie)
+  await pluginScenario(client, upstream)
   client.close()
 })

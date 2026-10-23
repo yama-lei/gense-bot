@@ -1,3 +1,4 @@
+import type { PluginSetting, PluginSettingsState } from '@gense/core/catalog'
 // The UI's data model; see docs/specs/web-ui.md "数据模型草案".
 
 export type TurnStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'interrupted'
@@ -190,27 +191,7 @@ export interface Schedule {
   lastResult: string
 }
 
-export type PluginValue = string | boolean
-/** One plugin setting (roadmap-2 "L0-5 插件配置"); values are checked against it on the server. */
-export interface PluginSetting {
-  key: string
-  label: string
-  help?: string
-  /** `secret` values are sealed on the server and never sent back; `model` picks one of the OpenAI endpoint's chat models. */
-  kind: 'text' | 'url' | 'secret' | 'select' | 'toggle' | 'model'
-  options?: { value: string; label: string }[]
-  default?: PluginValue
-  placeholder?: string
-}
-/** A plugin's settings as the hub broadcasts them; secrets appear only as `secretsSet`. */
-export interface PluginSettingsState {
-  /** Values the user set; others fall back to the server, then to the declared default. */
-  values: Record<string, PluginValue>
-  secretsSet: string[]
-  /** Keys the server configures (`.env`), used when the user sets none. */
-  serverKeys: string[]
-}
-
+export type { PluginSetting, PluginSettingsState, PluginValue } from '@gense/core/catalog'
 /** A plugin as listed on the customize page. */
 export interface PluginInfo {
   id: string
@@ -283,68 +264,4 @@ export interface AppState {
   /** Models served by the endpoints; `modelsError` explains an empty or stale list. */
   models: ModelOption[]
   modelsError: string | null
-}
-
-/** A chat as listed by the user's hub; its turns live in the chat's own Durable Object. */
-export interface ChatMeta {
-  id: string
-  title: string
-  projectId: string | null
-  pinned: boolean
-  updatedAt: number
-  parent?: ChatParent
-}
-
-/** UserHub state, broadcast to every tab. Holds no secrets. */
-export interface HubState {
-  chats: ChatMeta[]
-  projects: Project[]
-  memories: Memory[]
-  prefs: Preferences
-  enabledPlugins: string[]
-  /** Plugins whose tools the server implements. */
-  availablePlugins: string[]
-  pluginSettings: Record<string, PluginSettingsState>
-  /** Why a plugin offers no tools with its current settings. */
-  pluginIssues: Record<string, string>
-  /** Built-in skills and the ones last read from GenseBot/Skills. */
-  skills: Omit<SkillInfo, 'enabled'>[]
-  disabledSkills: string[]
-  /** Why GenseBot/Skills could not be read; null when fine. */
-  skillsError: string | null
-  account: Account
-  models: ModelOption[]
-  modelsError: string | null
-  /** GenseBot/资料 and GenseBot/Artifacts, refreshed from Drive. */
-  files: DriveFile[]
-}
-
-/** What a chat asks its hub for before each turn. */
-export interface TurnSettings {
-  enabledPlugins: string[]
-  /** Resolved settings of every plugin, secrets included; only ever passed between server objects. */
-  pluginConfig: Record<string, Record<string, PluginValue>>
-  memories: string[]
-  language: string
-  models: ModelOption[]
-  driveConnected: boolean
-  /** Name and description of the chat's project, empty when it has none. */
-  projectContext: string
-  /** Enabled skills, listed in the system prompt. */
-  skills: { name: string; description: string }[]
-  /** Changes when the enabled skills or their Drive files change; chats then re-mount /skills. */
-  skillsVersion: string
-}
-
-/** Client body fields sent with each chat request. */
-export interface TurnBody {
-  model: string
-  effort: Effort
-}
-
-/** Metadata the server stamps on each assistant message. */
-export interface TurnMetadata {
-  model: string
-  effort: Effort
-  createdAt: number
 }

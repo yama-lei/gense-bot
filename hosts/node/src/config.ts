@@ -1,5 +1,5 @@
 // Host settings from the environment (.env at the repo root; see .env.example).
-import { fauxModels, relayFromEnv, type ModelSetup } from '@gense/core'
+import { fauxModels, pluginDefaultsFromEnv, relayFromEnv, type ModelSetup, type SpaceOptions } from '@gense/core'
 import { resolve } from 'node:path'
 
 export interface HostConfig {
@@ -12,6 +12,8 @@ export interface HostConfig {
   models: () => ModelSetup
   /** Enables the admin endpoint for adding users over HTTP; the CLI does not need it. */
   adminToken?: string
+  /** Plugin defaults from `.env` and the key that seals users' plugin secrets. */
+  plugins: NonNullable<SpaceOptions['plugins']>
 }
 
 const root = resolve(import.meta.dirname, '../../..')
@@ -24,5 +26,6 @@ export function configFromEnv(env = process.env): HostConfig {
     webDir: resolve(root, 'packages/web/dist'),
     models: env.GENSE_FAUX === '1' ? fauxModels : () => relayFromEnv(env),
     adminToken: env.ADMIN_TOKEN || undefined,
+    plugins: { defaults: pluginDefaultsFromEnv(env), ...(env.TOKEN_ENCRYPTION_KEY && { secretKey: env.TOKEN_ENCRYPTION_KEY }) },
   }
 }

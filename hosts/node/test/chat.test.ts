@@ -4,17 +4,22 @@ import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 import { configFromEnv } from '../src/config.ts'
 import { startServer } from '../src/server.ts'
-import { Client, login, tempDir, textOf, workspaceScenario } from './helpers.ts'
+import { Client, fakeUpstream, login, pluginEnv, pluginScenario, tempDir, textOf, workspaceScenario } from './helpers.ts'
 
 const EMAIL = 'a@example.com'
 const PASSWORD = 'correct horse'
 let server: Awaited<ReturnType<typeof startServer>>
+let upstream: Awaited<ReturnType<typeof fakeUpstream>>
 
 before(async () => {
-  server = await startServer({ ...configFromEnv({ GENSE_FAUX: '1', DATA_DIR: await tempDir() }), port: 0 })
+  upstream = await fakeUpstream()
+  server = await startServer({ ...configFromEnv({ GENSE_FAUX: '1', DATA_DIR: await tempDir(), ...pluginEnv(upstream.url) }), port: 0 })
   await server.auth.createUser(EMAIL, PASSWORD)
 })
-after(() => server.close())
+after(async () => {
+  await server.close()
+  await upstream.close()
+})
 
 test('login rejects a wrong password and accepts the right one', async () => {
   const bad = await login(server.url, EMAIL, 'wrong password')
@@ -77,5 +82,12 @@ test('R33: the workspace: tool writes, the file panel, uploads and attachments',
   const { cookie } = await login(server.url, EMAIL, PASSWORD)
   const client = await Client.connect(server.url, cookie)
   await workspaceScenario(client)
+  client.close()
+})
+
+test('R33: plugins: switches, the server key, a sealed user key, and a generated image', { timeout: 60_000 }, async () => {
+  const { cookie } = await login(server.url, EMAIL, PASSWORD)
+  const client = await Client.connect(server.url, cookie)
+  await pluginScenario(client, upstream)
   client.close()
 })

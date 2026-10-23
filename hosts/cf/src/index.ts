@@ -2,7 +2,7 @@
 // one UserHub object per user holds that user's pi-durable Harness and sockets.
 import { DurableObjectSqliteDatabase } from '@earendil-works/chord/sqlite/cloudflare'
 import type { Wake } from '@earendil-works/pi-durable'
-import { accountApi, Auth, Connection, fauxModels, json, relayFromEnv, sameOrigin, sessionUser, SqliteFiles, UserSpace, type ModelSetup, type User } from '@gense/core'
+import { accountApi, Auth, Connection, fauxModels, json, pluginDefaultsFromEnv, relayFromEnv, sameOrigin, sessionUser, SqliteFiles, UserSpace, type ModelSetup, type User } from '@gense/core'
 import { DurableObject } from 'cloudflare:workers'
 
 export interface Env {
@@ -15,6 +15,9 @@ export interface Env {
   PROVIDER_AUTH_TOKEN?: string
   DEFAULT_PROVIDER_MODEL?: string
   PROVIDER_MODELS?: string
+  TOKEN_ENCRYPTION_KEY?: string
+  DEEPSEEK_API_KEY?: string
+  DEEPSEEK_BASE_URL?: string
 }
 
 /** Set by the Worker on the request it forwards to a UserHub, after checking the session. */
@@ -76,6 +79,7 @@ export class UserHub extends DurableObject<Env> {
         models: this.#setup.models,
         env: (cwd) => files.env({ cwd }),
         defaultModel: this.#setup.defaultModel,
+        plugins: { defaults: pluginDefaultsFromEnv(env as unknown as Record<string, string | undefined>), ...(env.TOKEN_ENCRYPTION_KEY && { secretKey: env.TOKEN_ENCRYPTION_KEY }) },
         // A failed alarm write resets the object; it arms again when it next starts.
         harness: { onWake: (wake) => void this.#arm(wake).catch(() => ctx.abort('Alarm write failed')) },
         arm: (wake) => this.#arm(wake),

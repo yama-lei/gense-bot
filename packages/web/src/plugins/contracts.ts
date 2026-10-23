@@ -18,12 +18,11 @@ export interface ImageInput {
   size?: string
 }
 
+/** An image the tool saved in the chat's workspace; `path` is absolute (`/data/...`). */
 export interface GeneratedImage {
   id: string
-  url: string
+  path: string
   mediaType: string
-  fileId?: string
-  fileName?: string
 }
 
 export interface ImageResult {

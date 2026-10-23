@@ -15,6 +15,8 @@ export interface ViewHost {
   requestDisplayMode: (mode: DisplayMode) => void
   /** Extension: persist view state across reloads (ChatGPT's widgetState). */
   setViewState: (state: unknown) => void
+  /** Extension: a file in the chat's workspace, such as one the tool wrote. */
+  readFile: (path: string) => Promise<Blob>
 }
 
 export interface ViewProps<I = unknown, S = unknown, V = unknown> {

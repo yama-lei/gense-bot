@@ -93,6 +93,7 @@ export function ChatView({ store, conv }: { store: Store; conv: Conversation }) 
       setPanel(mode === 'inline' ? null : { turnId: turn.id, callId: call.id })
     },
     setViewState: (state) => store.setViewState(conv.id, turn.id, call.id, state),
+    readFile: (path) => store.readWorkspaceFile(conv.id, path),
   })
 
   const scrollToBottom = (smooth = true) =>
@@ -667,6 +668,7 @@ function SideThread({ store, side, onClose }: { store: Store; side: Conversation
     sendMessage: (text) => store.reply(side.id, { text }, model, effort),
     requestDisplayMode: () => {},
     setViewState: () => {},
+    readFile: (path) => store.readWorkspaceFile(side.id, path),
   }
 
   const summarize = () => {

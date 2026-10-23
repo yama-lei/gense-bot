@@ -460,6 +460,7 @@ export function CustomizeView({ store }: { store: Store }) {
   const { plugins, skills, skillsError, memories, prefs, account } = store.state
   const [memo, setMemo] = useState('')
   const [editing, setEditing] = useState<string | null>(null)
+  const [pluginError, setPluginError] = useState<string | null>(null)
   return (
     <div className="page">
       <TopBar>
@@ -480,6 +481,7 @@ export function CustomizeView({ store }: { store: Store }) {
 
         <h3 className="section-title">插件</h3>
         <p className="muted small">每个插件提供一组工具，也可以提供自己的界面。关闭后，助手不能调用它的工具。</p>
+        {pluginError && <p className="small error-text">{pluginError}</p>}
         <ul className="list rows">
           {plugins.map((t) => (
             <li key={t.id} className="row plugin-row">
@@ -500,7 +502,10 @@ export function CustomizeView({ store }: { store: Store }) {
                 checked={t.enabled}
                 disabled={!t.available || (!t.enabled && !!t.issue)}
                 label={t.name}
-                onChange={(v) => store.setState((s) => ({ ...s, plugins: s.plugins.map((x) => (x.id === t.id ? { ...x, enabled: v } : x)) }))}
+                onChange={(v) => {
+                  setPluginError(null)
+                  void store.setPluginEnabled(t.id, v).catch((e: unknown) => setPluginError(e instanceof Error ? e.message : String(e)))
+                }}
               />
               {editing === t.id && <PluginSettings key={t.id} plugin={t} store={store} onClose={() => setEditing(null)} />}
             </li>

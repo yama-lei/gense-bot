@@ -16,7 +16,7 @@ export interface ConnectionOptions {
 export class Connection {
   readonly #o: ConnectionOptions
   readonly #watches = new Map<string, ConversationWatch>()
-  #unsubscribe: (() => void) | undefined
+  #unsubscribe: (() => void)[] = []
   #closed = false
 
   constructor(options: ConnectionOptions) {
@@ -30,7 +30,11 @@ export class Connection {
   async start() {
     const { space, email, models, defaultModel } = this.#o
     this.#send({ t: 'hello', email, models, defaultModel })
-    this.#unsubscribe = space.subscribeTrees((trees) => this.#send({ t: 'trees', trees }))
+    this.#unsubscribe.push(
+      space.subscribeTrees((trees) => this.#send({ t: 'trees', trees })),
+      space.plugins.subscribe(() => this.#send({ t: 'plugins', plugins: space.plugins.list() })),
+    )
+    this.#send({ t: 'plugins', plugins: space.plugins.list() })
     this.#send({ t: 'trees', trees: await space.trees() })
   }
 
@@ -85,6 +89,12 @@ export class Connection {
         return space.workspace.upload(r.name, fromBase64(r.base64))
       case 'uploads':
         return space.workspace.uploads()
+      case 'plugin.set':
+        return space.plugins.set(r.pluginId, {
+          ...(r.enabled !== undefined && { enabled: r.enabled }),
+          ...(r.values && { values: r.values }),
+          ...(r.secrets && { secrets: r.secrets }),
+        })
       default:
         throw new Error('未知请求')
     }
@@ -112,7 +122,7 @@ export class Connection {
 
   async close() {
     this.#closed = true
-    this.#unsubscribe?.()
+    for (const u of this.#unsubscribe.splice(0)) u()
     await Promise.all([...this.#watches.values()].map((w) => w.stop()))
     this.#watches.clear()
   }

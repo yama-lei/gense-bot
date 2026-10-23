@@ -2,7 +2,7 @@
 // entries after it fill it. `pi.live` adds the streaming answer, `pi.inbox` the inputs still waiting.
 import { RUN_ERROR_KIND, type RunErrorData } from '@gense/core/protocol'
 import { tools } from '../plugins'
-import type { Attachment, Effort, ToolCall, Turn } from '../types'
+import type { Attachment, Effort, ToolCall, Turn, WebSource } from '../types'
 
 type Block = { type: string; text?: string; id?: string; name?: string; arguments?: unknown }
 type Message = {
@@ -16,6 +16,7 @@ type Message = {
   toolCallId?: string
   isError?: boolean
   durationMs?: number
+  details?: unknown
 }
 export type Entry = { id: number; kind: string; data?: unknown; model?: Message[] }
 type Live = { run?: unknown; generation?: { message?: Message; retry?: { error: string } } }
@@ -79,8 +80,16 @@ export function toTurns(view: View, defaults: { model: string; effort: Effort })
       if (m.stopReason === 'error') Object.assign(t, { status: 'failed', error: m.errorMessage || '模型请求失败' })
       if (m.stopReason === 'aborted') t.status = 'interrupted'
     } else if (e.kind === 'pi.tool-result' && m) {
-      const call = turns.at(-1)?.toolCalls.find((c) => c.id === m.toolCallId)
-      if (call) Object.assign(call, { status: m.isError ? 'failed' : 'succeeded', result: { content: textOf(m.content), isError: !!m.isError }, durationMs: m.durationMs } satisfies Partial<ToolCall>)
+      const t = turns.at(-1)
+      const call = t?.toolCalls.find((c) => c.id === m.toolCallId)
+      if (call) {
+        const result = { content: textOf(m.content), isError: !!m.isError, ...(m.details !== undefined && { structuredContent: m.details }) }
+        Object.assign(call, { status: m.isError ? 'failed' : 'succeeded', result, durationMs: m.durationMs } satisfies Partial<ToolCall>)
+      }
+      // Web tools list the pages they used; the turn shows them once each.
+      const found = (m.details as { sources?: WebSource[] } | undefined)?.sources
+      if (t && Array.isArray(found))
+        for (const src of found) if (!t.sources?.some((x) => x.url === src.url)) (t.sources ??= []).push(src)
     } else if (e.kind === RUN_ERROR_KIND) {
       const t = current(e.id)
       const { reason, detail } = (e.data ?? {}) as Partial<RunErrorData>

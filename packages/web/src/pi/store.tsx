@@ -1,11 +1,11 @@
 // Store backed by the host's WebSocket (roadmap-3 stage 1). Conversations are pi-durable trees; what stage 1 does not
 // have yet (projects, Drive, plugins, branches, workspaces) keeps its browser-only state or rejects with a notice.
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { pluginCatalog } from '../plugins/catalog'
+import { pluginCatalog } from '@gense/core/catalog'
 import { useRoute } from '../router'
 import type { Store } from '../store'
 import type { UploadedFile } from '@gense/core/protocol'
-import type { AppState, Conversation, DriveFile, Effort, ModelOption, Outgoing, Preferences, WorkspaceFile } from '../types'
+import type { AppState, Conversation, DriveFile, Effort, ModelOption, Outgoing, PluginInfo, Preferences, WorkspaceFile } from '../types'
 import { HostSocket } from './socket'
 import { toTurns } from './turns'
 
@@ -23,9 +23,10 @@ const fileBase64 = (file: Blob) =>
 
 const toDriveFile = (u: UploadedFile): DriveFile => ({ ...u, kind: 'source' })
 
+const toBlob = (mimeType: string, base64: string) => new Blob([Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))], { type: mimeType })
+
 function saveBase64(name: string, mimeType: string, base64: string) {
-  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))
-  const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }))
+  const url = URL.createObjectURL(toBlob(mimeType, base64))
   const a = Object.assign(document.createElement('a'), { href: url, download: name })
   a.click()
   setTimeout(() => URL.revokeObjectURL(url), 60_000)
@@ -47,7 +48,7 @@ const savePrefs = (prefs: Preferences) => {
 }
 
 /** Fields the host does not keep in stage 1; views can still edit them in this tab. */
-type LocalState = Pick<AppState, 'projects' | 'memories' | 'plugins' | 'skills' | 'prefs'>
+type LocalState = Pick<AppState, 'projects' | 'memories' | 'skills' | 'prefs'>
 
 export function usePiStore(onUnauthorized: () => void): Store {
   const route = useRoute()
@@ -66,7 +67,6 @@ export function usePiStore(onUnauthorized: () => void): Store {
   const [local, setLocal] = useState<LocalState>(() => ({
     projects: [],
     memories: [],
-    plugins: pluginCatalog.map((p) => ({ ...p, enabled: false, available: false, config: { values: {}, secretsSet: [], serverKeys: [] }, issue: null })),
     skills: [],
     prefs: { language: 'zh-CN', defaultEffort: 'medium', model: '', ...loadPrefs() },
   }))
@@ -83,9 +83,19 @@ export function usePiStore(onUnauthorized: () => void): Store {
   const defaultKey = host.defaultModel ? `${host.defaultModel.provider}:${host.defaultModel.id}` : ''
   const prefs = { ...local.prefs, model: local.prefs.model && models.some((m) => `${m.provider}:${m.id}` === local.prefs.model) ? local.prefs.model : defaultKey }
 
+  const plugins = useMemo<PluginInfo[]>(
+    () =>
+      pluginCatalog.map((p) => {
+        const s = host.plugins?.find((x) => x.id === p.id)
+        return { ...p, enabled: false, available: false, config: { values: {}, secretsSet: [], serverKeys: [] }, issue: null, ...s }
+      }),
+    [host.plugins],
+  )
+
   const state = useMemo<AppState>(
     () => ({
       ...local,
+      plugins,
       prefs,
       conversations: (host.trees ?? []).map(
         (t): Conversation => ({
@@ -106,7 +116,7 @@ export function usePiStore(onUnauthorized: () => void): Store {
       modelsError: host.connected || !host.trees ? null : '与服务器的连接已断开，正在重连…',
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [local, host, models, prefs.model, workspaces, uploads],
+    [local, host, models, plugins, prefs.model, workspaces, uploads],
   )
   const stateRef = useRef(state)
   stateRef.current = state
@@ -158,8 +168,8 @@ export function usePiStore(onUnauthorized: () => void): Store {
       }
     }
     if (next.prefs !== cur.prefs) savePrefs(next.prefs)
-    const { projects, memories, plugins, skills, prefs } = next
-    setLocal({ projects, memories, plugins, skills, prefs })
+    const { projects, memories, skills, prefs } = next
+    setLocal({ projects, memories, skills, prefs })
   }
 
   return {
@@ -191,7 +201,8 @@ export function usePiStore(onUnauthorized: () => void): Store {
       return uploaded
     },
     setDrive: () => report(LATER),
-    setPluginConfig: later,
+    setPluginConfig: (pluginId, values, secrets) => socket.request({ t: 'plugin.set', pluginId, values, secrets }).then(() => {}),
+    setPluginEnabled: (pluginId, enabled) => socket.request({ t: 'plugin.set', pluginId, enabled }).then(() => {}),
     refreshFiles: refreshUploads,
     refreshSkills: () => {},
     readFile: later,
@@ -205,6 +216,10 @@ export function usePiStore(onUnauthorized: () => void): Store {
     downloadWorkspaceFile: async (treeId, path) => {
       const file = await socket.request<{ name: string; mimeType: string; base64: string }>({ t: 'files.read', treeId, path })
       saveBase64(file.name, file.mimeType, file.base64)
+    },
+    readWorkspaceFile: async (treeId, path) => {
+      const file = await socket.request<{ mimeType: string; base64: string }>({ t: 'files.read', treeId, path })
+      return toBlob(file.mimeType, file.base64)
     },
     logout: async () => {
       await fetch('/api/logout', { method: 'POST' })

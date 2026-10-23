@@ -64,7 +64,7 @@ export async function startServer(config: HostConfig) {
         await mkdir(files, { recursive: true })
         const db = await openNodeSqliteDatabase(join(dir, 'pi.sqlite'))
         const env = (cwd: string) => new MountedEnv(new NodeExecutionEnv({ cwd: files }), { mount: DATA_DIR, target: files, cwd })
-        return { space: await UserSpace.open(db, { models: setup.models, defaultModel: setup.defaultModel, env }), setup }
+        return { space: await UserSpace.open(db, { models: setup.models, defaultModel: setup.defaultModel, env, plugins: config.plugins }), setup }
       })()
       opening.catch(() => spaces.delete(userId))
       spaces.set(userId, opening)

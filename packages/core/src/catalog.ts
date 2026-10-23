@@ -1,35 +1,59 @@
-import type { PluginInfo, PluginSetting, PluginValue } from '../types'
+// Plugin declarations (roadmap-3 D8): names, descriptions and settings, shared by the hosts, which validate and resolve
+// settings, and the customize page, which renders them. Pure data and functions: the web client imports it too.
 
-export type PluginEntry = Omit<PluginInfo, 'enabled' | 'available' | 'config' | 'issue'>
+export type PluginValue = string | boolean
 
-/** Every plugin the customize page lists, with its settings; which are available the host decides. */
+/** One plugin setting; values are checked against it on the host. */
+export interface PluginSetting {
+  key: string
+  label: string
+  help?: string
+  /** `secret` values are encrypted on the host and never sent back. */
+  kind: 'text' | 'url' | 'secret' | 'select' | 'toggle'
+  options?: { value: string; label: string }[]
+  default?: PluginValue
+  placeholder?: string
+}
+
+export interface PluginEntry {
+  id: string
+  name: string
+  description: string
+  /** Its tools change things outside the conversation. */
+  sideEffect: boolean
+  settings: PluginSetting[]
+}
+
+/** A plugin's settings as the host sends them; secrets appear only as `secretsSet`. */
+export interface PluginSettingsState {
+  /** Values the user set; others fall back to the host's, then to the declared default. */
+  values: Record<string, PluginValue>
+  secretsSet: string[]
+  /** Keys the host configures (`.env`), used when the user sets none. */
+  serverKeys: string[]
+}
+
+/** A plugin as the host reports it to the customize page. */
+export interface PluginState {
+  id: string
+  enabled: boolean
+  /** This host implements it. */
+  available: boolean
+  config: PluginSettingsState
+  /** Why it offers no tools with its current settings; null when it does. */
+  issue: string | null
+}
+
+/** Every plugin the customize page lists. */
 export const pluginCatalog: PluginEntry[] = [
-  {
-    id: 'files',
-    name: '资料',
-    description: '列出、搜索、读取你 Google Drive 中的文件，并在回答中引用原文。只读。',
-    sideEffect: false,
-    settings: [
-      {
-        key: 'searchScope',
-        label: '搜索范围',
-        kind: 'select',
-        options: [
-          { value: 'drive', label: '整个 Drive' },
-          { value: 'gensebot', label: '只搜 GenseBot 的资料和 Artifacts' },
-        ],
-        default: 'drive',
-      },
-    ],
-  },
   {
     id: 'artifact',
     name: 'Artifact',
-    description: '在会话中展示产物，并另存到 GenseBot/Artifacts/。不会覆盖已有文件。',
+    description: '在会话中展示文档、网页、代码等产物，并保存到会话工作区。',
     sideEffect: false,
-    settings: [{ key: 'autoSave', label: '自动保存', help: '展示的同时存到 Drive；关闭时只在你要求时保存', kind: 'toggle', default: false }],
+    settings: [],
   },
-  { id: 'email', name: '邮件', description: '起草 smail 邮件并写入草稿箱，由你在邮箱 App 中发送。', sideEffect: true, settings: [] },
+  { id: 'email', name: '邮件', description: '起草邮件，由你检查后复制或在邮箱 App 中发送。', sideEffect: false, settings: [] },
   {
     id: 'ui',
     name: '界面',
@@ -62,13 +86,12 @@ export const pluginCatalog: PluginEntry[] = [
         options: ['5', '8', '12', '20'].map((v) => ({ value: v, label: v })),
         default: '8',
       },
-      { key: 'researchModel', label: '深度搜索模型', help: 'OpenAI 端点上支持网页搜索的模型；留空则不提供深度搜索', kind: 'model' },
     ],
   },
   {
     id: 'image',
     name: '图片',
-    description: '按描述生成图片，显示在会话中，可下载或存到 Drive。',
+    description: '按描述生成图片，显示在会话中，并保存到会话工作区。',
     sideEffect: false,
     settings: [
       { key: 'baseUrl', label: '端点地址', help: 'OpenAI 兼容的 Images API', kind: 'url', placeholder: 'https://api.openai.com/v1' },
@@ -99,15 +122,21 @@ export const pluginCatalog: PluginEntry[] = [
         ],
         default: 'auto',
       },
-      { key: 'saveToDrive', label: '保存到 Drive', help: '连接 Drive 时另存到 GenseBot/Artifacts/', kind: 'toggle', default: true },
     ],
+  },
+  {
+    id: 'drive',
+    name: 'Google Drive',
+    description: '连接 Google Drive：附件和 @ 可以选 Drive 文件，Skills 可以来自 Drive，助手可以搜索和读取 Drive。只读。',
+    sideEffect: false,
+    settings: [],
   },
   { id: 'mcp', name: 'MCP 服务器', description: '接入外部 MCP 工具及其界面（MCP Apps）。已预留接口。', sideEffect: true, settings: [] },
 ]
 
 export const pluginSettings = (id: string): PluginSetting[] => pluginCatalog.find((p) => p.id === id)?.settings ?? []
 
-/** Settings with the user's values over the server's over the declared defaults. */
+/** Settings with the user's values over the host's over the declared defaults. */
 export function resolveSettings(id: string, user: Record<string, PluginValue>, server: Record<string, PluginValue | undefined> = {}): Record<string, PluginValue> {
   const out: Record<string, PluginValue> = {}
   for (const s of pluginSettings(id)) {
@@ -122,24 +151,18 @@ export function validSetting(s: PluginSetting, value: unknown): value is PluginV
   if (s.kind === 'toggle') return typeof value === 'boolean'
   if (typeof value !== 'string' || value.length > 2000) return false
   if (s.kind === 'select') return !!s.options?.some((o) => o.value === value)
-  if (s.kind === 'url' && value) return /^https:\/\/[^\s]+$/.test(value)
+  if (s.kind === 'url' && value) return /^https?:\/\/[^\s]+$/.test(value)
   return true
 }
 
 const str = (v: PluginValue | undefined) => (typeof v === 'string' ? v : '')
 
-/**
- * Tools a plugin can offer with these resolved settings, or why it offers none; plugins without
- * a `tools` list offer all of theirs. `openai` says whether the server has an OpenAI endpoint.
- */
-export function pluginReadiness(id: string, config: Record<string, PluginValue>, openai: boolean): { tools?: string[]; issue: string | null } {
-  if (id === 'web') {
-    const tools = [...(str(config.deepseekKey) ? ['web_search', 'web_fetch'] : []), ...(str(config.researchModel) && openai ? ['web_research'] : [])]
-    return { tools, issue: tools.length ? null : '需要填写 DeepSeek API Key 或深度搜索模型' }
-  }
+/** Why a plugin offers no tools with these resolved settings; null when it is ready. */
+export function pluginIssue(id: string, config: Record<string, PluginValue>): string | null {
+  if (id === 'web') return str(config.deepseekKey) ? null : '需要填写 DeepSeek API Key'
   if (id === 'image') {
     const missing = [!str(config.baseUrl) && '端点地址', !str(config.apiKey) && 'API Key', !str(config.model) && '模型'].filter(Boolean)
-    return { tools: missing.length ? [] : ['image_generate'], issue: missing.length ? `需要填写${missing.join('、')}` : null }
+    return missing.length ? `需要填写${missing.join('、')}` : null
   }
-  return { issue: null }
+  return null
 }

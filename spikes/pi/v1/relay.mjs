@@ -1,33 +1,13 @@
-// V1: can pi-ai talk to our OpenAI-/Anthropic-compatible relays? Prints no secrets.
-import { createModels, createProvider } from '@earendil-works/pi-ai'
-import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy'
-import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy'
+// V1: can pi-ai talk to our relay? Prints no secrets.
+import { RELAY, redact, relayModels } from '../lib/models.mjs'
 
-const env = process.env
-const mk = (api, provider, baseUrl, id) => ({
-  id, name: id, api, provider, baseUrl, reasoning: true, input: ['text'],
-  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 200000, maxTokens: 8000,
-})
-const oaiModel = mk('openai-responses', 'relay-openai', env.OPENAI_BASE_URL, env.DEFAULT_OPENAI_MODEL)
-const antModel = mk('anthropic-messages', 'relay-anthropic', env.ANTHROPIC_BASE_URL, env.DEFAULT_ANTHROPIC_MODEL)
-
-const models = createModels()
-models.setProvider(createProvider({
-  id: 'relay-openai', name: 'relay-openai', baseUrl: env.OPENAI_BASE_URL,
-  auth: { apiKey: { name: 'relay', resolve: async () => ({ auth: { apiKey: env.OPENAI_AUTH_TOKEN } }) } },
-  models: [oaiModel], api: openAIResponsesApi(),
-}))
-models.setProvider(createProvider({
-  id: 'relay-anthropic', name: 'relay-anthropic', baseUrl: env.ANTHROPIC_BASE_URL,
-  auth: { apiKey: { name: 'relay', resolve: async () => ({ auth: { apiKey: env.ANTHROPIC_AUTH_TOKEN } }) } },
-  models: [antModel], api: anthropicMessagesApi(),
-}))
+const models = relayModels()
+const model = models.getModel(RELAY.provider, RELAY.modelId)
 
 const weather = {
   name: 'get_weather', description: 'Get the weather for a city',
   parameters: { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] },
 }
-const redact = (s) => String(s).split(env.OPENAI_AUTH_TOKEN).join('***').split(env.ANTHROPIC_AUTH_TOKEN).join('***')
 
 async function run(label, model, context, options = {}) {
   const t0 = Date.now()
@@ -46,7 +26,8 @@ async function run(label, model, context, options = {}) {
   }
 }
 
-for (const [name, model] of [['openai-responses', oaiModel], ['anthropic-messages', antModel]]) {
+{
+  const name = 'openai-responses'
   const ask = { messages: [{ role: 'user', content: '用一句话介绍你自己。', timestamp: Date.now() }] }
   await run(`${name} stream`, model, ask)
   const tool = { messages: [{ role: 'user', content: '北京天气怎么样？请调用工具查询。', timestamp: Date.now() }], tools: [weather] }

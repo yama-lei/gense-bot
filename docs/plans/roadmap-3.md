@@ -69,6 +69,7 @@ legacy/              旧版 web/，阶段 3 后删除
 | R32 | 断点恢复 | 回答过程中杀掉 Node 进程（或让 DO 被驱逐）→ 重启后回答从中断处继续，已显示的部分不丢 |
 | R33 | 现有功能 | 路线图 2 的 R1–R12、R17–R29 在新架构上重新通过。R13–R16、R30 由 R34–R41 替代；R22 改用 `deferred` 工具和 `tool_search` |
 | R34 | Drive 插件 | 定制页里 Drive 是一个插件，可开关、可配置。开启后：附件选择和 `@` 里有 Drive 文件，Skills 可以来自 Drive，有搜索和读取 Drive 的工具；关闭后这些都消失 |
+| R62 | 模型凭据 | 设置里每个 provider 可以“填 API key”或“登录订阅”。填 Kimi 或 OpenRouter 的 key → 模型列表出现它们的模型，能对话。自部署上点“登录 ChatGPT”→ 页面显示授权链接，授权后把授权码粘回 → 能用订阅里的模型；token 过期后自动刷新，对话不中断。Cloudflare 部署上只有 API key。退出登录后该 provider 的模型从列表消失。没配任何凭据时仍可用 `.env` 里的默认中转 |
 
 ### 树形会话（阶段 4）
 
@@ -147,7 +148,7 @@ interface Host {
   - 在 `blockConcurrencyWhile` 里打开 Harness。
   - 有任务运行时，用闹钟每 60 秒心跳一次，同时不晚于最早的 sleep。
   - 闹钟触发时调用 `resume()`。
-- 模型：pi-ai 的 `createModels()` 注册 `.env` 里的 OpenAI 兼容端点和 Anthropic 兼容端点。中转站的已知问题（[中转站问题](../research/openai-relay.md)）要在 pi-ai 上重新验证（V1）。
+- 模型：默认 provider 是 `.env` 里的中转（`PROVIDER_BASE_URL`、`PROVIDER_AUTH_TOKEN`、`DEFAULT_PROVIDER_MODEL`），用 `createProvider` 注册为 OpenAI Responses 接口。2026-10-23 起只有这一个中转，它兼容 Responses 和 Chat Completions，不提供 Anthropic 接口，模型是 GPT 系列和 GLM。用户自己的凭据见 D11。
 - 深度搜索：普通工具 `deep_search`，调用搜索 API（具体服务在阶段 3 选），由模型自己读结果、整理答案。不用 Responses 的托管 `web_search`，所以任何模型都能用。
 - 登录（2026-10-23 决定）：两种部署方式都用同一套邮箱加密码登录，实现在 `core` 里。
   - 用户表：`email`、密码哈希（scrypt，Workers 上用 WebCrypto 的 PBKDF2 也可以，二选一在阶段 1 定）、`createdAt`。不开放注册，用户由命令行或管理员页面创建。
@@ -280,6 +281,20 @@ Event {
   - 设置项：OAuth 连接、搜索范围、Artifacts 自动保存。
   - 提供 Drive 文件来源（附件、`@`）、Skills 来源（把 Drive Skills 同步到 `skills/`）和 `drive_search`/`drive_read` 工具。
 
+### D11 模型凭据（R62）
+
+- 用 pi-ai 内置的 provider 和认证，不自己写：每个 provider 自带 API key 解析、OAuth 登录和刷新（pi-ai README “OAuth Providers”“Credential Store”）。
+- 每个用户一个 `Models`，`credentials` 传入我们实现的 `CredentialStore`：存在宿主的 `SecretStore` 里，用 `TOKEN_ENCRYPTION_KEY` 加密。`list()` 只返回 provider 和类型，不解密。token 刷新在 `modify` 里串行，pi-ai 保证不会重复刷新。
+- 设置页：
+  - 列出 pi-ai 内置的 provider，每个显示“填 API key”，支持 OAuth 的另有“登录订阅”。
+  - 已配置的 provider 的模型进入模型选择列表；`.env` 的中转始终在列表里。
+- 订阅登录只在自部署上提供（pi-ai 的 OAuth 流程只能在 Node 上跑）：
+  - `models.login(provider, 'oauth', interaction)` 在服务端跑，`interaction` 通过 WebSocket 转给前端：`notify` 的 `auth_url`、`device_code` 显示成链接和验证码，`prompt` 显示成输入框。
+  - Anthropic 和 ChatGPT 默认回调到 `localhost`，服务器上收不到。走 `manual_code`：用户授权后把授权码粘回输入框。GitHub Copilot、xAI、Kimi 用设备码，不受影响。
+  - Cloudflare 上隐藏“登录订阅”。设备码流程能否在 Workers 上跑，到时候再验证。
+- 风险：把 Claude Pro/Max 这类个人订阅接到第三方应用，可能违反对方的服务条款。只给自己用；多用户部署时可以在配置里关掉订阅登录。
+- 密钥只在宿主侧使用，不进 transcript，也不进 sandbox（R59）。
+
 ### D9 前端协议
 
 - 每个浏览器连接一个 WebSocket 到用户的 Harness。前端订阅“当前树的树索引”和“当前分叉的 `watch()`”。
@@ -301,9 +316,9 @@ Event {
 
 | 编号 | 要验证的事 | 结果（2026-10-22） | 不通过时 |
 | --- | --- | --- | --- |
-| V1 | pi-ai 能通过我们的中转调用模型 | **基本通过。** OpenAI 中转（Responses API）和 Anthropic 中转都能：流式输出、工具调用、带工具结果继续对话、设置思考强度。用 `createProvider` 配置 `baseUrl` 和 `apiKey` 即可，不需要自定义 provider。**未验证：** Responses 的托管 `web_search` 工具（pi-ai 的工具只有函数形式，深度搜索可能要自己写一个 provider 或改成普通工具）；中转没有返回思考摘要（`reasoning` 用量为 0，与旧版行为一致）；OpenAI 中转的缓存读取只在极短的提示下测过（为 0，没有结论）。2026-10-23 决定：深度搜索改成普通工具（D1），不显示推理过程，这两项不再验证 | 给 pi-ai 写自定义 provider，或在中转前面加一层修正 |
+| V1 | pi-ai 能通过我们的中转调用模型 | **基本通过。** OpenAI 中转（Responses API）和 Anthropic 中转都能：流式输出、工具调用、带工具结果继续对话、设置思考强度。用 `createProvider` 配置 `baseUrl` 和 `apiKey` 即可，不需要自定义 provider。**未验证：** Responses 的托管 `web_search` 工具（pi-ai 的工具只有函数形式，深度搜索可能要自己写一个 provider 或改成普通工具）；中转没有返回思考摘要（`reasoning` 用量为 0，与旧版行为一致）；OpenAI 中转的缓存读取只在极短的提示下测过（为 0，没有结论）。2026-10-23 换成单个中转（只有 OpenAI 兼容接口）后重跑：流式、工具调用、工具结果、思考强度都通过。2026-10-23 决定：深度搜索改成普通工具（D1），不显示推理过程，这两项不再验证 | 给 pi-ai 写自定义 provider，或在中转前面加一层修正 |
 | V2 | pi-durable 能在 Workers Free 计划上运行：打包体积、CPU 时间、DO SQLite 适配器 | 未验证（阶段 2 开始前做） | Cloudflare 部署端降级，或评估 Workers Paid |
-| V3 | fork 出来的分叉能命中主线的 prompt cache | **通过。** Anthropic 中转上，主线和 fork 在同一前缀上的 `cacheRead` 都是 5191 个 token；fork 虽然有新的 provider session id，但缓存仍命中。因此子 agent 和用户分叉可以共用前缀，不必特意共享 session id | 让同一棵树的分叉共用 session id，或接受缓存未命中 |
+| V3 | fork 出来的分叉能命中主线的 prompt cache | **通过。** Anthropic 中转上，主线和 fork 在同一前缀上的 `cacheRead` 都是 5191 个 token；fork 虽然有新的 provider session id，但缓存仍命中。因此子 agent 和用户分叉可以共用前缀，不必特意共享 session id 2026-10-23 在新中转（OpenAI Responses）上重跑：主线 `cacheRead` 2338，fork 只有 444，只命中一部分。OpenAI 的缓存按 `prompt_cache_key`（会话 id）路由，fork 换了 id 就可能落到别的机器。阶段 4 开始前要验证“同一棵树共用 cache key”能否提高命中率 | 让同一棵树的分叉共用 session id，或接受缓存未命中 |
 | V4 | 自定义 entry kind 能作为“用户输入”提交，也能作为不触发运行的写入追加 | **通过。** `submit({type:"input", entry:{kind:"app.event",...}})` 照常触发一轮并得到回答，transcript 里记录的是 `app.event`；`submit({type:"write", entry:{kind:"app.note",...}})` 空闲时立即追加、不触发运行，模型看不到它的内容。fork 只带到 fork 点为止的记录。关闭并重新打开同一个 SQLite 文件后，根会话、历史和 fork 都在 | Event 改用普通用户输入，元数据另存宿主表 |
 | V5 | `watch()` 推给前端的数据量 | **通过。** 一轮 4000 字的流式回答约 26 帧、10.5 KB，最大一帧 4.6 KB；在已有 120 多条记录的会话里同样的回答是 26 帧、10.7 KB，所以帧大小不随历史增长。新连接拿到的完整快照约 57 KB（122 条记录）。多个分叉同时运行的情况未测 | 前端改为按需拉取，或合并帧 |
 | V6 | 后台子 agent 的写法（示例 23）在进程被杀后能正确恢复，并且只汇报一次 | 未验证（阶段 7 开始前做） | 调整锚点任务的写法 |
@@ -315,7 +330,7 @@ Event {
 | 0 | ADR-0004、本路线图 | — | 用户评审通过 |
 | 1 | `core` 骨架 + `hosts/node`：pi-ai 接中转、一个会话的对话、`watch()` 推到前端、faux provider 的 E2E 框架 | V1、V4、V5（已验证，见上） | 本地能流式对话；R32 在 Node 上通过 |
 | 2 | `hosts/cf` 追平阶段 1 | V2 | R31、R32 在 Cloudflare 上通过；在独立的预览地址上部署，线上仍是旧版 |
-| 3 | 现有功能迁移成 extension：网页、图片、插件配置、附件、`/` 和 `@`、Skills、生成式界面、文件面板、Drive 插件 | 1、2 | R33、R34；替换线上旧版 |
+| 3 | 现有功能迁移成 extension：网页、图片、插件配置、附件、`/` 和 `@`、Skills、生成式界面、文件面板、Drive 插件、模型凭据 | 1、2 | R33、R34、R62；替换线上旧版 |
 | 4 | 树形会话：树索引、分叉、版本切换、小地图、弹窗、总结给主线 | 3、V3 | R35–R41 |
 | 5 | 共用文件系统、读前检查、软隔离 | 4 | R42–R45 |
 | 6 | Event：卡片、唤醒、去重、定时任务、webhook | 4 | R46–R50 |

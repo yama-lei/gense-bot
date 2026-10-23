@@ -4,7 +4,7 @@
 
 ```bash
 cd spikes/pi && npm install
-node --env-file=../../.env v1/relay.mjs          # V1 中转站：流式、工具调用、工具结果、思考强度
+node --env-file=../../.env v1/relay.mjs          # V1 中转（PROVIDER_*）：流式、工具调用、工具结果、思考强度
 node --env-file=../../.env v4/entries-fork.mjs   # V3、V4：自定义 entry、被动写入、fork 命中缓存、重启
 node v5/watch.mjs                                # V5：watch() 的帧大小（faux provider，不需要密钥）
 ```

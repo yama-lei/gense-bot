@@ -3,7 +3,7 @@ import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context'
 import { AssistantEntry, createRegistry, defineEntry, defineExtension, section, Harness } from '@earendil-works/pi-durable'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
 import { rmSync } from 'node:fs'
-import { ANTHROPIC, relayModels } from '../lib/models.mjs'
+import { RELAY, relayModels } from '../lib/models.mjs'
 
 const File = '/tmp/pi-spike-v4.sqlite'
 for (const f of [File, File + '-wal', File + '-shm']) rmSync(f, { force: true })
@@ -24,7 +24,7 @@ const ask = async (c, content, extra = {}) => {
 const say = (ok, label, detail = '') => console.log(`${ok ? 'PASS' : 'FAIL'} ${label} ${detail}`)
 
 let h = await open()
-const root = await h.root(ctx, { agent: { model: ANTHROPIC } })
+const root = await h.root(ctx, { agent: { model: RELAY } })
 
 // V4a: an input recorded as a custom kind still starts a run and is answered.
 const r1 = await ask(root, '[事件] 子 agent “调研A” 已汇报：结论是 42。请用一句话复述。', {

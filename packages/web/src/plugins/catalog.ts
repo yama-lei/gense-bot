@@ -2,7 +2,7 @@ import type { PluginInfo, PluginSetting, PluginValue } from '../types'
 
 export type PluginEntry = Omit<PluginInfo, 'enabled' | 'available' | 'config' | 'issue'>
 
-/** Every plugin the customize page lists, with its settings; which are available depends on the backend (mock or server). */
+/** Every plugin the customize page lists, with its settings; which are available the host decides. */
 export const pluginCatalog: PluginEntry[] = [
   {
     id: 'files',

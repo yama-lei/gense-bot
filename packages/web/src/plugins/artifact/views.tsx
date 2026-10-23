@@ -3,7 +3,7 @@ import { IconCheck, IconCopy, IconDoc } from '../../components/Icons'
 import { Markdown } from '../../components/Markdown'
 import { href } from '../../router'
 import type { ViewProps } from '../types'
-import type { ArtifactInput } from './tools'
+import type { ArtifactInput } from '../contracts'
 
 type Saved = { fileId: string; name: string }
 

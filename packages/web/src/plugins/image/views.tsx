@@ -1,7 +1,7 @@
 import { IconArrowDown, IconCheck } from '../../components/Icons'
 import { href } from '../../router'
 import type { ViewProps } from '../types'
-import type { ImageInput, ImageResult } from './tools'
+import type { ImageInput, ImageResult } from '../contracts'
 
 const ratio: Record<string, string> = { '1536x1024': '3 / 2', '1024x1536': '2 / 3' }
 const extension = (mediaType: string) => ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/svg+xml': 'svg' })[mediaType] ?? 'png'

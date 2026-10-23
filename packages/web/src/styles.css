@@ -92,7 +92,6 @@ code, pre { font-family: var(--mono); }
 .app.collapsed .sidebar { margin-left: calc(-1 * var(--sidebar-w)); }
 .sb-head { display: flex; align-items: center; gap: 8px; padding: 2px 4px 10px; }
 .brand { font-family: var(--serif); font-size: 22px; font-weight: 600; letter-spacing: -.01em; }
-.mock-badge { margin-left: auto; font-size: 11px; padding: 1px 8px; border-radius: 99px; background: var(--warn-bg); color: var(--warn); font-weight: 600; }
 .sb-search { display: flex; align-items: center; gap: 8px; margin: 0 2px 8px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--muted); }
 .sb-search input { border: 0; outline: 0; background: transparent; flex: 1; min-width: 0; color: var(--text); }
 .sb-nav { display: flex; flex-direction: column; gap: 1px; }

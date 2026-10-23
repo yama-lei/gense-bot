@@ -44,7 +44,7 @@
 
 ## 分层
 
-monorepo，用 npm workspaces 管理。旧版（Think）在阶段 3 替换线上之前留在 `legacy/`，之后删除。
+monorepo，用 npm workspaces 管理。旧版（Think）和验证脚本已在 2026-10-23 按用户要求提前删除，迁移时从 git 标签 `legacy-final` 查阅旧代码。
 
 ```text
 packages/core/       平台无关，pi-durable + pi-ai
@@ -54,7 +54,6 @@ packages/web/        前端：订阅 watch() 推来的变化，渲染消息、�
 hosts/node/          自部署：SQLite 文件 · setTimeout · HTTP/WS · 本地目录 · Docker sandbox（bash）
 hosts/cf/            Cloudflare Free：DO SQLite · 闹钟唤醒 · Worker 路由 · DO SQLite 里的工作区（无 bash）
 sandbox/             Docker 镜像：slim 和 full
-legacy/              旧版 web/，阶段 3 后删除
 ```
 
 ## Spec（行为与验收）
@@ -312,7 +311,7 @@ Event {
 
 ## 实现前验证
 
-脚本在 [`spikes/pi/`](../../spikes/pi/)，依赖 pi-durable、pi-ai、chord 1.4.0。
+脚本曾在 `spikes/pi/`（见标签 `legacy-final`），依赖 pi-durable、pi-ai、chord 1.4.0。
 
 | 编号 | 要验证的事 | 结果（2026-10-22） | 不通过时 |
 | --- | --- | --- | --- |

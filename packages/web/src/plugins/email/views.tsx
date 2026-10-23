@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { IconAlert, IconCheck, IconMail } from '../../components/Icons'
 import type { ViewProps } from '../types'
-import type { DraftInput } from './tools'
+import type { DraftInput } from '../contracts'
 
 const labels: [keyof DraftInput, string][] = [
   ['to', '收件人'],
@@ -32,7 +32,7 @@ export function EmailDraftView({ toolInput, viewState, host }: ViewProps<DraftIn
       <div className="confirm-head">
         <IconMail />
         <strong>邮件草稿</strong>
-        {saved && <span className="status-chip succeeded">已存入草稿箱（Mock）</span>}
+        {saved && <span className="status-chip succeeded">已存入草稿箱</span>}
       </div>
       <dl>
         {labels.map(([key, label]) => (

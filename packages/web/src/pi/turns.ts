@@ -1,6 +1,7 @@
 // Projects a pi-durable conversation view onto the UI's turns: a user entry opens a turn and the assistant and tool
 // entries after it fill it. `pi.live` adds the streaming answer, `pi.inbox` the inputs still waiting.
 import { RUN_ERROR_KIND, type RunErrorData } from '@gense/core/protocol'
+import { tools } from '../plugins'
 import type { Effort, ToolCall, Turn } from '../types'
 
 type Block = { type: string; text?: string; id?: string; name?: string; arguments?: unknown }
@@ -58,7 +59,7 @@ export function toTurns(view: View, defaults: { model: string; effort: Effort })
       t.assistantMessage += (t.assistantMessage && text ? '\n\n' : '') + text
       if (m.provider && m.model) t.model = `${m.provider}:${m.model}`
       for (const b of typeof m.content === 'string' ? [] : m.content)
-        if (b.type === 'toolCall' && b.id) t.toolCalls.push({ id: b.id, name: b.name ?? 'tool', status: 'running', input: b.arguments ?? {}, origin: 'model' })
+        if (b.type === 'toolCall' && b.id) t.toolCalls.push({ id: b.id, name: b.name ?? 'tool', status: 'running', input: b.arguments ?? {}, origin: 'model', resourceUri: tools[b.name ?? '']?.resourceUri })
       if (m.stopReason === 'error') Object.assign(t, { status: 'failed', error: m.errorMessage || '模型请求失败' })
       if (m.stopReason === 'aborted') t.status = 'interrupted'
     } else if (e.kind === 'pi.tool-result' && m) {

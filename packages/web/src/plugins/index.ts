@@ -1,18 +1,19 @@
-// Plugin registry: tools by name, views by resourceUri.
-import { artifactTools } from './artifact/tools'
+// Plugin registry for the browser: which plugin a tool belongs to, and views by resourceUri.
 import { ArtifactView } from './artifact/views'
-import { coreTools } from './core/tools'
-import { emailTools } from './email/tools'
 import { EmailDraftView } from './email/views'
-import { filesTools } from './files/tools'
-import { imageTools } from './image/tools'
 import { ImageView } from './image/views'
-import type { PluginTool, View } from './types'
-import { uiTools } from './ui/tools'
+import type { View } from './types'
 import { UiView } from './ui/views'
-import { webTools } from './web/tools'
 
-export const tools: Record<string, PluginTool> = Object.fromEntries([...filesTools, ...artifactTools, ...emailTools, ...webTools, ...imageTools, ...uiTools, ...coreTools].map((t) => [t.name, t]))
+/** Tools the browser knows about; `resourceUri` is the view a call renders with. */
+export const tools: Record<string, { plugin: string; resourceUri?: string }> = {
+  artifact_create: { plugin: 'artifact', resourceUri: 'ui://artifact/view' },
+  artifact_save: { plugin: 'artifact' },
+  email_draft: { plugin: 'email', resourceUri: 'ui://email/draft' },
+  email_saveDraft: { plugin: 'email' },
+  image_generate: { plugin: 'image', resourceUri: 'ui://image/view' },
+  ui_render: { plugin: 'ui', resourceUri: 'ui://ui/render' },
+}
 
 /** Built-in React views. MCP Apps resources (`text/html;profile=mcp-app`) will render in a sandboxed iframe later. */
 export const views: Record<string, View> = {

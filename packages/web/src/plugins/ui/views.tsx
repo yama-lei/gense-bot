@@ -4,7 +4,7 @@ import type { ViewProps } from '../types'
 import type { UiBlock, UiCard, UiChart, UiGrid, UiInput } from './schema'
 
 // Renders `ui_render` trees with the app's styles (roadmap-2 R20/R21). The input was validated
-// on the server, but old messages or a mock may still carry nodes this version does not know:
+// on the server, but old messages may still carry nodes this version does not know:
 // those are skipped, never fatal.
 
 type Node = UiBlock | UiCard | UiGrid

@@ -1,4 +1,4 @@
-// Draft data model for the mock UI; see docs/specs/web-ui.md "数据模型草案".
+// The UI's data model; see docs/specs/web-ui.md "数据模型草案".
 
 export type TurnStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'interrupted'
 export type ToolStatus = 'running' | 'succeeded' | 'failed'
@@ -179,8 +179,6 @@ export interface DriveFile {
   /** Bytes; null for Google Docs, which have no stored size. */
   size: number | null
   modifiedTime: number
-  /** Only the mock keeps file text in its state; the real store reads it on demand. */
-  content?: string
 }
 
 export interface Schedule {

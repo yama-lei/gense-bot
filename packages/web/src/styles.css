@@ -256,6 +256,8 @@ code, pre { font-family: var(--mono); }
 .workspace-panel .side-panel-head { padding-left: 12px; }
 .ws-section { padding: 14px 16px 4px; }
 .ws-section-head { display: flex; align-items: baseline; gap: 8px; font-weight: 600; font-size: 14px; }
+.ws-section-head span { flex-shrink: 0; }
+.ws-section-head code { min-width: 0; overflow-wrap: anywhere; }
 .ws-hint { margin: 2px 0 8px; }
 .ws-empty { margin: 0 0 10px; padding: 12px; border: 1px dashed var(--border); border-radius: 10px; }
 .ws-list { list-style: none; margin: 0 0 8px; padding: 0; }
@@ -524,6 +526,7 @@ a.file-card:hover { background: var(--hover); }
 .section-head .section-title { margin: 0; }
 .schedule-form { display: flex; flex-direction: column; gap: 12px; margin-bottom: 8px; }
 .schedule-form .section-title { margin-bottom: 0; }
+.list.rows + .schedule-form { margin-top: 20px; }
 .schedule-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
 .schedule-form input { color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; background: var(--surface); outline: 0; min-height: 38px; }
 .schedule-form input:focus { border-color: var(--muted); }

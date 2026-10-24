@@ -780,20 +780,22 @@ export function CustomizeView({ store }: { store: Store }) {
 
         <h3 className="section-title">记忆</h3>
         <p className="muted small">助手在新会话中会应用这些规则。你可以随时修改或删除。</p>
-        <ul className="list rows">
-          {memories.map((m) => (
-            <li key={m.id} className="row">
-              <input
-                className="row-input"
-                value={m.text}
-                onChange={(e) => store.setState((s) => ({ ...s, memories: s.memories.map((x) => (x.id === m.id ? { ...x, text: e.target.value } : x)) }))}
-              />
-              <button className="icon-btn" aria-label="删除记忆" onClick={() => store.setState((s) => ({ ...s, memories: s.memories.filter((x) => x.id !== m.id) }))}>
-                <IconTrash width={16} height={16} />
-              </button>
-            </li>
-          ))}
-        </ul>
+        {memories.length > 0 && (
+          <ul className="list rows">
+            {memories.map((m) => (
+              <li key={m.id} className="row">
+                <input
+                  className="row-input"
+                  value={m.text}
+                  onChange={(e) => store.setState((s) => ({ ...s, memories: s.memories.map((x) => (x.id === m.id ? { ...x, text: e.target.value } : x)) }))}
+                />
+                <button className="icon-btn" aria-label="删除记忆" onClick={() => store.setState((s) => ({ ...s, memories: s.memories.filter((x) => x.id !== m.id) }))}>
+                  <IconTrash width={16} height={16} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         <form
           className="inline-form"
           onSubmit={(e) => {

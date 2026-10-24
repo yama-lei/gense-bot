@@ -139,7 +139,7 @@ export const pluginCatalog: PluginEntry[] = [
       {
         key: 'image',
         label: '镜像',
-        help: '切换后下次启动沙箱时生效',
+        help: '从下一条命令起生效，已安装的依赖和文件保留',
         kind: 'select',
         options: [
           { value: 'slim', label: '精简：Python、Node、git、uv 和常用命令行工具' },

@@ -607,8 +607,10 @@ function MoreMenu({ turn, actions }: { turn: Turn; actions: TurnActions }) {
   )
 }
 
-function ToolOutput({ text }: { text: string }) {
+function ToolOutput({ text: raw }: { text: string }) {
   const [open, setOpen] = useState(false)
+  // The runtime wraps its own notes (exit code, truncation) in <harness> tags meant for the model.
+  const text = raw.replace(/<harness>\s*([\s\S]*?)\s*<\/harness>/g, '$1').trim()
   const long = text.length > 240 || text.split('\n').length > 4
   return (
     <div className="tool-output">

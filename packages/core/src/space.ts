@@ -1037,6 +1037,11 @@ export class UserSpace {
 
   private webhookInfo = ({ secret: _, ...r }: WebhookRow): WebhookInfo => ({ ...r, path: `${this.options.hooksPath?.()}/${r.id}` })
 
+  /** Webhook secrets are sealed, so creating one needs the host's TOKEN_ENCRYPTION_KEY. */
+  get canCreateWebhooks() {
+    return !!this.sealer
+  }
+
   async webhooks(): Promise<WebhookInfo[]> {
     if (!this.options.hooksPath?.()) return []
     return (await this.db.all<WebhookRow>('SELECT id, treeId, secret, createdAt, lastUsedAt FROM webhooks ORDER BY createdAt')).map(this.webhookInfo)

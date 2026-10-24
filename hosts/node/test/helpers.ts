@@ -47,6 +47,7 @@ export class Client {
   providers: ProviderState[] = []
   schedules: ScheduleInfo[] = []
   webhooks: WebhookInfo[] = []
+  canCreateWebhooks = false
   /** Login prompts the host is waiting on, by prompt id. */
   readonly prompts = new Map<string, { loginId: string; prompt: LoginPrompt }>()
   /** Every message received, as sent, to check what never reaches the browser. */
@@ -81,7 +82,7 @@ export class Client {
     if (m.t === 'models') this.models = m.models
     if (m.t === 'providers') this.providers = m.providers
     if (m.t === 'schedules') this.schedules = m.schedules
-    if (m.t === 'webhooks') this.webhooks = m.webhooks
+    if (m.t === 'webhooks') (this.webhooks = m.webhooks), (this.canCreateWebhooks = m.canCreate)
     if (m.t === 'auth.prompt') this.prompts.set(m.promptId, { loginId: m.loginId, prompt: m.prompt })
     if (m.t === 'auth.prompt.done') this.prompts.delete(m.promptId)
     if (m.t === 'branches') {
@@ -535,6 +536,7 @@ export async function eventsScenario(client: Client, url: string) {
   await client.until(() => idle(main) && entries().some((e) => e.kind === 'pi.assistant'), 15_000, 'first answer')
 
   // R50: only a signed call gets in, and it wakes the main branch.
+  assert.equal(client.canCreateWebhooks, true, 'the page offers webhooks when the host can seal secrets')
   const { webhook, secret } = await client.request<{ webhook: WebhookInfo; secret: string }>({ t: 'webhook.create', treeId: tree.id })
   await client.until(() => client.webhooks.some((w) => w.id === webhook.id), 5000, 'webhook listed')
   assert.ok(!client.raw.some((m) => m.includes(secret) && !m.includes('"reply"')), 'the secret is only in the reply')

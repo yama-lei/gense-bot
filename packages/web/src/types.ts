@@ -234,6 +234,8 @@ export interface AppState {
   schedules: Schedule[]
   /** One per conversation at most (R50). */
   webhooks: WebhookInfo[]
+  /** False when the server cannot seal webhook secrets (no TOKEN_ENCRYPTION_KEY). */
+  canCreateWebhooks: boolean
   plugins: PluginInfo[]
   skills: SkillInfo[]
   /** Model services the user can sign in to; their models join `models`. */

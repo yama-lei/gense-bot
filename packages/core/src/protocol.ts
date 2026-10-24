@@ -238,7 +238,8 @@ export type ServerMessage =
   | { t: 'plugins'; plugins: PluginState[] }
   | { t: 'skills'; skills: SkillInfo[] }
   | { t: 'schedules'; schedules: ScheduleInfo[] }
-  | { t: 'webhooks'; webhooks: WebhookInfo[] }
+  /** `canCreate` is false when the host has no TOKEN_ENCRYPTION_KEY to seal a webhook's secret. */
+  | { t: 'webhooks'; webhooks: WebhookInfo[]; canCreate: boolean }
   /** The watched branch's whole view; later `ops` apply to it. Sent on watch and whenever the host restarts the stream. */
   | { t: 'view'; treeId: string; branchId: string; value: unknown }
   /** Chord operations of one commit, encoded with a per-watch encoder; decode with a decoder reset at each `view`. */

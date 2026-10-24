@@ -19,6 +19,7 @@ export interface SocketState {
   skills: SkillInfo[]
   schedules: ScheduleInfo[]
   webhooks: WebhookInfo[]
+  canCreateWebhooks: boolean
   /** Model services the user can sign in to (R62). */
   providers: ProviderState[]
   connected: boolean
@@ -35,7 +36,7 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 export type Request = DistributiveOmit<ClientRequest, 'id'>
 
 export class HostSocket {
-  state: SocketState = { email: '', models: [], defaultModel: null, trees: null, views: {}, branches: {}, shown: {}, plugins: null, skills: [], schedules: [], webhooks: [], providers: [], connected: false }
+  state: SocketState = { email: '', models: [], defaultModel: null, trees: null, views: {}, branches: {}, shown: {}, plugins: null, skills: [], schedules: [], webhooks: [], canCreateWebhooks: true, providers: [], connected: false }
   #ws: WebSocket | undefined
   #next = 1
   #pending = new Map<number, { resolve(v: unknown): void; reject(e: Error): void }>()
@@ -113,7 +114,7 @@ export class HostSocket {
       case 'schedules':
         return this.#set({ schedules: m.schedules })
       case 'webhooks':
-        return this.#set({ webhooks: m.webhooks })
+        return this.#set({ webhooks: m.webhooks, canCreateWebhooks: m.canCreate })
       case 'trees':
         return this.#set({ trees: m.trees })
       case 'branches': {

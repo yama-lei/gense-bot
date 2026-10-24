@@ -48,7 +48,7 @@ export class Connection {
     )
     const automations = async () => {
       this.#send({ t: 'schedules', schedules: await space.schedules() })
-      this.#send({ t: 'webhooks', webhooks: await space.webhooks() })
+      this.#send({ t: 'webhooks', webhooks: await space.webhooks(), canCreate: space.canCreateWebhooks })
     }
     this.#unsubscribe.push(space.subscribeAutomations(() => void automations().catch(() => {})))
     this.#send({ t: 'plugins', plugins: space.plugins.list() })

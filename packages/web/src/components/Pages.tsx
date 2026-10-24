@@ -447,9 +447,14 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 /** Schedules (R49) and webhooks (R50): both send a conversation an Event, which it answers like a message. */
 export function ScheduledView({ store }: { store: Store }) {
-  const { schedules, webhooks, conversations } = store.state
-  const title = (id: string) => conversations.find((c) => c.id === id)?.title || '未命名会话'
-  const chats = conversations.map((c) => ({ value: c.id, label: c.title || '未命名会话' }))
+  const { schedules, webhooks, canCreateWebhooks, conversations } = store.state
+  // Conversations that share a title also show when they were last active, so the pickers can tell them apart.
+  const label = (c: (typeof conversations)[number]) => c.title || '未命名会话'
+  const chats = conversations.map((c) => ({
+    value: c.id,
+    label: conversations.filter((x) => label(x) === label(c)).length > 1 ? `${label(c)} · ${when(c.updatedAt)}` : label(c),
+  }))
+  const title = (id: string) => chats.find((c) => c.value === id)?.label ?? '未命名会话'
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
   const [error, setError] = useState<string | null>(null)
   return (
@@ -487,7 +492,7 @@ export function ScheduledView({ store }: { store: Store }) {
 
         <h3 className="section-title">Webhook</h3>
         <p className="muted small">外部服务（CI、监控、表单）用签名的 POST 请求给会话发事件。每个会话一个地址，重新生成会让旧地址失效。</p>
-        <WebhookSection store={store} chats={chats} title={title} webhooks={webhooks} />
+        <WebhookSection store={store} chats={chats} title={title} webhooks={webhooks} canCreate={canCreateWebhooks} />
       </div>
     </div>
   )
@@ -610,7 +615,7 @@ function ScheduleForm({ store, chats, tz }: { store: Store; chats: Chat[]; tz: s
   )
 }
 
-function WebhookSection({ store, chats, title, webhooks }: { store: Store; chats: Chat[]; title: (id: string) => string; webhooks: WebhookInfo[] }) {
+function WebhookSection({ store, chats, title, webhooks, canCreate }: { store: Store; chats: Chat[]; title: (id: string) => string; webhooks: WebhookInfo[]; canCreate: boolean }) {
   const [treeId, setTreeId] = useState(chats[0]?.value ?? '')
   const [created, setCreated] = useState<{ webhook: WebhookInfo; secret: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -636,7 +641,7 @@ function WebhookSection({ store, chats, title, webhooks }: { store: Store; chats
                 <code className="small ellipsis">{url(w)}</code>
                 <span className="muted small">{w.lastUsedAt ? `上次调用 ${when(w.lastUsedAt)}` : '还没有调用过'}</span>
               </div>
-              <button className="btn" title="生成新的地址和密钥，旧的立即失效" onClick={() => generate(w.treeId)}>
+              <button className="btn" title="生成新的地址和密钥，旧的立即失效" disabled={!canCreate} onClick={() => generate(w.treeId)}>
                 <IconRetry width={15} height={15} /> 重新生成
               </button>
               <button className="icon-btn" aria-label="删除 Webhook" onClick={() => void store.deleteWebhook(w.id).catch((e: unknown) => setError(message(e)))}>
@@ -646,7 +651,9 @@ function WebhookSection({ store, chats, title, webhooks }: { store: Store; chats
           ))}
         </ul>
       )}
-      {chat ? (
+      {!canCreate ? (
+        <p className="notice">服务器没有配置 TOKEN_ENCRYPTION_KEY，不能生成 Webhook（它的密钥要加密保存）。请管理员配置后重启。</p>
+      ) : chat ? (
         <div className="inline-form webhook-new">
           <Select label="会话" value={chat} options={free} onChange={setTreeId} />
           <button className="btn primary" onClick={() => generate(chat)}>

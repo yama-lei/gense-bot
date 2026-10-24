@@ -3,13 +3,14 @@
 // read or wrote; `write`, `edit` and `delete` refuse an existing file the ledger does not know, or one whose content
 // no longer matches. A change by another branch, the user's file panel or `bash` shows up as a different hash.
 //
-// The file tools also stay inside the tree's directory; the shared Skills are read-only. `bash` is not limited (D7).
+// The file tools also stay inside the tree's directory; the shared Skills and the sandbox's /tmp are read-only. `bash` is not limited (D7).
 import type { Context } from '@earendil-works/chord/context'
 import { defineDoc, defineTool, type ToolExecutionApi, type ToolRegistration } from '@earendil-works/pi-durable'
 import type { ExecutionEnv } from '@earendil-works/pi-durable/env'
 import { createEditTool, createWriteTool } from '@earendil-works/pi-durable/tools'
 import { Type } from 'typebox'
 import { createDocumentReadTool } from './documents.ts'
+import { MountedEnv } from './fs/mounted-env.ts'
 import { isUnder, normalizePath } from './fs/paths.ts'
 import { SKILLS_DIR } from './workspace.ts'
 
@@ -49,8 +50,9 @@ async function resolve(env: ExecutionEnv, path: string, write: boolean, ctx: Con
   const abs = normalizePath(real.ok ? real.value : absolute.value)
   const root = normalizePath(env.cwd)
   if (isUnder(abs, root) && abs !== root) return absolute.value
-  if (!write && isUnder(abs, SKILLS_DIR)) return absolute.value
-  throw new Error(write ? `只能修改本会话工作区（${root}）里的文件` : `只能读取本会话工作区（${root}）和 Skills（${SKILLS_DIR}）里的文件`)
+  const readable = [SKILLS_DIR, ...(env instanceof MountedEnv ? env.readOnlyMounts : [])]
+  if (!write && readable.some((dir) => isUnder(abs, dir))) return absolute.value
+  throw new Error(write ? `只能修改本会话工作区（${root}）里的文件` : `只能读取本会话工作区（${root}）和 ${readable.join('、')} 里的文件`)
 }
 
 const record = (api: ToolExecutionApi, path: string, hash: string | null, ctx: Context) =>

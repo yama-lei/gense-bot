@@ -23,6 +23,8 @@ export interface MountOptions {
   target: string
   /** Virtual working directory. */
   cwd: string
+  /** A second directory the file tools may only read, such as the sandbox's `/tmp`; checked before the main mount. */
+  readOnly?: { mount: string; target: string }
 }
 
 
@@ -33,11 +35,13 @@ export class MountedEnv implements ExecutionEnv {
   readonly #inner: ExecutionEnv
   readonly #mount: string
   readonly #target: string
+  readonly #readOnly: MountOptions['readOnly']
 
   constructor(inner: ExecutionEnv, options: MountOptions) {
     this.#inner = inner
     this.#mount = options.mount
     this.#target = options.target
+    this.#readOnly = options.readOnly
     this.cwd = options.cwd
     this.id = `${inner.id}:${options.mount}`
   }
@@ -45,12 +49,21 @@ export class MountedEnv implements ExecutionEnv {
   /** The inner path of a virtual one. */
   toInner(path: string) {
     const abs = resolvePath(this.cwd, path)
+    const ro = this.#readOnly
+    if (ro && isUnder(abs, ro.mount)) return ro.target + abs.slice(ro.mount.length)
     return isUnder(abs, this.#mount) ? this.#target + abs.slice(this.#mount.length) : abs
   }
 
   /** The virtual path of an inner one. */
   toOuter(path: string) {
+    const ro = this.#readOnly
+    if (ro && isUnder(path, ro.target)) return ro.mount + path.slice(ro.target.length)
     return isUnder(path, this.#target) ? this.#mount + path.slice(this.#target.length) : path
+  }
+
+  /** Virtual directories the file tools may read but not change, besides the Skills. */
+  get readOnlyMounts(): string[] {
+    return this.#readOnly ? [this.#readOnly.mount] : []
   }
 
   #info = (info: FileInfo): FileInfo => ({ ...info, path: this.toOuter(info.path) })

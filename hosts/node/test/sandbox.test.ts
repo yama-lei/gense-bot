@@ -51,15 +51,16 @@ async function session(user = 0) {
   await client.request({ t: 'watch', treeId: tree.id })
   const results = () => client.views.get(tree.id)?.entries.filter((e) => e.kind === 'pi.tool-result') ?? []
   let n = 0
-  const bash = async (command: string, timeout?: number) => {
+  const tool = async (name: string, args: object) => {
     const count = results().length
-    await client.request({ t: 'send', treeId: tree.id, text: `[工具 bash] ${JSON.stringify({ command, timeout })}`, requestId: `b${++n}` })
-    const result = await client.until(() => results()[count], 120_000, `bash: ${command}`)
+    await client.request({ t: 'send', treeId: tree.id, text: `[工具 ${name}] ${JSON.stringify(args)}`, requestId: `b${++n}` })
+    const result = await client.until(() => results()[count], 120_000, `${name}: ${JSON.stringify(args)}`)
     // Wait for the answer, so the next send is not queued behind this run.
     await client.until(() => client.branches.get(tree.id)?.branches.every((b) => b.status !== 'running'), 30_000, 'idle')
     return { text: textOf(result), error: !!result.model?.[0]?.isError }
   }
-  return { client, tree, bash }
+  const bash = (command: string, timeout?: number) => tool('bash', { command, timeout })
+  return { client, tree, bash, tool }
 }
 
 const sandboxOf = (user: number) => [...server.sandboxes.values()][user]!
@@ -84,6 +85,21 @@ open('plot.png','wb').write(b'\\x89PNG\\r\\n\\x1a\\n'+chunk(b'IHDR',struct.pack(
   const failed = await bash('echo before; exit 3')
   assert.equal(failed.error, true)
   assert.match(failed.text, /before/)
+  client.close()
+})
+
+test('R57: read opens what a command left in /tmp, which the file tools cannot change', { skip: !ready, timeout: 120_000 }, async () => {
+  const { client, bash, tool } = await session()
+  assert.equal((await bash('mkdir -p /tmp/crab && echo 螃蟹 > /tmp/crab/note.txt')).error, false)
+  const read = await tool('read', { path: '/tmp/crab/note.txt' })
+  assert.equal(read.error, false, read.text)
+  assert.match(read.text, /螃蟹/)
+  const write = await tool('write', { path: '/tmp/crab/note.txt', content: 'x' })
+  assert.equal(write.error, true)
+  assert.match(write.text, /只能修改本会话工作区/)
+  // Not the host's /tmp.
+  const host = await tool('read', { path: '/tmp/../etc/hostname' })
+  assert.equal(host.error, true)
   client.close()
 })
 

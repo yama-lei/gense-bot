@@ -23,6 +23,7 @@ export function sandboxExtension(_config: () => Record<string, PluginValue>) {
         [
           '你可以用 bash 在用户自己的 Linux 沙箱里运行命令，当前目录就是本会话工作区，生成的文件用户能在文件面板里看到。',
           '沙箱里有 Python 3、Node、git、uv、rg 等工具，可以联网，可以用 pip install --user、uv、npm 安装依赖；没有 root 权限，不能 apt install。',
+          '给用户的文件放在工作区；/tmp 里的文件你也能用 read 读取（例如检查生成的图片），但用户看不到，沙箱重启后会清空。',
           `命令默认 ${BASH_TIMEOUT} 秒超时，耗时更长的用 timeout 参数加长；不要启动常驻的服务。沙箱里没有任何密钥，需要密钥的事用对应的工具做。`,
         ].join('\n'),
       ),

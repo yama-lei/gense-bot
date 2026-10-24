@@ -7,7 +7,7 @@ import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node'
 import { DATA_DIR, MountedEnv, SKILLS_DIR } from '@gense/core'
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdir, rename } from 'node:fs/promises'
+import { mkdir, rename, rm } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { promisify } from 'node:util'
 
@@ -31,6 +31,9 @@ export interface SandboxOptions {
 /** Private, link-local and shared address ranges the container may not reach: the host's ports and the LAN (D7). */
 const BLOCKED = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '169.254.0.0/16', '100.64.0.0/10', '0.0.0.0/8', '224.0.0.0/4', '240.0.0.0/4']
 export const NETWORK = 'gense-sandbox'
+/** The container's /tmp lives in the user's directory, so `read` can open what a command left there. */
+export const SANDBOX_TMP = '/tmp'
+export const tmpDir = (root: string) => join(root, '.tmp')
 const PROXY_VARS = ['HTTP_PROXY', 'HTTPS_PROXY', 'FTP_PROXY', 'NO_PROXY', 'ALL_PROXY'].flatMap((v) => [v, v.toLowerCase()])
 
 /** What the docker CLI needs from the host's environment; nothing else reaches it, so no secret can (R59). */
@@ -95,7 +98,9 @@ export class Sandbox {
     })
     await ensureNetwork()
     await docker(['rm', '-f', this.name]).catch(() => {})
-    for (const dir of ['skills', '.cache', '.local', '.home']) await mkdir(join(root, dir), { recursive: true })
+    // A fresh /tmp for each container, as a reboot would leave it.
+    await rm(tmpDir(root), { recursive: true, force: true })
+    for (const dir of ['skills', '.cache', '.local', '.home', '.tmp']) await mkdir(join(root, dir), { recursive: true })
     const uid = process.getuid?.() ?? 1000
     const gid = process.getgid?.() ?? 1000
     await docker([
@@ -107,6 +112,7 @@ export class Sandbox {
       '--cpus', this.#options.cpus ?? '2', '--pids-limit', String(this.#options.pids ?? 512),
       '--mount', `type=bind,src=${root},dst=${DATA_DIR}`,
       '--mount', `type=bind,src=${join(root, 'skills')},dst=${SKILLS_DIR},readonly`,
+      '--mount', `type=bind,src=${tmpDir(root)},dst=${SANDBOX_TMP}`,
       // The docker CLI adds the host's proxy settings; they point at the host, which the sandbox cannot reach.
       ...PROXY_VARS.flatMap((v) => ['--env', `${v}=`]),
       image, 'sleep', 'infinity',
@@ -198,7 +204,7 @@ export class SandboxedEnv extends MountedEnv {
   readonly #sandbox: Sandbox
 
   constructor(inner: ExecutionEnv, sandbox: Sandbox, options: { target: string; cwd: string }) {
-    super(inner, { mount: DATA_DIR, ...options })
+    super(inner, { mount: DATA_DIR, ...options, readOnly: { mount: SANDBOX_TMP, target: tmpDir(options.target) } })
     this.#sandbox = sandbox
   }
 

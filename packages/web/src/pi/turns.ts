@@ -56,6 +56,8 @@ const withInput = (turn: Turn, input: ReturnType<typeof userInput>) => {
   return turn
 }
 
+const modelCall = (b: Block): ToolCall => ({ id: b.id!, name: b.name ?? 'tool', status: 'running', input: b.arguments ?? {}, origin: 'model', resourceUri: tools[b.name ?? '']?.resourceUri })
+
 const reasonText: Record<string, string> = { stale: '服务重启，这条消息没有完成', aborted: '已停止' }
 
 export function toTurns(view: View, defaults: { model: string; effort: Effort }): Turn[] {
@@ -97,7 +99,7 @@ export function toTurns(view: View, defaults: { model: string; effort: Effort })
       t.assistantMessage += (t.assistantMessage && text ? '\n\n' : '') + text
       if (m.provider && m.model) t.model = `${m.provider}:${m.model}`
       for (const b of typeof m.content === 'string' ? [] : m.content)
-        if (b.type === 'toolCall' && b.id) t.toolCalls.push({ id: b.id, name: b.name ?? 'tool', status: 'running', input: b.arguments ?? {}, origin: 'model', resourceUri: tools[b.name ?? '']?.resourceUri })
+        if (b.type === 'toolCall' && b.id) t.toolCalls.push(modelCall(b))
       if (m.stopReason === 'error') Object.assign(t, { status: 'failed', error: m.errorMessage || '模型请求失败' })
       if (m.stopReason === 'aborted') t.status = 'interrupted'
     } else if (e.kind === 'pi.tool-result' && m) {
@@ -128,6 +130,11 @@ export function toTurns(view: View, defaults: { model: string; effort: Effort })
     const partial = textOf(live.generation?.message?.content)
     if (abortedFrom !== undefined) last.assistantMessage = last.assistantMessage.slice(0, abortedFrom)
     if (partial) last.assistantMessage += (last.assistantMessage ? '\n\n' : '') + partial
+    // Tool calls the model is still writing; pi-ai parses their arguments as they stream (R72).
+    const content = live.generation?.message?.content
+    for (const b of typeof content === 'string' ? [] : (content ?? []))
+      if (b.type === 'toolCall' && b.id && !last.toolCalls.some((c) => c.id === b.id))
+        last.toolCalls.push(modelCall(b))
   }
   for (const t of turns)
     if (t.status !== 'running') t.toolCalls = t.toolCalls.map((c) => (c.status === 'running' ? { ...c, status: 'failed', result: { content: '未完成', isError: true } } : c))

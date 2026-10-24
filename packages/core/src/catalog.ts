@@ -61,7 +61,7 @@ export const pluginCatalog: PluginEntry[] = [
   {
     id: 'ui',
     name: '界面',
-    description: '用卡片、表格和图表展示回答，界面中的按钮可以继续对话。',
+    description: '用卡片、表格、图表、照片和地图展示回答，还能做计算器、清单等可以直接操作的小页面；表单可以发回给助手。',
     sideEffect: false,
     settings: [
       {

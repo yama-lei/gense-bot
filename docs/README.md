@@ -14,6 +14,7 @@
 8. [路线图 2](plans/roadmap-2.md) 与 [ADR-0003](adr/0003-free-plan-agent-features.md)：网页搜索、文件、会话树、命令、Skills、生成式界面的分层计划和开发顺序。
 9. [OpenAI 兼容中转站的已知问题](research/openai-relay.md)：注入的托管工具、`item_reference`、生图参数，以及现有的绕开方式。
 10. [路线图 3](plans/roadmap-3.md) 与 [ADR-0004](adr/0004-pi-durable-portable-core.md)（2026-10-23 评审通过）：改用 pi-durable、Cloudflare 与自部署两种部署方式、树形会话、Event、子 agent、自部署 sandbox。
+11. [生成式界面改用 OpenUI](plans/openui.md)（2026-10-23）：OpenUI Lang 程序、从 open-intelligent-ui 移植的组件库、校验与纠错。安装依赖时设 `OPENUI_TELEMETRY_DISABLED=1`，否则 `@openuidev/lang-core` 的 postinstall 会发送安装统计。
 
 原始课程材料保留在 [实验 1](intents/lab1.md) 和 [实验 2](intents/lab2.md)。它们提供长期方向，不代表其中每项功能都属于第一版交付范围。
 

@@ -73,6 +73,7 @@ import { attachmentsText, commandText, mentionsText, parseNote, type CommandNote
 import { skillsSection, SkillStore } from './skills.ts'
 import { webExtension } from './plugins/web.ts'
 import { json } from './http.ts'
+import { findPhotos, streetRoute } from './plugins/genui/lookup.ts'
 
 const DEFAULT_TITLE = '新对话'
 
@@ -458,6 +459,16 @@ export class UserSpace {
   /** A tool called by a view rather than the model (MCP Apps `tools/call`); only the ones a view needs. */
   async callTool(treeId: string, name: string, args: unknown, ctx: Context = BACKGROUND_CONTEXT): Promise<ToolCallResult> {
     await this.row(treeId)
+    const input = (args ?? {}) as Record<string, unknown>
+    if (name === 'ui_photos' || name === 'ui_route') {
+      if (!this.plugins.active().includes('ui')) throw new Error('界面插件已关闭')
+      if (name === 'ui_photos') {
+        const images = await findPhotos(String(input.query ?? ''))
+        return { content: `找到 ${images.length} 张照片`, structuredContent: { images } }
+      }
+      const points = await streetRoute(String(input.coords ?? ''))
+      return { content: `路线有 ${points.length} 个点`, structuredContent: { points } }
+    }
     if (name !== 'artifact_save') throw new Error(`界面不能调用 ${name}`)
     if (!this.plugins.active().includes('artifact')) throw new Error('Artifact 插件已关闭')
     if (!Value.Check(artifactInput, args)) throw new Error('参数无效')

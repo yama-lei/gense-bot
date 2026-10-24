@@ -272,13 +272,16 @@ export async function pluginScenario(client: Client, upstream: { keys: string[] 
   assert.equal(other.structuredContent.path, `/data/sessions/${tree.id}/artifacts/提纲 (2).md`)
   await assert.rejects(client.request({ t: 'tool.call', treeId: tree.id, name: 'write', args: {} }), /不能调用/)
 
-  // Generative UI: a valid tree is shown as is, an invalid one is refused before the tool runs.
+  // Generative UI: a program that parses is shown, one with errors comes back to the model with what to fix (R71).
   await client.request({ t: 'plugin.set', pluginId: 'ui', enabled: true })
-  const ui = { title: '对比', blocks: [{ type: 'stat', label: '价格', value: '¥5' }] }
-  const rendered = await ask(`[工具 ui_render] ${JSON.stringify(ui)}`, 6)
-  assert.deepEqual(rendered.model![0]!.details, ui)
-  const bad = await ask('[工具 ui_render] {"blocks":[{"type":"video"}]}', 7)
+  const rendered = await ask(`[工具 ui_render] ${JSON.stringify({ program: 'root = Col([t])\nt = Title("对比")' })}`, 6)
+  assert.equal(rendered.model![0]!.isError, false)
+  const bad = await ask(`[工具 ui_render] ${JSON.stringify({ program: 'root = Col([t, Foo()])\nt = Title()' })}`, 7)
   assert.equal(bad.model![0]!.isError, true)
+  assert.match(JSON.stringify(bad.model![0]!.content), /missing required field.*Unknown component \\"Foo/s)
+  // The page's photo and route lookups check their input before going out.
+  await assert.rejects(client.request({ t: 'tool.call', treeId: tree.id, name: 'ui_photos', args: { query: 'x' } }), /2 到 200/)
+  await assert.rejects(client.request({ t: 'tool.call', treeId: tree.id, name: 'ui_route', args: { coords: '1,2' } }), /lng,lat/)
 
   await client.request({ t: 'plugin.set', pluginId: 'web', enabled: false })
   await client.until(() => plugin('web')?.enabled === false, 5_000, 'web disabled')

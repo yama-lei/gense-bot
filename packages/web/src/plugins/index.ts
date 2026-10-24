@@ -12,6 +12,9 @@ export const tools: Record<string, { plugin: string; resourceUri?: string }> = {
   email_draft: { plugin: 'email', resourceUri: 'ui://email/draft' },
   image_generate: { plugin: 'image', resourceUri: 'ui://image/view' },
   ui_render: { plugin: 'ui', resourceUri: 'ui://ui/render' },
+  // Lookups the page makes through tool.call; the model never sees them.
+  ui_photos: { plugin: 'ui' },
+  ui_route: { plugin: 'ui' },
 }
 
 /** Built-in React views. MCP Apps resources (`text/html;profile=mcp-app`) will render in a sandboxed iframe later. */
@@ -23,4 +26,4 @@ export const views: Record<string, View> = {
 }
 
 /** Views that render from the input alone, while the call runs (a placeholder until the result). */
-export const liveViews = new Set(['ui://image/view'])
+export const liveViews = new Set(['ui://image/view', 'ui://ui/render'])

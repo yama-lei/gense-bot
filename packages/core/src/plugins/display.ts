@@ -6,7 +6,8 @@ import { getOrThrow, type ExecutionEnv } from '@earendil-works/pi-durable/env'
 import { Type, type Static } from 'typebox'
 import type { PluginValue } from '../catalog.ts'
 import { safeName } from '../workspace.ts'
-import { uiInput } from './ui-schema.ts'
+import { createParser } from '@openuidev/lang-core'
+import { UI_PROMPT, UI_ROOT, UI_SCHEMA, UI_SIGNATURES } from './genui/generated.ts'
 
 export const artifactInput = Type.Object({
   title: Type.String({ minLength: 1, maxLength: 120, description: '产物标题，也用作保存时的文件名' }),
@@ -87,25 +88,46 @@ export function emailExtension() {
   })
 }
 
+export const uiInput = Type.Object({
+  program: Type.String({ minLength: 1, maxLength: 60_000, description: 'openui-lang 程序，第一行是 root = Col(...)' }),
+})
+export type UiInput = Static<typeof uiInput>
+
+let parser: ReturnType<typeof createParser> | undefined
+
+/** What is wrong with a program, one line each, for the model to fix (docs/plans/openui.md R71); empty when it renders. */
+export function checkProgram(program: string) {
+  parser ??= createParser(UI_SCHEMA as never, UI_ROOT)
+  const result = parser.parse(program)
+  const problems = result.meta.errors.filter((e) => e.severity !== 'warning').map((e) => `${e.statementId ? `${e.statementId}: ` : ''}${e.message}`)
+  for (const name of result.meta.unresolved) problems.push(`${name}: 引用了但没有定义`)
+  if (!result.root && !problems.length) problems.push(`没有根节点：第一行要写 root = ${UI_ROOT}(...)`)
+  // Type errors name the field but not the call's shape; the signature saves the model a guess.
+  const wrong = new Set(result.meta.errors.filter((e) => e.severity !== 'warning' && !e.message.includes('signature:')).map((e) => e.component))
+  for (const name of wrong) if (UI_SIGNATURES[name]) problems.push(`${name} 的签名：${UI_SIGNATURES[name]}`)
+  return { problems, orphaned: result.meta.orphaned }
+}
+
 export function uiExtension(config: () => Record<string, PluginValue>) {
   return defineExtension({
     name: 'ui',
     tools: [
       defineTool({
         name: 'ui_render',
-        description:
-          '在回答中插入一块界面：卡片、网格、统计数字、表格、图表（柱状/折线/饼图）、提示框和按钮。适合对比多个选项、展示数据和趋势、给出可点选的下一步；简单问答不要用。按钮被点击时，它的 message 会作为用户消息发出。界面已经展示的内容不要在文字里再重复一遍。',
+        description: '在回答中显示一个用 openui-lang 写的交互页面。写法见系统提示中的 openui-lang 说明。',
         parameters: uiInput,
         replay: 'safe',
         async execute(input) {
-          const text = `已在界面中显示${input.title ? `「${input.title}」` : '内容'}，用户能看到；不要在文字里重复其中的数据，只补充结论或说明。`
-          return { output: [{ type: 'text', text }], details: input }
+          const { problems, orphaned } = checkProgram(input.program)
+          if (problems.length) throw new Error(`程序有错误，没有显示。改正后重新调用 ui_render：\n${problems.map((p) => `- ${p}`).join('\n')}`)
+          const unused = orphaned.length ? `（${orphaned.join('、')} 没有从 root 引用到，没有显示）` : ''
+          return { output: [{ type: 'text', text: `已显示页面${unused}，用户能看到并操作；不要在文字里重复其中的内容。` }], details: { shown: true } }
         },
       }),
     ],
     sections: [
       section('ui', () =>
-        config().usage === 'often' ? '用户希望多用界面：只要回答里有可以结构化的内容（要点、步骤、对比、数据），就用 ui_render 展示。' : '',
+        [UI_PROMPT, config().usage === 'often' ? '\n用户希望多用界面：只要回答里有可以结构化或交互的内容（步骤、对比、数据、地点、选择），就用 ui_render。' : ''].join(''),
       ),
     ],
   })

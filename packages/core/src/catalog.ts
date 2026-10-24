@@ -22,6 +22,10 @@ export interface PluginEntry {
   /** Its tools change things outside the conversation. */
   sideEffect: boolean
   settings: PluginSetting[]
+  /** On until the user switches it off. */
+  defaultEnabled?: boolean
+  /** Only self-hosted deployments implement it. */
+  selfHosted?: boolean
 }
 
 /** A plugin's settings as the host sends them; secrets appear only as `secretsSet`. */
@@ -121,6 +125,27 @@ export const pluginCatalog: PluginEntry[] = [
           { value: 'high', label: '高' },
         ],
         default: 'auto',
+      },
+    ],
+  },
+  {
+    id: 'sandbox',
+    name: '代码沙箱',
+    description: '在你自己的隔离容器里运行命令和代码（Python、Node、git 等），可以联网安装依赖，产生的文件保存在会话工作区。只在自部署上可用。',
+    sideEffect: true,
+    defaultEnabled: true,
+    selfHosted: true,
+    settings: [
+      {
+        key: 'image',
+        label: '镜像',
+        help: '切换后下次启动沙箱时生效',
+        kind: 'select',
+        options: [
+          { value: 'slim', label: '精简：Python、Node、git、uv 和常用命令行工具' },
+          { value: 'full', label: '完整：另有常用 Python 包、编译工具链、ffmpeg、pandoc' },
+        ],
+        default: 'slim',
       },
     ],
   },

@@ -45,6 +45,7 @@ import {
 import { DATA_DIR, SKILLS_DIR, toBase64, treeDir, Workspace, type EnvFactory } from './workspace.ts'
 import { artifactExtension, artifactInput, emailExtension, saveArtifact, uiExtension } from './plugins/display.ts'
 import { imageExtension } from './plugins/image.ts'
+import { noSandbox, sandboxExtension } from './plugins/sandbox.ts'
 import { PluginStore, Sealer, type PluginStoreOptions } from './plugins/store.ts'
 import { ModelAccounts } from './credentials.ts'
 import type { ModelSetup } from './models.ts'
@@ -122,6 +123,7 @@ const PLUGINS: Record<string, (config: () => Record<string, PluginValue>) => Ext
   ui: uiExtension,
   web: webExtension,
   image: imageExtension,
+  sandbox: sandboxExtension,
 }
 
 const files = defineExtension({
@@ -166,6 +168,8 @@ export interface SpaceOptions {
    */
   arm?: (wake: Wake) => Promise<void>
   now?: () => number
+  /** The environment's `exec` runs in this user's sandbox, so the sandbox plugin and its `bash` are offered (D7). */
+  sandbox?: boolean
   /** Path the host serves this user's webhooks under, `hooksPath(userId)`; without it there are none (R50). */
   hooksPath?: () => string | undefined
 }
@@ -279,7 +283,7 @@ export class UserSpace {
   static async open(db: SqliteDatabase, options: SpaceOptions, ctx: Context = BACKGROUND_CONTEXT) {
     await applySqliteMigrations(db, migrations, { table: 'app_migrations' })
     const storage = await SqliteStorage.open(db, { prefix: 'pi_' })
-    const plugins = await PluginStore.open(db, { ...options.plugins, secretKey: options.secretKey, available: Object.keys(PLUGINS) })
+    const plugins = await PluginStore.open(db, { ...options.plugins, secretKey: options.secretKey, available: Object.keys(PLUGINS).filter((id) => id !== 'sandbox' || options.sandbox) })
     const registry = createRegistry()
     const byName = new Map<string, Extension>()
     let space: UserSpace | undefined
@@ -287,7 +291,7 @@ export class UserSpace {
       if (!space) throw new Error('UserSpace is not open')
       return space
     })
-    for (const e of [gense, files, events.extension, ...Object.entries(PLUGINS).map(([id, make]) => make(() => plugins.resolved(id)))]) {
+    for (const e of [gense, files, events.extension, noSandbox, ...Object.entries(PLUGINS).map(([id, make]) => make(() => plugins.resolved(id)))]) {
       registry.install(e)
       byName.set(e.name, e)
     }
@@ -299,7 +303,8 @@ export class UserSpace {
     const settings = {
       ...options.harness?.settings,
       get extensions() {
-        return [gense, files, events.extension, ...plugins.active().map((id) => byName.get(id)!)]
+        const active = plugins.active()
+        return [gense, files, events.extension, ...active.map((id) => byName.get(id)!), ...(active.includes('sandbox') ? [] : [noSandbox])]
       },
     }
     const harness = await Harness.open(

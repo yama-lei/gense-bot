@@ -183,6 +183,8 @@ export interface PluginInfo {
   enabled: boolean
   /** The server implements it. */
   available: boolean
+  /** Only self-hosted deployments implement it. */
+  selfHosted?: boolean
   settings: PluginSetting[]
   config: PluginSettingsState
   /** Why it cannot be turned on with its current settings; null when it can. */

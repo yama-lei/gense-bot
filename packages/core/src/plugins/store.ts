@@ -86,7 +86,7 @@ export class PluginStore {
   }
 
   #entry(id: string): Entry {
-    return this.#entries.get(id) ?? { enabled: false, values: {}, secrets: {} }
+    return this.#entries.get(id) ?? { enabled: !!pluginCatalog.find((p) => p.id === id)?.defaultEnabled, values: {}, secrets: {} }
   }
 
   /** Settings with secrets, as the plugin's tools use them, plus host-only keys the catalog does not declare. Host side only. */
@@ -107,10 +107,12 @@ export class PluginStore {
     return pluginCatalog.map((p) => {
       const e = this.#entry(p.id)
       const defaults = this.#options.defaults?.[p.id] ?? {}
+      const available = this.#options.available.includes(p.id)
       return {
         id: p.id,
-        enabled: e.enabled,
-        available: this.#options.available.includes(p.id),
+        // A plugin on by default is not on where the host lacks it.
+        enabled: e.enabled && available,
+        available,
         config: { values: e.values, secretsSet: Object.keys(e.secrets), serverKeys: p.settings.filter((s) => defaults[s.key]).map((s) => s.key) },
         issue: pluginIssue(p.id, this.resolved(p.id)),
       }

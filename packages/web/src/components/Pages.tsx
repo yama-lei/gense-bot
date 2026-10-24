@@ -719,7 +719,7 @@ export function CustomizeView({ store }: { store: Store }) {
             <li key={t.id} className="row plugin-row">
               <div className="row-main">
                 <strong>
-                  {t.name} {t.sideEffect && <span className="tag warn">外部写操作</span>} {!t.available && <span className="tag">后续</span>}
+                  {t.name} {t.sideEffect && <span className="tag warn">外部写操作</span>} {!t.available && <span className="tag">{t.selfHosted ? '仅自部署' : '后续'}</span>}
                 </strong>
                 <span className="muted small">{t.description}</span>
                 {t.available && t.issue && <span className="small warn-text">{t.issue}</span>}

@@ -16,3 +16,4 @@ export { pluginDefaultsFromEnv, PluginStore, Sealer, type PluginPatch, type Plug
 export { webSearch, webFetch, type DeepSeek } from './plugins/web.ts'
 export { CHANGED, LedgerDoc, MUST_READ } from './ledger.ts'
 export { eventText, hmac, hooksPath, nextRun, parseHookPath, SUMMARIZE_PROMPT, verifySignature, type EventDraft } from './events.ts'
+export { BASH_TIMEOUT } from './plugins/sandbox.ts'

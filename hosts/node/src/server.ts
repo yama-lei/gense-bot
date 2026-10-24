@@ -9,6 +9,7 @@ import type { AddressInfo } from 'node:net'
 import { extname, join, normalize, resolve, sep } from 'node:path'
 import { WebSocketServer } from 'ws'
 import type { HostConfig } from './config.ts'
+import { Sandbox, SandboxedEnv } from './sandbox.ts'
 
 const MAX_BODY = 64 * 1024
 const TYPES: Record<string, string> = {
@@ -52,6 +53,7 @@ async function send(res: ServerResponse, response: Response) {
 export async function startServer(config: HostConfig) {
   const auth = await openAuth(config.dataDir)
   const spaces = new Map<string, Promise<UserSpace>>()
+  const sandboxes = new Map<string, Sandbox>()
 
   const space = (userId: string) => {
     let opening = spaces.get(userId)
@@ -62,9 +64,25 @@ export async function startServer(config: HostConfig) {
         const files = resolve(dir, 'files')
         await mkdir(files, { recursive: true })
         const db = await openNodeSqliteDatabase(join(dir, 'pi.sqlite'))
-        const env = (cwd: string) => new MountedEnv(new NodeExecutionEnv({ cwd: files }), { mount: DATA_DIR, target: files, cwd })
+        let opened: UserSpace | undefined
+        const sandbox =
+          config.sandbox && new Sandbox({ ...config.sandbox, userId, root: files, image: () => String(opened?.plugins.resolved('sandbox').image ?? 'slim') })
+        if (sandbox) sandboxes.set(userId, sandbox)
+        const env = (cwd: string) =>
+          sandbox
+            ? new SandboxedEnv(new NodeExecutionEnv({ cwd: files }), sandbox, { target: files, cwd })
+            : new MountedEnv(new NodeExecutionEnv({ cwd: files }), { mount: DATA_DIR, target: files, cwd })
         // Node runs subscription logins: their flows either call back to this host or ask for the code (R62).
-        return UserSpace.open(db, { models: config.models(), env, plugins: config.plugins, secretKey: config.secretKey, oauth: true, hooksPath: () => hooksPath(userId) })
+        opened = await UserSpace.open(db, {
+          models: config.models(),
+          env,
+          plugins: config.plugins,
+          secretKey: config.secretKey,
+          oauth: true,
+          sandbox: !!sandbox,
+          hooksPath: () => hooksPath(userId),
+        })
+        return opened
       })()
       opening.catch(() => spaces.delete(userId))
       spaces.set(userId, opening)
@@ -145,11 +163,13 @@ export async function startServer(config: HostConfig) {
   return {
     url: `http://${config.host}:${port}`,
     auth,
+    sandboxes,
     async close() {
       for (const ws of wss.clients) ws.terminate()
       wss.close()
       await new Promise<void>((resolve) => server.close(() => resolve()))
       for (const opening of spaces.values()) await (await opening.catch(() => undefined))?.close()
+      for (const sandbox of sandboxes.values()) await sandbox.stop()
       await auth.close()
     },
   }

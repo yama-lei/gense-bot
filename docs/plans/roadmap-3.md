@@ -256,7 +256,7 @@ Event {
 - 每个用户一个 Docker 容器，`sleep infinity` 作为入口，`/data` 绑定挂载 `<userRoot>`，`skills/` 以只读方式挂载。
 - 隔离：
   - 用户之间的隔离靠容器（可选 gVisor `runsc`）。容器名由登录身份推导，不从 URL 取。
-  - 同一用户的会话之间不做安全隔离。sandbox 是最小的信任单位，容器里的进程是 root，可以 `apt install`、`pip install`。
+  - 同一用户的会话之间不做安全隔离。sandbox 是最小的信任单位。容器里的进程以宿主用户的 uid 运行（2026-10-23 实现时调整：以 root 运行会让写出的文件归 root，宿主进程删不掉），可以 `pip install --user`、`uv`、`npm`，不能 `apt install`。
   - 权限给全只限容器之内：不挂载 Docker socket，不用 `--privileged`，不挂宿主的其他目录。
 - `bash`：
   - `docker exec`，cwd 是本树目录。
@@ -265,7 +265,7 @@ Event {
   - 进程数、CPU、内存设上限。
 - 网络：普通 bridge 网络，出口不限制（2026-10-23 用户决定）。
   - 代价：被网页或文件里的提示注入诱导时，agent 可以把工作区文件发到外部。可以接受，因为密钥不在 sandbox 里，工作区里只有用户自己放进去的东西。
-  - 容器不能访问宿主服务端口和内网地址（iptables 拒绝私有网段），避免绕过登录调用宿主 API。
+  - 容器不能访问宿主服务端口和内网地址（iptables 拒绝私有网段），避免绕过登录调用宿主 API。规则由一个临时的辅助容器（带 NET_ADMIN，共用沙箱的网络命名空间）写入；沙箱本身没有 NET_ADMIN，改不了这些规则。
   - 密钥不进 sandbox（R59）。需要密钥的操作走宿主侧的工具，不走 `bash`。
 - 生命周期：第一次 `bash` 时启动，空闲 15 分钟后停止。文件在宿主目录里，容器停止不丢文件。在容器里 `apt install` 的软件包会丢；`uv`、`pip --user`、`npm` 的缓存和用户级安装放在 `/data/.cache`、`/data/.local` 下，随用户目录保留。
 - `ExecutionEnv` 的文件读写始终直接访问宿主目录，不经过容器，所以文件面板和读前检查不依赖容器是否在运行。
@@ -334,7 +334,7 @@ Event {
 | 5 | 共用文件系统、读前检查、软隔离 | 4 | R42–R45（2026-10-23 完成；用 `@` 引用其他会话的文件时，先复制到本会话的 `attachments/` 再读；读一个已删除的文件后可以重新创建它） |
 | 6 | Event：卡片、唤醒、去重、定时任务、webhook；总结给主线 | 4 | R46–R50、R40（R40 要用 `report` 和 Event 卡片，从阶段 4 挪到这里；2026-10-23 完成。每个分支每分钟最多被唤醒 6 次，超出的 Event 只记进对话；webhook 请求体最多 64 KiB，每个会话一个 webhook，密钥只显示一次、加密保存（需要 `TOKEN_ENCRYPTION_KEY`），签名是 `x-gense-signature: sha256=hex(HMAC(密钥, 时间戳.请求体))` 加 `x-gense-timestamp`，可选 `idempotency-key`；错过的定时运行直接跳过，不补发） |
 | 7 | 子 agent：`agent_spawn`、`report`、限制、未汇报处理 | 5、6、V6 | R51–R56（2026-10-23 完成。`fork` 模式从本轮回答之前的那条记录分叉，子 agent 看不到主线这一轮还没得到结果的工具调用；“未完成”卡片来源记为系统；`report` 的参数沿用阶段 6 的 `{title, body}`，没有 `status`/`files`） |
-| 8 | 自部署 sandbox：两种镜像、Docker、`bash`、资源限制、休眠 | 5 | R57–R61 |
+| 8 | 自部署 sandbox：两种镜像、Docker、`bash`、资源限制、休眠 | 5 | R57–R61（2026-10-23 完成。沙箱是插件“代码沙箱”，自部署上默认打开，设置里选镜像；容器以宿主用户的 uid 运行，不是 root，所以不能 `apt install`，但写出的文件归宿主所有；网络规则由一个临时的、带 NET_ADMIN 的辅助容器写进沙箱自己的网络命名空间，不改宿主的 iptables；空闲后容器被删除，下次重建；宿主 Docker 的代理设置不传进沙箱；完整镜像另加了 `fonts-noto-cjk`，matplotlib 画中文图表需要它；镜像用 `npm run sandbox:build` 构建，配置见 `.env.example` 的 `SANDBOX_*`） |
 | 9 | 整体 UI/UX 走查 | 全部 | 走查记录 |
 
 ## 待定

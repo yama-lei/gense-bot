@@ -612,3 +612,16 @@ export async function agentsScenario(client: Client) {
   assert.equal(client.trees.filter((t) => t.id === tree.id).length, 1)
   await client.request({ t: 'tree.delete', treeId: tree.id })
 }
+
+/** R57 on a host without a sandbox: the plugin is not offered, the model has no `bash`, and the prompt says so. */
+export async function noSandboxScenario(client: Client) {
+  const sandbox = await client.until(() => client.plugins.find((p) => p.id === 'sandbox'), 10_000, 'plugin list')
+  assert.deepEqual([sandbox.available, sandbox.enabled], [false, false])
+  const tree = await client.request<TreeMeta>({ t: 'tree.create' })
+  await client.request({ t: 'watch', treeId: tree.id })
+  await client.request({ t: 'send', treeId: tree.id, text: '[工具 bash] {"command":"ls"}', requestId: 'n1' })
+  const result = await client.until(() => client.views.get(tree.id)?.entries.find((e) => e.kind === 'pi.tool-result'), 15_000, 'bash result')
+  assert.equal(result.model?.[0]?.isError, true)
+  assert.match(sections(client.views.get(tree.id)).get('sandbox') ?? '', /不能运行代码/)
+  await client.request({ t: 'tree.delete', treeId: tree.id })
+}

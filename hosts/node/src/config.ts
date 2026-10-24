@@ -16,6 +16,8 @@ export interface HostConfig {
   plugins: NonNullable<SpaceOptions['plugins']>
   /** TOKEN_ENCRYPTION_KEY: seals users' plugin secrets and model credentials. */
   secretKey?: string
+  /** Runs `bash` in a Docker container per user (D7); off with SANDBOX=0. */
+  sandbox?: { memory?: string; cpus?: string; idleMs?: number }
 }
 
 const root = resolve(import.meta.dirname, '../../..')
@@ -30,5 +32,13 @@ export function configFromEnv(env = process.env): HostConfig {
     adminToken: env.ADMIN_TOKEN || undefined,
     plugins: { defaults: pluginDefaultsFromEnv(env) },
     secretKey: env.TOKEN_ENCRYPTION_KEY || undefined,
+    sandbox:
+      env.SANDBOX === '0'
+        ? undefined
+        : {
+            memory: env.SANDBOX_MEMORY || undefined,
+            cpus: env.SANDBOX_CPUS || undefined,
+            idleMs: env.SANDBOX_IDLE_MINUTES ? Number(env.SANDBOX_IDLE_MINUTES) * 60_000 : undefined,
+          },
   }
 }

@@ -18,5 +18,7 @@
     ]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Accounts", "UserHub"] }],
+  // The production address; it was the old `gensebot` Worker's until 2026-10-23.
+  "routes": [{ "pattern": "bot.rayama.site", "custom_domain": true }],
   "observability": { "enabled": true }
 }

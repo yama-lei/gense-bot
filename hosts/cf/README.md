@@ -14,4 +14,4 @@ Worker 只处理 `/api/*` 和 `/ws`，其余请求由静态资源（`packages/we
   ```
 
   同一个邮箱再调用一次就是重设密码。
-- 部署：先用 `wrangler secret put` 设置 `PROVIDER_BASE_URL`、`PROVIDER_AUTH_TOKEN` 和 `ADMIN_TOKEN`，`DEFAULT_PROVIDER_MODEL` 可以作为 var 或 secret；然后在仓库根目录运行 `npm run build && npm run deploy -w @gense/host-cf`。Worker 名是 `gense-v3`，与线上旧版分开。
+- 部署：先用 `wrangler secret put` 设置 `PROVIDER_BASE_URL`、`PROVIDER_AUTH_TOKEN` 和 `ADMIN_TOKEN`，`DEFAULT_PROVIDER_MODEL` 可以作为 var 或 secret；然后在仓库根目录运行 `npm run build && npm run deploy -w @gense/host-cf`。Worker 名是 `gense-v3`，绑定正式地址 `bot.rayama.site`（2026-10-23 从旧版 `gensebot` 换过来），`workers.dev` 地址关闭。正式地址前面仍有 Cloudflare Access，先过 Access 再用邮箱和密码登录。

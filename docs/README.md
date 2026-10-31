@@ -16,6 +16,8 @@
 10. [路线图 3](plans/roadmap-3.md) 与 [ADR-0004](adr/0004-pi-durable-portable-core.md)（2026-10-23 评审通过）：改用 pi-durable、Cloudflare 与自部署两种部署方式、树形会话、Event、子 agent、自部署 sandbox。
 11. [生成式界面改用 OpenUI](plans/openui.md)（2026-10-23）：OpenUI Lang 程序、从 open-intelligent-ui 移植的组件库、校验与纠错。安装依赖时设 `OPENUI_TELEMETRY_DISABLED=1`，否则 `@openuidev/lang-core` 的 postinstall 会发送安装统计。
 
+12. [路线图 4](plans/roadmap-4.md) 与 [ADR-0005](adr/0005-event-driven-vps.md)（2026-10-31，草案）：改为事件驱动、单机 VPS 自部署，借鉴 [`ref/dsh-superagent-prototype`](../ref/dsh-superagent-prototype/)（git submodule，克隆后需 `git submodule update --init`）。
+
 原始课程材料保留在 [实验 1](intents/lab1.md) 和 [实验 2](intents/lab2.md)。它们提供长期方向，不代表其中每项功能都属于第一版交付范围。
 
 ## 文档如何变化

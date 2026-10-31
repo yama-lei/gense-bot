@@ -12,5 +12,5 @@ Follow an "Intent → Spec → Design" workflow:
 
 ## Guidance Maintenance
 
-- When you find mistakes or outdated content in skills or `AGENTS.md`, tell the user and fix the guidance only with their permission.
-
+- Commit only after the user gives permission. Use `{chore,feat,bugs,docs}/slug: content` for commit messages and branch name.
+- If you find conflicting content or opportunities for improvement, notify the user and obtain permission before making changes. Examples include improving grammar and clarity in `AGENTS.md` and fixing bugs in code.

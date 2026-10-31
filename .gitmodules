@@ -1,0 +1,3 @@
+[submodule "ref/dsh-superagent-prototype"]
+	path = ref/dsh-superagent-prototype
+	url = https://github.com/deepseek-ai/dsh-superagent-prototype.git

@@ -1,0 +1,54 @@
+# Single-machine deployment (ADR-0005): the server and Caddy for TLS. See README "部署到 VPS".
+#
+#   docker compose --profile sandbox build      the sandbox images, once and after sandbox/ changes
+#   docker compose up -d --build                start or update
+#   docker compose exec app npm run passwd      set the login password
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # The sandbox bind-mounts the owner's files by their path on the Docker host, so the data directory has the
+      # same absolute path inside this container as outside it.
+      DATA_DIR: ${GENSE_DATA:?set GENSE_DATA in .env to an absolute path on this machine}
+      HOST: 0.0.0.0
+      PORT: "8787"
+    volumes:
+      - ${GENSE_DATA}:${GENSE_DATA}
+      # Lets the server start sandbox containers. Whoever controls this process controls Docker on this machine.
+      - /var/run/docker.sock:/var/run/docker.sock
+    # The sandbox runs as this uid, so files it writes stay the owner's; DOCKER_GID is the socket's group.
+    user: "${GENSE_UID:-1000}:${GENSE_GID:-1000}"
+    group_add:
+      - "${DOCKER_GID:?set DOCKER_GID in .env: stat -c %g /var/run/docker.sock}"
+    mem_limit: 768m
+    logging:
+      options: { max-size: 10m, max-file: "3" }
+
+  caddy:
+    image: caddy:2.11.2
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      GENSE_DOMAIN: ${GENSE_DOMAIN:?set GENSE_DOMAIN in .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [app]
+    mem_limit: 128m
+
+  # Built, never run: the server starts these images itself.
+  sandbox-slim:
+    profiles: [sandbox]
+    build: { context: sandbox, target: slim, network: host }
+    image: gense-sandbox:slim
+  sandbox-full:
+    profiles: [sandbox]
+    build: { context: sandbox, target: full, network: host }
+    image: gense-sandbox:full
+
+volumes:
+  caddy_data:
+  caddy_config:

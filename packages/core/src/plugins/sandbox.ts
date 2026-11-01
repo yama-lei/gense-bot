@@ -1,5 +1,5 @@
-// Sandbox plugin (roadmap-3 D7, R57): `bash` runs in the user's own container, which the host provides through the
-// environment's `exec`; file tools keep reading the host directory. Hosts without a sandbox (Cloudflare) never offer it.
+// Sandbox plugin (roadmap-3 D7, R57): `bash` runs in a container the host provides through the environment's `exec`;
+// file tools keep reading the host directory. Without a sandbox (SANDBOX=0) it is not offered.
 import { defineExtension, section } from '@earendil-works/pi-durable'
 import { createBashTool, type BashToolInput } from '@earendil-works/pi-durable/tools'
 import type { PluginValue } from '../catalog.ts'

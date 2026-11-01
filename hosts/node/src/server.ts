@@ -1,13 +1,18 @@
-// Self-hosted deployment (ADR-0004 decision 3): one process, one SQLite file per user, sockets over `ws`.
+// The server (ADR-0005): one process, one owner, one SQLite file for login and pi-durable, sockets over `ws`.
+//
+//   <dataDir>/gense.sqlite    login sessions, app tables and pi-durable storage
+//   <dataDir>/files/          the owner's files, mounted at /data in the sandbox
+//   <dataDir>/backups/        nightly copies of gense.sqlite
 import { openNodeSqliteDatabase } from '@earendil-works/chord/sqlite/node'
+import type { SqliteDatabase } from '@earendil-works/chord/sqlite'
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node'
-import { accountApi, Auth, Connection, DATA_DIR, hooksPath, json, MountedEnv, parseHookPath, sameOrigin, sessionUser, UserSpace } from '@gense/core'
-import { existsSync } from 'node:fs'
+import { accountApi, Auth, Connection, DATA_DIR, json, MountedEnv, parseHookPath, sameOrigin, signedIn, UserSpace } from '@gense/core'
 import { mkdir, readFile, stat } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { extname, join, normalize, resolve, sep } from 'node:path'
 import { WebSocketServer } from 'ws'
+import { startBackups } from './backup.ts'
 import type { HostConfig } from './config.ts'
 import { Sandbox, SandboxedEnv } from './sandbox.ts'
 
@@ -23,12 +28,11 @@ const TYPES: Record<string, string> = {
   '.woff2': 'font/woff2',
 }
 
-export const openAuth = async (dataDir: string) => {
-  await mkdir(dataDir, { recursive: true })
-  return Auth.open(await openNodeSqliteDatabase(join(dataDir, 'app.sqlite')))
-}
+export const DB_FILE = 'gense.sqlite'
 
-/** The request as a web-standard Request, for the handlers core shares between hosts. */
+export const openDatabase = (dataDir: string): Promise<SqliteDatabase> => openNodeSqliteDatabase(join(dataDir, DB_FILE))
+
+/** The request as a web-standard Request, for the handlers in core. */
 async function toRequest(req: IncomingMessage) {
   const headers = new Headers()
   for (const [k, v] of Object.entries(req.headers)) if (typeof v === 'string') headers.set(k, v)
@@ -51,49 +55,22 @@ async function send(res: ServerResponse, response: Response) {
 }
 
 export async function startServer(config: HostConfig) {
-  const auth = await openAuth(config.dataDir)
-  const spaces = new Map<string, Promise<UserSpace>>()
-  const sandboxes = new Map<string, Sandbox>()
+  const files = resolve(config.dataDir, 'files')
+  await mkdir(files, { recursive: true })
+  const db = await openDatabase(config.dataDir)
+  const auth = await Auth.open(db)
+  if (!(await auth.hasPassword())) console.warn('还没有设置登录密码：运行 npm run passwd')
 
-  const space = (userId: string) => {
-    let opening = spaces.get(userId)
-    if (!opening) {
-      opening = (async () => {
-        const dir = join(config.dataDir, 'users', userId)
-        await mkdir(dir, { recursive: true })
-        const files = resolve(dir, 'files')
-        await mkdir(files, { recursive: true })
-        const db = await openNodeSqliteDatabase(join(dir, 'pi.sqlite'))
-        let opened: UserSpace | undefined
-        const sandbox =
-          config.sandbox && new Sandbox({ ...config.sandbox, userId, root: files, image: () => String(opened?.plugins.resolved('sandbox').image ?? 'slim') })
-        if (sandbox) sandboxes.set(userId, sandbox)
-        const env = (cwd: string) =>
-          sandbox
-            ? new SandboxedEnv(new NodeExecutionEnv({ cwd: files }), sandbox, { target: files, cwd })
-            : new MountedEnv(new NodeExecutionEnv({ cwd: files }), { mount: DATA_DIR, target: files, cwd })
-        // Node runs subscription logins: their flows either call back to this host or ask for the code (R62).
-        opened = await UserSpace.open(db, {
-          models: config.models(),
-          env,
-          plugins: config.plugins,
-          secretKey: config.secretKey,
-          oauth: true,
-          sandbox: !!sandbox,
-          hooksPath: () => hooksPath(userId),
-        })
-        return opened
-      })()
-      opening.catch(() => spaces.delete(userId))
-      spaces.set(userId, opening)
-    }
-    return opening
-  }
-
-  // Open every existing space now so runs a previous process left unfinished resume without waiting for a login.
-  for (const user of await auth.users()) {
-    if (existsSync(join(config.dataDir, 'users', user.id, 'pi.sqlite'))) await space(user.id)
-  }
+  let space: UserSpace | undefined
+  const sandbox = config.sandbox && new Sandbox({ ...config.sandbox, root: files, image: () => String(space?.plugins.resolved('sandbox').image ?? 'slim') })
+  const env = (cwd: string) =>
+    sandbox
+      ? new SandboxedEnv(new NodeExecutionEnv({ cwd: files }), sandbox, { target: files, cwd })
+      : new MountedEnv(new NodeExecutionEnv({ cwd: files }), { mount: DATA_DIR, target: files, cwd })
+  // Opening resumes runs a previous process left unfinished (R32). The space owns `db` and closes it.
+  space = await UserSpace.open(db, { models: config.models(), env, plugins: config.plugins, secretKey: config.secretKey, sandbox: !!sandbox, webhooks: true })
+  const opened = space
+  const backups = config.backups === false ? undefined : startBackups(db, join(config.dataDir, 'backups'), config.backups)
 
   async function staticFile(res: ServerResponse, path: string) {
     const file = normalize(join(config.webDir, decodeURIComponent(path)))
@@ -111,19 +88,14 @@ export async function startServer(config: HostConfig) {
     res.end(body)
   }
 
-  /** A webhook call (R50): signed by its secret, not by a session. */
-  async function hook(req: IncomingMessage, route: { userId: string; hookId: string }) {
-    if (!(await auth.user(route.userId))) return json(404, { error: 'not found' })
-    return (await space(route.userId)).handleWebhook(route.hookId, await toRequest(req))
-  }
-
   const server = createServer((req, res) => {
     const path = new URL(req.url ?? '/', 'http://x').pathname
-    const route = parseHookPath(path)
-    const handled = route
-      ? hook(req, route).then((r) => send(res, r))
+    // A webhook call (R50) is signed by its secret, not by a session.
+    const hookId = parseHookPath(path)
+    const handled = hookId
+      ? toRequest(req).then((request) => opened.handleWebhook(hookId, request)).then((r) => send(res, r))
       : path.startsWith('/api/')
-      ? toRequest(req).then((request) => accountApi(auth, request, { adminToken: config.adminToken })).then((r) => send(res, r))
+      ? toRequest(req).then((request) => accountApi(auth, request)).then((r) => send(res, r))
       : staticFile(res, path)
     handled.catch((error) => {
       if (!res.headersSent) void send(res, json(500, { error: error instanceof Error ? error.message : String(error) }))
@@ -135,18 +107,12 @@ export async function startServer(config: HostConfig) {
   server.on('upgrade', (req, socket, head) => {
     void (async () => {
       const request = await toRequest(req)
-      const user = new URL(request.url).pathname === '/ws' && sameOrigin(request) ? await sessionUser(auth, request) : undefined
-      if (!user) {
+      if (!(new URL(request.url).pathname === '/ws' && sameOrigin(request) && (await signedIn(auth, request)))) {
         socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
         return
       }
-      const userSpace = await space(user.id)
       wss.handleUpgrade(req, socket, head, (ws) => {
-        const connection = new Connection({
-          space: userSpace,
-          email: user.email,
-          send: (m) => ws.send(m),
-        })
+        const connection = new Connection({ space: opened, send: (m) => ws.send(m) })
         // Requests are handled in arrival order so a send never overtakes the watch before it.
         let queue = connection.start()
         ws.on('message', (data) => {
@@ -163,14 +129,15 @@ export async function startServer(config: HostConfig) {
   return {
     url: `http://${config.host}:${port}`,
     auth,
-    sandboxes,
+    sandbox,
+    backups,
     async close() {
       for (const ws of wss.clients) ws.terminate()
       wss.close()
       await new Promise<void>((resolve) => server.close(() => resolve()))
-      for (const opening of spaces.values()) await (await opening.catch(() => undefined))?.close()
-      for (const sandbox of sandboxes.values()) await sandbox.stop()
-      await auth.close()
+      await backups?.stop()
+      await opened.close()
+      await sandbox?.stop()
     },
   }
 }

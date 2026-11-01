@@ -8,7 +8,6 @@ import { fromBase64 } from './workspace.ts'
 
 export interface ConnectionOptions {
   space: UserSpace
-  email: string
   send(message: string): void
 }
 
@@ -30,8 +29,8 @@ export class Connection {
   }
 
   async start() {
-    const { space, email } = this.#o
-    this.#send({ t: 'hello', email })
+    const { space } = this.#o
+    this.#send({ t: 'hello' })
     const accounts = async () => {
       const { accounts } = space
       this.#send({ t: 'providers', providers: accounts.providers() })

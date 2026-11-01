@@ -1,25 +1,19 @@
-// Email and password login (roadmap-3 D1). Uses only WebCrypto and the portable SQLite facade, so both hosts share it.
+// The owner's login (ADR-0005 decision 3): one password, set from the server's shell, and login sessions.
 import { applySqliteMigrations, type SqliteDatabase } from '@earendil-works/chord/sqlite'
 
-export interface User {
-  id: string
-  email: string
-}
-
-/** Workers caps PBKDF2 at 100,000 iterations; both hosts use the same count so a user table can move between them. */
-const ITERATIONS = 100_000
+const ITERATIONS = 600_000
 const SESSION_MS = 30 * 24 * 3600_000
-/** Failed logins allowed per email within LOCK_MS. */
+/** Failed logins allowed within LOCK_MS. */
 const MAX_FAILURES = 5
 const LOCK_MS = 15 * 60_000
+export const MIN_PASSWORD = 8
 
 const migrations = [
   {
     version: 1,
     statements: [
-      'CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, password TEXT NOT NULL, createdAt INTEGER NOT NULL)',
-      'CREATE TABLE sessions (tokenHash TEXT PRIMARY KEY, userId TEXT NOT NULL, createdAt INTEGER NOT NULL, expiresAt INTEGER NOT NULL)',
-      'CREATE INDEX sessions_user ON sessions (userId)',
+      'CREATE TABLE owner (id INTEGER PRIMARY KEY CHECK (id = 1), password TEXT NOT NULL, updatedAt INTEGER NOT NULL)',
+      'CREATE TABLE sessions (tokenHash TEXT PRIMARY KEY, createdAt INTEGER NOT NULL, expiresAt INTEGER NOT NULL)',
     ],
   },
 ]
@@ -27,7 +21,6 @@ const migrations = [
 const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 const unb64url = (s: string) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0))
 const random = (n: number) => crypto.getRandomValues(new Uint8Array(n))
-const normalize = (email: string) => email.trim().toLowerCase()
 
 async function derive(password: string, salt: Uint8Array, iterations: number) {
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits'])
@@ -52,10 +45,10 @@ async function verifyPassword(password: string, stored: string) {
 
 const sha256 = async (s: string) => b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))))
 
-/** Users and login sessions in the host's app database. Only a hash of each session token is stored. */
+/** The owner's password and login sessions, in the app database. Only a hash of each session token is stored. */
 export class Auth {
   #db: SqliteDatabase
-  #failures = new Map<string, { count: number; since: number }>()
+  #failures = { count: 0, since: 0 }
   #now: () => number
 
   private constructor(db: SqliteDatabase, now: () => number) {
@@ -63,73 +56,53 @@ export class Auth {
     this.#now = now
   }
 
+  /** Adds its tables to `db`; the caller owns the database and closes it. */
   static async open(db: SqliteDatabase, now = Date.now) {
     await applySqliteMigrations(db, migrations, { table: 'auth_migrations' })
     return new Auth(db, now)
   }
 
-  async createUser(email: string, password: string): Promise<User> {
-    email = normalize(email)
-    if (!/^[^\s@]+@[^\s@]+$/.test(email)) throw new Error('邮箱格式不对')
-    if (password.length < 8) throw new Error('密码至少 8 位')
-    if (await this.#db.get('SELECT 1 FROM users WHERE email = ?', email)) throw new Error('这个邮箱已经有账号')
-    const user = { id: crypto.randomUUID(), email }
-    await this.#db.run('INSERT INTO users (id, email, password, createdAt) VALUES (?, ?, ?, ?)', user.id, email, await hashPassword(password), this.#now())
-    return user
+  async hasPassword() {
+    return !!(await this.#db.get('SELECT 1 FROM owner WHERE id = 1'))
   }
 
-  async setPassword(email: string, password: string) {
-    if (password.length < 8) throw new Error('密码至少 8 位')
-    const user = await this.#db.get<{ id: string }>('SELECT id FROM users WHERE email = ?', normalize(email))
-    if (!user) throw new Error('没有这个账号')
-    await this.#db.run('UPDATE users SET password = ? WHERE id = ?', await hashPassword(password), user.id)
-    await this.#db.run('DELETE FROM sessions WHERE userId = ?', user.id)
+  /** Sets the password and ends every session. */
+  async setPassword(password: string) {
+    if (password.length < MIN_PASSWORD) throw new Error(`密码至少 ${MIN_PASSWORD} 位`)
+    const hash = await hashPassword(password)
+    await this.#db.transaction(async (tx) => {
+      await tx.run('INSERT INTO owner (id, password, updatedAt) VALUES (1, ?, ?) ON CONFLICT (id) DO UPDATE SET password = excluded.password, updatedAt = excluded.updatedAt', hash, this.#now())
+      await tx.run('DELETE FROM sessions')
+    })
   }
 
   /** Resolves to a session token, or rejects with a message for the user. */
-  async login(email: string, password: string): Promise<{ token: string; user: User }> {
-    email = normalize(email)
+  async login(password: string): Promise<string> {
     const now = this.#now()
-    const failures = this.#failures.get(email)
-    if (failures && now - failures.since < LOCK_MS && failures.count >= MAX_FAILURES) throw new Error('尝试次数过多，请 15 分钟后再试')
-    const row = await this.#db.get<{ id: string; password: string }>('SELECT id, password FROM users WHERE email = ?', email)
-    // Hash even for unknown emails so response time does not reveal which accounts exist.
-    const ok = row ? await verifyPassword(password, row.password) : (await hashPassword(password), false)
-    if (!row || !ok) {
-      const f = failures && now - failures.since < LOCK_MS ? failures : { count: 0, since: now }
-      this.#failures.set(email, { count: f.count + 1, since: f.since })
-      throw new Error('邮箱或密码不对')
+    const f = now - this.#failures.since < LOCK_MS ? this.#failures : { count: 0, since: now }
+    if (f.count >= MAX_FAILURES) throw new Error('尝试次数过多，请 15 分钟后再试')
+    const row = await this.#db.get<{ password: string }>('SELECT password FROM owner WHERE id = 1')
+    if (!row) throw new Error('还没有设置密码：在服务器上运行 npm run passwd')
+    if (!(await verifyPassword(password, row.password))) {
+      this.#failures = { count: f.count + 1, since: f.since }
+      throw new Error('密码不对')
     }
-    this.#failures.delete(email)
+    this.#failures = { count: 0, since: 0 }
     const token = b64url(random(32))
-    await this.#db.run('INSERT INTO sessions (tokenHash, userId, createdAt, expiresAt) VALUES (?, ?, ?, ?)', await sha256(token), row.id, now, now + SESSION_MS)
-    return { token, user: { id: row.id, email } }
+    await this.#db.run('DELETE FROM sessions WHERE expiresAt < ?', now)
+    await this.#db.run('INSERT INTO sessions (tokenHash, createdAt, expiresAt) VALUES (?, ?, ?)', await sha256(token), now, now + SESSION_MS)
+    return token
   }
 
-  async session(token: string | undefined): Promise<User | null> {
-    if (!token) return null
-    const row = await this.#db.get<{ id: string; email: string; expiresAt: number }>(
-      'SELECT users.id AS id, users.email AS email, sessions.expiresAt AS expiresAt FROM sessions JOIN users ON users.id = sessions.userId WHERE sessions.tokenHash = ?',
-      await sha256(token),
-    )
-    if (!row || row.expiresAt < this.#now()) return null
-    return { id: row.id, email: row.email }
+  /** Whether the token belongs to a live session. */
+  async session(token: string | undefined): Promise<boolean> {
+    if (!token) return false
+    const row = await this.#db.get<{ expiresAt: number }>('SELECT expiresAt FROM sessions WHERE tokenHash = ?', await sha256(token))
+    return !!row && row.expiresAt >= this.#now()
   }
 
   async logout(token: string) {
     await this.#db.run('DELETE FROM sessions WHERE tokenHash = ?', await sha256(token))
-  }
-
-  async user(id: string): Promise<User | null> {
-    return (await this.#db.get<User>('SELECT id, email FROM users WHERE id = ?', id)) ?? null
-  }
-
-  async users(): Promise<User[]> {
-    return this.#db.all<User>('SELECT id, email FROM users ORDER BY createdAt')
-  }
-
-  async close() {
-    await this.#db.close()
   }
 }
 

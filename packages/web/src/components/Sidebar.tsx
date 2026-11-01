@@ -105,9 +105,9 @@ export function Sidebar({ state, route, open, onClose }: Props) {
         </div>
 
         <a className="sb-foot" href={href({ name: 'customize' })} title="账号与定制">
-          <span className="avatar">{(state.account.name || state.account.email || '?')[0].toUpperCase()}</span>
+          <span className="avatar">{(state.account.name || '我')[0].toUpperCase()}</span>
           <span className="sb-account">
-            <span className="ellipsis">{state.account.name || state.account.email}</span>
+            <span className="ellipsis">{state.account.name || '我'}</span>
           </span>
         </a>
       </aside>

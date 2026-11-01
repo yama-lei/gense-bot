@@ -14,14 +14,14 @@ import { hmac } from '../../../packages/core/src/events.ts'
 
 export const tempDir = () => mkdtemp(join(tmpdir(), 'gense-test-'))
 
-export async function login(url: string, email: string, password: string) {
+export async function login(url: string, password: string) {
   const res = await fetch(`${url}/api/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ password }),
   })
   const cookie = res.headers.get('set-cookie')?.split(';')[0]
-  return { status: res.status, body: (await res.json()) as { email?: string; error?: string }, cookie }
+  return { status: res.status, body: (await res.json()) as { error?: string }, cookie }
 }
 
 type Entry = { id: number; kind: string; data?: unknown; model?: { role: string; content: unknown; stopReason?: string; isError?: boolean; details?: unknown }[] }
@@ -373,10 +373,10 @@ export async function skillsScenario(client: Client) {
  * R62: a user's own model service. The API-key login runs on the host and asks for the key through the socket; the
  * service's models join the list, the key never comes back, and the host's own keys never count as the user's.
  */
-export async function accountsScenario(client: Client, { oauth }: { oauth: boolean }) {
+export async function accountsScenario(client: Client) {
   const providers = await client.until(() => client.providers.length > 0 && client.providers, 10_000, 'providers')
   assert.ok(!providers.some((p) => p.id === 'relay' || p.id === 'faux' || p.configured))
-  assert.equal(providers.some((p) => p.oauth), oauth)
+  assert.ok(providers.some((p) => p.oauth), 'subscription logins are offered')
   const host = await client.until(() => client.models.length > 0 && client.models, 10_000, 'models')
   // The host has DEEPSEEK_API_KEY for its web plugin; it must not make DeepSeek a model of the user's.
   assert.ok(host.every((m) => m.provider === 'faux'))
@@ -408,7 +408,6 @@ export async function accountsScenario(client: Client, { oauth }: { oauth: boole
   await assert.rejects(cancelled)
   await client.until(() => client.prompts.size === 0, 5_000, 'prompts done')
   assert.equal(client.providers.find((p) => p.id === 'groq')?.configured, null)
-  if (!oauth) await assert.rejects(client.request({ t: 'auth.login', loginId: 'l4', provider: 'anthropic', type: 'oauth' }), /不支持/)
 
   await client.request({ t: 'auth.logout', provider: 'mistral' })
   await client.until(() => client.providers.find((p) => p.id === 'mistral')?.configured === null, 5_000, 'signed out')
@@ -575,7 +574,7 @@ export async function eventsScenario(client: Client, url: string) {
   )
   assert.match((report.data as EventData).body, /比较两个方案/)
 
-  // R49: a one-off schedule fires on the host's own clock (a Durable Object alarm on Workers).
+  // R49: a one-off schedule fires on the host's own clock .
   const schedule = await client.request<ScheduleInfo>({
     t: 'schedule.create',
     treeId: tree.id,

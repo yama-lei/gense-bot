@@ -1,4 +1,4 @@
-// POSIX path helpers without `node:path`, so core runs in Workers too.
+// POSIX helpers for the virtual paths under /data, independent of the host OS path rules.
 
 /** Normalizes an absolute path: collapses `.`, `..` and repeated slashes; never goes above `/`. */
 export function normalizePath(path: string) {

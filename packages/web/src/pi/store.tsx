@@ -145,7 +145,7 @@ export function usePiStore(onUnauthorized: () => void): Store {
       schedules: host.schedules,
       webhooks: host.webhooks,
       canCreateWebhooks: host.canCreateWebhooks,
-      account: { name: '', email: host.email, driveConnected: false, driveError: null },
+      account: { name: '', driveConnected: false, driveError: null },
       models,
       modelsError: host.connected || !host.trees ? null : '与服务器的连接已断开，正在重连…',
     }),

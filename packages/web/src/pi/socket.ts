@@ -6,7 +6,6 @@ import type { PluginState } from '@gense/core/catalog'
 import type { View } from './turns'
 
 export interface SocketState {
-  email: string
   models: ModelInfo[]
   defaultModel: ModelInfo | null
   trees: TreeMeta[] | null
@@ -36,7 +35,7 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 export type Request = DistributiveOmit<ClientRequest, 'id'>
 
 export class HostSocket {
-  state: SocketState = { email: '', models: [], defaultModel: null, trees: null, views: {}, branches: {}, shown: {}, plugins: null, skills: [], schedules: [], webhooks: [], canCreateWebhooks: true, providers: [], connected: false }
+  state: SocketState = { models: [], defaultModel: null, trees: null, views: {}, branches: {}, shown: {}, plugins: null, skills: [], schedules: [], webhooks: [], canCreateWebhooks: true, providers: [], connected: false }
   #ws: WebSocket | undefined
   #next = 1
   #pending = new Map<number, { resolve(v: unknown): void; reject(e: Error): void }>()
@@ -92,7 +91,7 @@ export class HostSocket {
   #receive(m: ServerMessage) {
     switch (m.t) {
       case 'hello':
-        return this.#set({ email: m.email })
+        return
       case 'models':
         return this.#set({ models: m.models, defaultModel: m.defaultModel })
       case 'providers':

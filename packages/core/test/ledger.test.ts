@@ -2,12 +2,13 @@ import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context'
 import { openNodeSqliteDatabase } from '@earendil-works/chord/sqlite/node'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { CHANGED, fauxModels, MUST_READ, SKILLS_DIR, SqliteFiles, treeDir, UserSpace } from '../src/index.ts'
+import { CHANGED, fauxModels, MUST_READ, SKILLS_DIR, treeDir, UserSpace } from '../src/index.ts'
+import { diskEnv } from './fixtures.ts'
 
 async function open() {
   const db = await openNodeSqliteDatabase(':memory:')
-  const files = await SqliteFiles.open(db, { id: 'x' })
-  const space = await UserSpace.open(db, { models: fauxModels(), env: (cwd) => files.env({ cwd }) })
+  const files = await diskEnv()
+  const space = await UserSpace.open(db, { models: fauxModels(), env: files })
   return { space, files }
 }
 
@@ -29,7 +30,7 @@ test('R43, R44: a branch changes a file only as it last read it', async () => {
   const { branchId: a } = await space.send(t.id, { text: '开始', requestId: 'a' })
   await space.harness.waitForIdle(ctx)
   const b = (await space.fork(t.id, a, (await space.branches(t.id)).branches[0]!.lastEntryId!)).id
-  const env = await files.env({ cwd: treeDir(t.id) })
+  const env = await files(treeDir(t.id))
   const content = async () => {
     const r = await env.readTextFile(`${treeDir(t.id)}/f.txt`, ctx)
     return r.ok ? r.value : null
@@ -71,7 +72,7 @@ test('R45: the file tools stay in the tree; Skills are read-only; an @-mentioned
   const other = await space.createTree()
   const { branchId } = await space.send(t.id, { text: '开始', requestId: 'a' })
   await space.harness.waitForIdle(ctx)
-  const env = await files.env({ cwd: '/data' })
+  const env = await files('/data')
   await env.writeFile(`${treeDir(other.id)}/secret.txt`, '别的会话', ctx)
 
   assert.match(await call(space, t.id, branchId, 'read', { path: `${treeDir(other.id)}/secret.txt` }), /只能读取本会话工作区/)

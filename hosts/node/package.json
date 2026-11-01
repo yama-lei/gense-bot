@@ -6,7 +6,7 @@
     "dev": "node --env-file-if-exists=../../.env --watch src/main.ts",
     "start": "node --env-file-if-exists=../../.env src/main.ts",
     "test": "node --test test/*.test.ts",
-    "user:add": "node --env-file-if-exists=../../.env src/cli.ts"
+    "passwd": "node --env-file-if-exists=../../.env src/passwd.ts"
   },
   "dependencies": {
     "@earendil-works/chord": "1.4.0",

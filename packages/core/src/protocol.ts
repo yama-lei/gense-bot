@@ -225,7 +225,7 @@ export type ClientRequest =
   | { t: 'webhook.delete'; id: number; webhookId: string }
 
 export type ServerMessage =
-  | { t: 'hello'; email: string }
+  | { t: 'hello' }
   | { t: 'models'; models: ModelInfo[]; defaultModel: ModelInfo | null }
   | { t: 'providers'; providers: ProviderState[] }
   | { t: 'auth.event'; loginId: string; event: AuthEvent }

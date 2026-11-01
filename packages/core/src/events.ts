@@ -128,13 +128,12 @@ export const scheduleTask = (fire: () => Fire) =>
 
 // --- Webhooks (R50) ---
 
-/** Webhooks are served at `/hooks/<userId>/<hookId>`, outside the session-checked paths. */
-export const hooksPath = (userId: string) => `/hooks/${userId}`
+/** Webhooks are served at `/hooks/<hookId>`, outside the session-checked paths. */
+export const HOOKS_PATH = '/hooks'
 
-/** The user and webhook a request path names, if it is a webhook path. */
+/** The webhook a request path names, if it is a webhook path. */
 export function parseHookPath(path: string) {
-  const m = /^\/hooks\/([\w-]{1,64})\/([\w-]{1,64})$/.exec(path)
-  return m ? { userId: m[1]!, hookId: m[2]! } : undefined
+  return /^\/hooks\/([\w-]{1,64})$/.exec(path)?.[1]
 }
 
 /** How old a signed timestamp may be, either way. */

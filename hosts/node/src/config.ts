@@ -1,6 +1,7 @@
 // Host settings from the environment (.env at the repo root; see .env.example).
 import { fauxModels, pluginDefaultsFromEnv, relayFromEnv, type ModelSetup, type SpaceOptions } from '@gense/core'
 import { resolve } from 'node:path'
+import type { BackupOptions } from './backup.ts'
 
 export interface HostConfig {
   dataDir: string
@@ -8,16 +9,16 @@ export interface HostConfig {
   host: string
   /** Built front end; missing in dev, where Vite serves it. */
   webDir: string
-  /** The host's own providers; a function so each user's Models gets its own instances. */
+  /** The host's own providers (the relay). */
   models: () => ModelSetup
-  /** Enables the admin endpoint for adding users over HTTP; the CLI does not need it. */
-  adminToken?: string
   /** Plugin defaults from `.env`. */
   plugins: NonNullable<SpaceOptions['plugins']>
-  /** TOKEN_ENCRYPTION_KEY: seals users' plugin secrets and model credentials. */
+  /** TOKEN_ENCRYPTION_KEY: seals plugin secrets, model credentials and webhook secrets. */
   secretKey?: string
-  /** Runs `bash` in a Docker container per user (D7); off with SANDBOX=0. */
+  /** Runs `bash` in a Docker container (D7); off with SANDBOX=0. */
   sandbox?: { memory?: string; cpus?: string; idleMs?: number }
+  /** Daily copies of the database under `<dataDir>/backups`; off with BACKUPS=0. */
+  backups?: BackupOptions | false
 }
 
 const root = resolve(import.meta.dirname, '../../..')
@@ -29,7 +30,6 @@ export function configFromEnv(env = process.env): HostConfig {
     host: env.HOST ?? '127.0.0.1',
     webDir: resolve(root, 'packages/web/dist'),
     models: env.GENSE_FAUX === '1' ? fauxModels : () => relayFromEnv(env),
-    adminToken: env.ADMIN_TOKEN || undefined,
     plugins: { defaults: pluginDefaultsFromEnv(env) },
     secretKey: env.TOKEN_ENCRYPTION_KEY || undefined,
     sandbox:
@@ -40,5 +40,6 @@ export function configFromEnv(env = process.env): HostConfig {
             cpus: env.SANDBOX_CPUS || undefined,
             idleMs: env.SANDBOX_IDLE_MINUTES ? Number(env.SANDBOX_IDLE_MINUTES) * 60_000 : undefined,
           },
+    backups: env.BACKUPS === '0' ? false : { keep: env.BACKUP_KEEP ? Number(env.BACKUP_KEEP) : undefined },
   }
 }

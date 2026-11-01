@@ -1,4 +1,4 @@
-// Stage-8 E2E (R57–R61): `bash` in each user's Docker sandbox, against real containers. Needs Docker and the images
+// Stage-8 E2E (R57–R60): `bash` in the Docker sandbox, against real containers. Needs Docker and the images
 // from `npm run sandbox:build`; skipped without them.
 import type { FileEntry, TreeMeta } from '@gense/core/protocol'
 import assert from 'node:assert/strict'
@@ -20,10 +20,7 @@ const built = (image: string) => {
 }
 const ready = built('gense-sandbox:slim')
 
-const USERS = [
-  ['a@example.com', 'correct horse'],
-  ['b@example.com', 'battery staple'],
-] as const
+const PASSWORD = 'correct horse'
 const IDLE_MS = 3000
 let server: Awaited<ReturnType<typeof startServer>>
 let upstream: Awaited<ReturnType<typeof fakeUpstream>>
@@ -34,7 +31,7 @@ before(async () => {
   upstream = await fakeUpstream()
   const config = configFromEnv({ GENSE_FAUX: '1', DATA_DIR: await tempDir(), ...env(upstream.url) })
   server = await startServer({ ...config, sandbox: { memory: '256m', idleMs: IDLE_MS }, port: 0 })
-  for (const [email, password] of USERS) await server.auth.createUser(email, password)
+  await server.auth.setPassword(PASSWORD)
 })
 after(async () => {
   if (!ready) return
@@ -43,9 +40,8 @@ after(async () => {
 })
 
 /** A signed-in client with a fresh conversation, and `bash` through the faux model's tool rule. */
-async function session(user = 0) {
-  const [email, password] = USERS[user]!
-  const { cookie } = await login(server.url, email, password)
+async function session() {
+  const { cookie } = await login(server.url, PASSWORD)
   const client = await Client.connect(server.url, cookie)
   const tree = await client.request<TreeMeta>({ t: 'tree.create' })
   await client.request({ t: 'watch', treeId: tree.id })
@@ -62,8 +58,6 @@ async function session(user = 0) {
   const bash = (command: string, timeout?: number) => tool('bash', { command, timeout })
   return { client, tree, bash, tool }
 }
-
-const sandboxOf = (user: number) => [...server.sandboxes.values()][user]!
 
 test('R57: bash runs in the sandbox and a png it writes appears in the file panel', { skip: !ready, timeout: 180_000 }, async () => {
   const { client, tree, bash } = await session()
@@ -156,24 +150,10 @@ test('R60: a runaway command is stopped at its limit; an idle sandbox stops and 
   assert.match((await bash('echo alive')).text, /alive/, 'the sandbox survives')
 
   await bash('echo kept > kept.txt')
-  const name = sandboxOf(0).name
+  const name = server.sandbox!.name
   const deadline = Date.now() + IDLE_MS + 30_000
   while (Date.now() < deadline && docker('ps', '-q', '--filter', `name=^${name}$`)) await new Promise((r) => setTimeout(r, 500))
   assert.equal(docker('ps', '-q', '--filter', `name=^${name}$`), '', 'stopped when idle')
   assert.match((await bash('cat kept.txt')).text, /kept/)
   client.close()
-})
-
-test('R61: users see neither each other’s files nor processes', { skip: !ready, timeout: 180_000 }, async () => {
-  const a = await session(0)
-  const b = await session(1)
-  await a.bash('echo mine > private.txt; (sleep 120 &) ; true')
-  assert.ok(!(await b.bash('ls /data/sessions')).text.includes(a.tree.id), 'the other user’s tree is not there')
-  const seen = await b.bash(`cat /data/sessions/${a.tree.id}/private.txt; grep -rs mine /data/sessions; ps -eo args; true`)
-  assert.match(seen.text, /No such file/)
-  assert.doesNotMatch(seen.text, /mine\n|sleep 120/)
-  assert.notEqual(sandboxOf(0).name, sandboxOf(1).name)
-  await a.bash('pkill -f "sleep 120"; true')
-  a.client.close()
-  b.client.close()
 })

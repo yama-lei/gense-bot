@@ -1,0 +1,5 @@
+{$GENSE_DOMAIN} {
+	encode zstd gzip
+	# WebSockets and the X-Forwarded-Proto the server reads for Secure cookies pass through as they are.
+	reverse_proxy app:8787
+}

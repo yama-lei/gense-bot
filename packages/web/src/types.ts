@@ -183,8 +183,8 @@ export interface PluginInfo {
   enabled: boolean
   /** The server implements it. */
   available: boolean
-  /** Only self-hosted deployments implement it. */
-  selfHosted?: boolean
+  /** Needs the Docker sandbox, which SANDBOX=0 turns off. */
+  needsSandbox?: boolean
   settings: PluginSetting[]
   config: PluginSettingsState
   /** Why it cannot be turned on with its current settings; null when it can. */
@@ -221,7 +221,6 @@ export interface Preferences {
 
 export interface Account {
   name: string
-  email: string
   driveConnected: boolean
   /** Why Drive is unavailable (grant revoked, API error); null when fine. */
   driveError: string | null

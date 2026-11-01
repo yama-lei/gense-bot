@@ -6,12 +6,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { test } from 'node:test'
-import { BRIEF_KIND, EVENT_KIND, fauxModels, SqliteFiles, UserSpace, type EventData } from '../src/index.ts'
+import { BRIEF_KIND, EVENT_KIND, fauxModels, UserSpace, type EventData } from '../src/index.ts'
+import { diskEnv } from './fixtures.ts'
 
-async function open(path = ':memory:') {
+async function open(path = ':memory:', files?: string) {
   const db = await openNodeSqliteDatabase(path)
-  const files = await SqliteFiles.open(db, { id: 'x' })
-  return UserSpace.open(db, { models: fauxModels(), env: (cwd) => files.env({ cwd }) })
+  return UserSpace.open(db, { models: fauxModels(), env: await diskEnv(files) })
 }
 
 type Entry = { kind: string; data?: unknown; model?: { role: string; content: string | { type: string; text?: string }[] }[] }
@@ -133,7 +133,7 @@ test('R54: the limit, and spawning from a subagent, are refused with the same to
 test('V6: a subagent cut off by a restart finishes after it and is reported once', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gense-agents-'))
   const path = join(dir, 'space.sqlite')
-  let space = await open(path)
+  let space = await open(path, join(dir, 'files'))
   const t = await space.createTree()
   await space.send(t.id, { text: '[派出] [长回答] 长任务', requestId: 'a' })
   const agent = await until(async () => (await agents(space, t.id))[0], 'agent')
@@ -145,7 +145,7 @@ test('V6: a subagent cut off by a restart finishes after it and is reported once
   }, 'a partial answer')
   await space.close()
 
-  space = await open(path)
+  space = await open(path, join(dir, 'files'))
   const notice = await until(async () => (await events(space, t.id)).find((e) => e.title.includes('长任务')), 'notice after restart', 30_000)
   assert.match(notice.body, /第 300 句/)
   await space.harness.waitForIdle(ctx)

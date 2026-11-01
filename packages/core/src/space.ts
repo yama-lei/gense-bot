@@ -18,7 +18,6 @@ import {
   type HarnessOptions,
   type Submission,
   type ToolExecutionApi,
-  type Wake,
 } from '@earendil-works/pi-durable'
 import type { PluginValue } from './catalog.ts'
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite'
@@ -56,6 +55,7 @@ import {
   checkRule,
   checkTimeZone,
   eventText,
+  HOOKS_PATH,
   MAX_AGENTS,
   nextRun,
   reportTool,
@@ -154,25 +154,17 @@ export interface SpaceOptions {
   models: ModelSetup
   /** Seals the user's plugin secrets and model credentials. */
   secretKey?: string
-  /** Whether users may run subscription (OAuth) logins on this host. */
-  oauth?: boolean
   /** The user's files (roadmap-3 D6): an environment for a virtual working directory under /data. */
   env: EnvFactory
   /** Plugin settings the host supplies, and the key that seals the user's plugin secrets. */
   plugins?: Pick<PluginStoreOptions, 'defaults'>
   /** Passed through to the Harness: wake scheduling and settings belong to the host. */
   harness?: Pick<HarnessOptions, 'onWake' | 'setTimer' | 'now' | 'settings' | 'onReport'>
-  /**
-   * For hosts that wake the Harness themselves (a Durable Object alarm): awaited with the wake state before any call
-   * that can start work, since `onWake` only reports after the commit. An early alarm is harmless, a missing one
-   * strands the work.
-   */
-  arm?: (wake: Wake) => Promise<void>
   now?: () => number
   /** The environment's `exec` runs in this user's sandbox, so the sandbox plugin and its `bash` are offered (D7). */
   sandbox?: boolean
-  /** Path the host serves this user's webhooks under, `hooksPath(userId)`; without it there are none (R50). */
-  hooksPath?: () => string | undefined
+  /** Whether the host serves webhooks at `HOOKS_PATH` (R50); without it there are none. */
+  webhooks?: boolean
 }
 
 type TreeRow = { id: string; rootId: number; title: string; pinned: number; createdAt: number; updatedAt: number; activeBranchId: string }
@@ -296,7 +288,7 @@ export class UserSpace {
       registry.install(e)
       byName.set(e.name, e)
     }
-    const accounts = await ModelAccounts.open(db, { host: options.models, secretKey: options.secretKey, oauth: options.oauth ?? false })
+    const accounts = await ModelAccounts.open(db, { host: options.models, secretKey: options.secretKey, oauth: true })
     const workspace = new Workspace(options.env)
     const skills = await SkillStore.open(db, async () => workspace.env(DATA_DIR), ctx)
     // Conversations follow the host's selection, read at every resolution: a plugin switched on or off applies from the
@@ -316,7 +308,6 @@ export class UserSpace {
     space = new UserSpace(db, harness, workspace, plugins, skills, accounts, options)
     space.schedule = events.schedule
     space.agentTask = events.agent
-    await options.arm?.(harness.wake())
     // Events stored but not yet delivered when a previous process stopped; delivery is idempotent.
     for (const row of await db.all<EventRow>('SELECT id, treeId, branchId, data, wake FROM events WHERE deliveredAt IS NULL')) {
       await space.deliver(row, ctx).catch(() => {})
@@ -324,11 +315,6 @@ export class UserSpace {
     // Continue runs a previous process left unfinished (R32).
     harness.resume()
     return space
-  }
-
-  /** Arms the host's wake-up before a call that can start work. */
-  private async arm() {
-    await this.options.arm?.({ ...this.harness.wake(), active: true })
   }
 
   private now() {
@@ -412,7 +398,6 @@ export class UserSpace {
   /** Removes the tree and its workspace. pi-durable has no delete, so its conversations stay in storage. */
   async deleteTree(treeId: string, ctx: Context = BACKGROUND_CONTEXT) {
     const branches = await this.db.all<BranchRow>(`SELECT ${BRANCH_COLUMNS} FROM branches WHERE treeId = ?`, treeId)
-    if (branches.length) await this.arm()
     for (const s of await this.db.all<ScheduleRow>(`SELECT ${SCHEDULE_COLUMNS} FROM schedules WHERE treeId = ?`, treeId)) await this.stopSchedule(s, ctx)
     await this.db.run('DELETE FROM schedules WHERE treeId = ?', treeId)
     await this.db.run('DELETE FROM webhooks WHERE treeId = ?', treeId)
@@ -654,7 +639,6 @@ export class UserSpace {
     named: string,
     ctx: Context,
   ) {
-    await this.arm()
     const agent = await conv.agent(ctx)
     const model = input.model && (agent.model?.provider !== input.model.provider || agent.model?.modelId !== input.model.id)
       ? { provider: input.model.provider, modelId: input.model.id }
@@ -776,7 +760,6 @@ export class UserSpace {
     const text = eventText(event)
     const data = { ...event, source: { ...event.source } }
     if (row.wake) {
-      await this.arm()
       const submission = await conv.submit({ type: 'input', content: [{ type: 'text', text }], requestId: `event:${event.id}`, entry: { kind: EVENT_KIND, data } }, ctx)
       await this.answered(tree, branch, conv, submission, '', ctx)
     } else {
@@ -862,7 +845,6 @@ export class UserSpace {
   async runAgent(input: AgentInput, ctx: Context): Promise<AgentEnd> {
     const conv = await this.harness.conversation(input.conversationId as ConversationId, ctx)
     if (!conv) return { status: 'unanswered', reason: 'gone' }
-    await this.arm()
     const submission = await conv.submit(
       {
         type: 'input',
@@ -912,7 +894,6 @@ export class UserSpace {
   async summarize(treeId: string, branchId: string, requestId: string, ctx: Context = BACKGROUND_CONTEXT) {
     const { tree, branch } = await this.branchRow(treeId, branchId)
     if (branch.role !== 'user') throw new Error('只有分叉可以总结给主线')
-    await this.arm()
     const conv = await this.open(branch, ctx)
     const submission = await conv.submit(
       { type: 'input', content: [{ type: 'text', text: SUMMARIZE_PROMPT }], requestId, entry: { kind: BRIEF_KIND, data: { label: '总结给主线' } } },
@@ -991,13 +972,11 @@ export class UserSpace {
     const at = nextRun(JSON.parse(row.rule) as ScheduleRule, row.tz, this.now())
     if (at === null) throw new Error('执行时间已经过了')
     const conv = await this.open(await this.mainBranch(row.treeId), ctx)
-    await this.arm()
     const taskId = await conv.commit(
       (tx) => tx.createTask(this.schedule, { scheduleId: row.id, at }, { ownership: { kind: 'conversation' }, background: true }),
       ctx,
     )
     await this.db.run('UPDATE schedules SET enabled = 1, taskId = ?, nextRunAt = ? WHERE id = ?', taskId, at, row.id)
-    await this.options.arm?.(this.harness.wake())
   }
 
   private async stopSchedule(row: ScheduleRow, ctx: Context) {
@@ -1046,7 +1025,7 @@ export class UserSpace {
 
   // --- Webhooks (R50) ---
 
-  private webhookInfo = ({ secret: _, ...r }: WebhookRow): WebhookInfo => ({ ...r, path: `${this.options.hooksPath?.()}/${r.id}` })
+  private webhookInfo = ({ secret: _, ...r }: WebhookRow): WebhookInfo => ({ ...r, path: `${HOOKS_PATH}/${r.id}` })
 
   /** Webhook secrets are sealed, so creating one needs the host's TOKEN_ENCRYPTION_KEY. */
   get canCreateWebhooks() {
@@ -1054,13 +1033,13 @@ export class UserSpace {
   }
 
   async webhooks(): Promise<WebhookInfo[]> {
-    if (!this.options.hooksPath?.()) return []
+    if (!this.options.webhooks) return []
     return (await this.db.all<WebhookRow>('SELECT id, treeId, secret, createdAt, lastUsedAt FROM webhooks ORDER BY createdAt')).map(this.webhookInfo)
   }
 
   /** A new webhook for the tree, replacing its old one. The secret is returned only now; it is stored sealed. */
   async createWebhook(treeId: string) {
-    if (!this.options.hooksPath?.()) throw new Error('这个部署没有开启 Webhook')
+    if (!this.options.webhooks) throw new Error('这个部署没有开启 Webhook')
     if (!this.sealer) throw new Error('服务器没有配置 TOKEN_ENCRYPTION_KEY，无法保存 Webhook 密钥')
     await this.row(treeId)
     const secret = `whsec_${[...crypto.getRandomValues(new Uint8Array(24))].map((b) => b.toString(16).padStart(2, '0')).join('')}`
@@ -1103,7 +1082,6 @@ export class UserSpace {
 
   async abort(treeId: string, branchId?: string, ctx: Context = BACKGROUND_CONTEXT) {
     const { branch } = await this.branchRow(treeId, branchId)
-    await this.arm()
     await (await this.open(branch, ctx)).abort(ctx)
   }
 

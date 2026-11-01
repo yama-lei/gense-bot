@@ -1,5 +1,5 @@
-// One user's files as the agent and the file panel see them (roadmap-3 D6). Hosts supply an ExecutionEnv for a virtual
-// working directory; Node maps `/data` onto a directory, Cloudflare keeps the files in the UserHub's SQLite.
+// The owner's files as the agent and the file panel see them (roadmap-3 D6). The host supplies an ExecutionEnv for a
+// virtual working directory and maps `/data` onto a directory.
 //
 //   /data/sessions/<treeId>/   a tree's workspace, the agent's cwd
 //   /data/skills/              shared Skills, read-only to the agent

@@ -2,12 +2,12 @@ import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context'
 import { openNodeSqliteDatabase } from '@earendil-works/chord/sqlite/node'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { fauxModels, SqliteFiles, UserSpace } from '../src/index.ts'
+import { fauxModels, UserSpace } from '../src/index.ts'
+import { diskEnv } from './fixtures.ts'
 
 async function open() {
   const db = await openNodeSqliteDatabase(':memory:')
-  const files = await SqliteFiles.open(db, { id: 'x' })
-  return UserSpace.open(db, { models: fauxModels(), env: (cwd) => files.env({ cwd }) })
+  return UserSpace.open(db, { models: fauxModels(), env: await diskEnv() })
 }
 
 type Entry = { id: number; kind: string; model?: { content: unknown }[] }

@@ -27,6 +27,15 @@
 | 7 | 飞书 Source | 同阶段 4，并能作为通知渠道（若评审同意） |
 | 8 | 面板：只显示需要人处理的 Ticket；预算与速率上限 | 面板首屏回答“现在有什么要我处理” |
 
+## 阶段 1 记录（2026-10-31，分支 `chore/single-owner`）
+
+- 删除 `hosts/cf`、`SqliteFiles`（SQLite 里的工作区）、`arm`（DO 闹钟）、`oauth` 开关和 `/api/admin/users`。
+- 单所有者：只有密码，没有邮箱，用 `npm run passwd` 设置；改密码会退出所有登录。登录、会话、app 表与 pi-durable 存储放在同一个 `data/gense.sqlite`，文件在 `data/files/`。Webhook 路径改为 `/hooks/<id>`，沙箱容器只有一个 `gense-sandbox`。
+- 旧的 `data/app.sqlite` 与 `data/users/` 不迁移（用户决定从零开始），新服务不读它们。
+- 部署：`Dockerfile`、`compose.yaml`（app + Caddy，沙箱镜像用 `--profile sandbox` 构建）、`deploy/Caddyfile`。app 容器 `mem_limit` 768 MB，沙箱默认 1 GB。
+- 备份：每小时检查，最新副本超过一天就 `VACUUM INTO` 一份到 `data/backups/`，默认保留 7 份；重启不会多拷。
+- 内存（faux 模型，不含沙箱，本机 Node 24.14）：空闲 RSS 142 MB；10 个会话同时回答时峰值 168 MB。
+
 ## 与路线图 3 的差异
 
 - H8、H9 中“同时支持 Cloudflare”作废。

@@ -1,4 +1,4 @@
-// Stage-1 E2E against the real host with the faux model (roadmap-3 stage 1).
+// E2E against the real host with the faux model: the owner's login, chat and the scenarios in helpers.ts.
 import { RUN_ERROR_KIND, type TreeMeta } from '@gense/core/protocol'
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
@@ -6,7 +6,6 @@ import { configFromEnv } from '../src/config.ts'
 import { startServer } from '../src/server.ts'
 import { accountsScenario, agentsScenario, branchesScenario, Client, documentsScenario, eventsScenario, fakeUpstream, ledgerScenario, login, pluginEnv, pluginScenario, skillsScenario, tempDir, textOf, workspaceScenario } from './helpers.ts'
 
-const EMAIL = 'a@example.com'
 const PASSWORD = 'correct horse'
 let server: Awaited<ReturnType<typeof startServer>>
 let upstream: Awaited<ReturnType<typeof fakeUpstream>>
@@ -14,7 +13,7 @@ let upstream: Awaited<ReturnType<typeof fakeUpstream>>
 before(async () => {
   upstream = await fakeUpstream()
   server = await startServer({ ...configFromEnv({ GENSE_FAUX: '1', DATA_DIR: await tempDir(), ...pluginEnv(upstream.url) }), port: 0 })
-  await server.auth.createUser(EMAIL, PASSWORD)
+  await server.auth.setPassword(PASSWORD)
 })
 after(async () => {
   await server.close()
@@ -22,23 +21,23 @@ after(async () => {
 })
 
 test('login rejects a wrong password and accepts the right one', async () => {
-  const bad = await login(server.url, EMAIL, 'wrong password')
+  const bad = await login(server.url, 'wrong password')
   assert.equal(bad.status, 401)
   assert.equal(bad.cookie, undefined)
-  const good = await login(server.url, EMAIL, PASSWORD)
+  const good = await login(server.url, PASSWORD)
   assert.equal(good.status, 200)
   const me = await fetch(`${server.url}/api/me`, { headers: { cookie: good.cookie! } })
-  assert.deepEqual(await me.json(), { email: EMAIL })
+  assert.equal(me.status, 200)
 })
 
 test('the socket needs a session and a matching origin', async () => {
   await assert.rejects(Client.connect(server.url, undefined), /401/)
-  const { cookie } = await login(server.url, EMAIL, PASSWORD)
+  const { cookie } = await login(server.url, PASSWORD)
   await assert.rejects(Client.connect(server.url, cookie, 'https://evil.example'), /401/)
 })
 
 test('a message streams an answer and names the conversation', async () => {
-  const { cookie } = await login(server.url, EMAIL, PASSWORD)
+  const { cookie } = await login(server.url, PASSWORD)
   const client = await Client.connect(server.url, cookie)
   const tree = await client.request<TreeMeta>({ t: 'tree.create' })
   await client.request({ t: 'watch', treeId: tree.id })
@@ -56,7 +55,7 @@ test('a message streams an answer and names the conversation', async () => {
 })
 
 test('a failed run leaves an error entry', async () => {
-  const { cookie } = await login(server.url, EMAIL, PASSWORD)
+  const { cookie } = await login(server.url, PASSWORD)
   const client = await Client.connect(server.url, cookie)
   const tree = await client.request<TreeMeta>({ t: 'tree.create' })
   await client.request({ t: 'watch', treeId: tree.id })
@@ -67,7 +66,7 @@ test('a failed run leaves an error entry', async () => {
 })
 
 test('trees can be renamed, pinned and deleted', async () => {
-  const { cookie } = await login(server.url, EMAIL, PASSWORD)
+  const { cookie } = await login(server.url, PASSWORD)
   const client = await Client.connect(server.url, cookie)
   const tree = await client.request<TreeMeta>({ t: 'tree.create' })
   await client.request({ t: 'tree.update', treeId: tree.id, title: '改名', pinned: true })
@@ -79,63 +78,63 @@ test('trees can be renamed, pinned and deleted', async () => {
 })
 
 test('R33: the workspace: tool writes, the file panel, uploads and attachments', { timeout: 60_000 }, async () => {
-  const { cookie } = await login(server.url, EMAIL, PASSWORD)
+  const { cookie } = await login(server.url, PASSWORD)
   const client = await Client.connect(server.url, cookie)
   await workspaceScenario(client)
   client.close()
 })
 
 test('R33: plugins: switches, the server key, a sealed user key, and a generated image', { timeout: 60_000 }, async () => {
-  const { cookie } = await login(server.url, EMAIL, PASSWORD)
+  const { cookie } = await login(server.url, PASSWORD)
   const client = await Client.connect(server.url, cookie)
   await pluginScenario(client, upstream)
   client.close()
 })
 
 test('R33: Skills, / commands and @ mentions', { timeout: 60_000 }, async () => {
-  const { cookie } = await login(server.url, EMAIL, PASSWORD)
+  const { cookie } = await login(server.url, PASSWORD)
   const client = await Client.connect(server.url, cookie)
   await skillsScenario(client)
   client.close()
 })
 
 test('R62: signing in to a model service with an API key', { timeout: 60_000 }, async () => {
-  const { cookie } = await login(server.url, EMAIL, PASSWORD)
+  const { cookie } = await login(server.url, PASSWORD)
   const client = await Client.connect(server.url, cookie)
-  await accountsScenario(client, { oauth: true })
+  await accountsScenario(client)
   client.close()
 })
 
 test('R9: Word and PDF attachments are read as text', { timeout: 60_000 }, async () => {
-  const { cookie } = await login(server.url, EMAIL, PASSWORD)
+  const { cookie } = await login(server.url, PASSWORD)
   const client = await Client.connect(server.url, cookie)
   await documentsScenario(client)
   client.close()
 })
 
 test('R35–R37: edits, regenerations and forks are branches of one conversation', { timeout: 60_000 }, async () => {
-  const { cookie } = await login(server.url, EMAIL, PASSWORD)
+  const { cookie } = await login(server.url, PASSWORD)
   const client = await Client.connect(server.url, cookie)
   await branchesScenario(client)
   client.close()
 })
 
 test('R42–R45: branches share the workspace and change a file only as they last read it', { timeout: 60_000 }, async () => {
-  const { cookie } = await login(server.url, EMAIL, PASSWORD)
+  const { cookie } = await login(server.url, PASSWORD)
   const client = await Client.connect(server.url, cookie)
   await ledgerScenario(client)
   client.close()
 })
 
 test('R40, R46–R50: webhooks, branch summaries and schedules arrive as Events', { timeout: 90_000 }, async () => {
-  const { cookie } = await login(server.url, EMAIL, PASSWORD)
+  const { cookie } = await login(server.url, PASSWORD)
   const client = await Client.connect(server.url, cookie)
   await eventsScenario(client, server.url)
   client.close()
 })
 
 test('R51–R55: subagents report back to the main line, and one is stopped', { timeout: 90_000 }, async () => {
-  const { cookie } = await login(server.url, EMAIL, PASSWORD)
+  const { cookie } = await login(server.url, PASSWORD)
   const client = await Client.connect(server.url, cookie)
   await agentsScenario(client)
   client.close()

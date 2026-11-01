@@ -24,8 +24,8 @@ export interface PluginEntry {
   settings: PluginSetting[]
   /** On until the user switches it off. */
   defaultEnabled?: boolean
-  /** Only self-hosted deployments implement it. */
-  selfHosted?: boolean
+  /** Needs the Docker sandbox, which SANDBOX=0 turns off. */
+  needsSandbox?: boolean
 }
 
 /** A plugin's settings as the host sends them; secrets appear only as `secretsSet`. */
@@ -134,7 +134,7 @@ export const pluginCatalog: PluginEntry[] = [
     description: '在你自己的隔离容器里运行命令和代码（Python、Node、git 等），可以联网安装依赖，产生的文件保存在会话工作区。只在自部署上可用。',
     sideEffect: true,
     defaultEnabled: true,
-    selfHosted: true,
+    needsSandbox: true,
     settings: [
       {
         key: 'image',

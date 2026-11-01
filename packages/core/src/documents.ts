@@ -1,5 +1,5 @@
 // Reading documents (roadmap-3 R33: R9). `read` turns PDF, Word, Excel and PowerPoint files into text, so the model
-// pages through them with offset/limit like any text file. Pure JavaScript, so Workers run it too: the Office formats
+// pages through them with offset/limit like any text file. Pure JavaScript: the Office formats
 // are zipped XML, PDFs go through pdf.js (unpdf). Scanned PDFs have no text layer and are reported as such.
 import type { Context } from '@earendil-works/chord/context'
 import type { ExecutionEnv } from '@earendil-works/pi-durable/env'

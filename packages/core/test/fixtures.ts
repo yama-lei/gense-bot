@@ -1,5 +1,10 @@
-// Small real documents for the R9 tests, built in code so the repository holds no binaries.
+// Test fixtures: small real documents for the R9 tests, built in code so the repository holds no binaries, and files on disk.
+import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node'
 import { strToU8, zipSync } from 'fflate'
+import { mkdir, mkdtemp } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { DATA_DIR, MountedEnv, type EnvFactory } from '../src/index.ts'
 
 const zip = (files: Record<string, string>) => zipSync(Object.fromEntries(Object.entries(files).map(([k, v]) => [k, strToU8(v)])))
 
@@ -49,4 +54,11 @@ export function pdfFile(text: string) {
   out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}`
   out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
   return strToU8(out)
+}
+
+/** Files in a fresh directory, mounted at /data as the server mounts the owner's files; `root` keeps them across opens. */
+export async function diskEnv(root?: string): Promise<EnvFactory> {
+  const dir = root ?? (await mkdtemp(join(tmpdir(), 'gense-files-')))
+  await mkdir(dir, { recursive: true })
+  return (cwd) => new MountedEnv(new NodeExecutionEnv({ cwd: dir }), { mount: DATA_DIR, target: dir, cwd })
 }

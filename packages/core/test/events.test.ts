@@ -3,19 +3,19 @@ import { openNodeSqliteDatabase } from '@earendil-works/chord/sqlite/node'
 import assert from 'node:assert/strict'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { test } from 'node:test'
-import { BRIEF_KIND, EVENT_KIND, fauxModels, hmac, nextRun, SqliteFiles, UserSpace, type EventData } from '../src/index.ts'
+import { BRIEF_KIND, EVENT_KIND, fauxModels, hmac, nextRun, UserSpace, type EventData } from '../src/index.ts'
+import { diskEnv } from './fixtures.ts'
 
 /** A space on a clock the test moves; sleeping tasks run when it calls `harness.resume()`. */
 async function open() {
   const clock = { now: Date.UTC(2026, 9, 23, 0, 0) }
   const now = () => clock.now
   const db = await openNodeSqliteDatabase(':memory:')
-  const files = await SqliteFiles.open(db, { id: 'x' })
   const space = await UserSpace.open(db, {
     models: fauxModels(),
-    env: (cwd) => files.env({ cwd }),
+    env: await diskEnv(),
     secretKey: 'test key',
-    hooksPath: () => '/hooks/u1',
+    webhooks: true,
     now,
     harness: { now, onWake: () => {} },
   })
@@ -149,7 +149,7 @@ test('R50: a webhook call needs a fresh signature, and its idempotency key deliv
   const { space, clock } = await open()
   const t = await space.createTree()
   const { webhook, secret } = await space.createWebhook(t.id)
-  assert.equal(webhook.path, `/hooks/u1/${webhook.id}`)
+  assert.equal(webhook.path, `/hooks/${webhook.id}`)
   assert.ok(!JSON.stringify(await space.webhooks()).includes(secret), 'the secret is not listed')
 
   const call = async (body: string, options: { secret?: string; ts?: number; key?: string } = {}) => {

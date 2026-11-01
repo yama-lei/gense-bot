@@ -93,7 +93,7 @@ export interface AccountsOptions {
   /** The host's providers (the relay), usable by everyone and not listed as accounts. */
   host: ModelSetup
   secretKey: string | undefined
-  /** OAuth logins need a callback the host can receive or a code pasted back; Workers hosts leave them off. */
+  /** Whether subscription (OAuth) logins are offered; they need a callback to the host or a code pasted back. */
   oauth: boolean
 }
 

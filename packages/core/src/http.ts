@@ -1,5 +1,5 @@
-// The account endpoints, on web-standard Request and Response so both hosts serve them the same way.
-import { SESSION_COOKIE, SESSION_MAX_AGE_S, type Auth, type User } from './auth.ts'
+// The login endpoints, on web-standard Request and Response.
+import { SESSION_COOKIE, SESSION_MAX_AGE_S, type Auth } from './auth.ts'
 
 const MAX_BODY = 64 * 1024
 
@@ -37,34 +37,21 @@ async function readJson(request: Request): Promise<Record<string, unknown>> {
   return value && typeof value === 'object' ? value : {}
 }
 
-/** Constant-time comparison of two secrets. */
-function equal(a: string, b: string) {
-  if (a.length !== b.length) return false
-  let diff = 0
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i)
-  return diff === 0
+/** Whether the request carries the owner's live session cookie. */
+export async function signedIn(auth: Auth, request: Request) {
+  return auth.session(parseCookies(request.headers.get('cookie'))[SESSION_COOKIE])
 }
 
-/** The user of the request's session cookie, if it is valid. */
-export async function sessionUser(auth: Auth, request: Request): Promise<User | undefined> {
-  return (await auth.session(parseCookies(request.headers.get('cookie'))[SESSION_COOKIE])) ?? undefined
-}
-
-export interface AccountApiOptions {
-  /** Enables `POST /api/admin/users` with `Authorization: Bearer <adminToken>`; hosts without a shell use it to add users. */
-  adminToken?: string
-}
-
-/** Handles `/api/login`, `/api/logout`, `/api/me` and the admin endpoint; other paths get 404. */
-export async function accountApi(auth: Auth, request: Request, options: AccountApiOptions = {}): Promise<Response> {
+/** Handles `/api/login`, `/api/logout` and `/api/me`; other paths get 404. */
+export async function accountApi(auth: Auth, request: Request): Promise<Response> {
   const path = new URL(request.url).pathname
   if (request.method === 'POST' && !sameOrigin(request)) return json(403, { error: '来源不匹配' })
   try {
     if (path === '/api/login' && request.method === 'POST') {
       const body = await readJson(request)
       try {
-        const { token, user } = await auth.login(String(body.email ?? ''), String(body.password ?? ''))
-        return json(200, { email: user.email }, { 'set-cookie': sessionCookie(request, token, SESSION_MAX_AGE_S) })
+        const token = await auth.login(String(body.password ?? ''))
+        return json(200, {}, { 'set-cookie': sessionCookie(request, token, SESSION_MAX_AGE_S) })
       } catch (error) {
         return json(401, { error: error instanceof Error ? error.message : '登录失败' })
       }
@@ -75,19 +62,7 @@ export async function accountApi(auth: Auth, request: Request, options: AccountA
       return json(200, {}, { 'set-cookie': sessionCookie(request, '', 0) })
     }
     if (path === '/api/me' && request.method === 'GET') {
-      const user = await sessionUser(auth, request)
-      return user ? json(200, { email: user.email }) : json(401, { error: '未登录' })
-    }
-    if (path === '/api/admin/users' && request.method === 'POST' && options.adminToken) {
-      const given = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ?? ''
-      if (!equal(given, options.adminToken)) return json(401, { error: 'unauthorized' })
-      const body = await readJson(request)
-      const email = String(body.email ?? '')
-      const password = String(body.password ?? '')
-      const existing = (await auth.users()).find((u) => u.email === email.trim().toLowerCase())
-      if (existing) await auth.setPassword(email, password)
-      else await auth.createUser(email, password)
-      return json(200, { email, created: !existing })
+      return (await signedIn(auth, request)) ? json(200, {}) : json(401, { error: '未登录' })
     }
   } catch (error) {
     return json(400, { error: error instanceof Error ? error.message : String(error) })

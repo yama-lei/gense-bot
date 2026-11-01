@@ -1,5 +1,4 @@
-// The user's sandbox (roadmap-3 D7): one Docker container per user, started by the first command and removed after it
-// sits idle. Commands run in it with `docker exec`; file tools keep using the host directory, which the container
+// The sandbox (roadmap-3 D7): one Docker container, started by the first command and removed after it sits idle. Commands run in it with `docker exec`; file tools keep using the host directory, which the container
 // mounts at /data, so a virtual path is the same path inside the container.
 import type { Context } from '@earendil-works/chord'
 import { ExecutionError, err, type ExecutionEnv, type ShellExecOptions, type ShellExecResult, type Result } from '@earendil-works/pi-durable/env'
@@ -14,9 +13,9 @@ import { promisify } from 'node:util'
 const run = promisify(execFile)
 
 export interface SandboxOptions {
-  /** Container name suffix; from the login identity, never from a request. */
-  userId: string
-  /** The user's files directory, mounted at /data. */
+  /** Container name; one server per Docker host unless each sets its own. */
+  name?: string
+  /** The owner's files directory, mounted at /data. */
   root: string
   /** `slim` or `full`, read at each start. */
   image: () => string
@@ -65,7 +64,7 @@ export class Sandbox {
 
   constructor(options: SandboxOptions) {
     this.#options = options
-    this.name = `gense-sandbox-${options.userId.replace(/[^\w.-]/g, '')}`
+    this.name = options.name ?? 'gense-sandbox'
     this.#cli = new NodeExecutionEnv({ cwd: options.root })
   }
 
@@ -108,7 +107,7 @@ export class Sandbox {
       // The host's uid, so files the sandbox writes stay the host's; no root, no added capabilities (D7).
       '--user', `${uid}:${gid}`, '--security-opt', 'no-new-privileges', '--init',
       '--network', NETWORK,
-      '--memory', this.#options.memory ?? '2g', '--memory-swap', this.#options.memory ?? '2g',
+      '--memory', this.#options.memory ?? '1g', '--memory-swap', this.#options.memory ?? '1g',
       '--cpus', this.#options.cpus ?? '2', '--pids-limit', String(this.#options.pids ?? 512),
       '--mount', `type=bind,src=${root},dst=${DATA_DIR}`,
       '--mount', `type=bind,src=${join(root, 'skills')},dst=${SKILLS_DIR},readonly`,

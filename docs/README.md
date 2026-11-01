@@ -1,21 +1,20 @@
 # 个人助手项目文档
 
-本项目要做一个可持续扩展的个人助手。路线图 2 曾在 Think + Cloudflare 上完成，旧代码已删除（标签 `legacy-final`）；路线图 3 改用 pi-durable，同时支持 Cloudflare 和自部署，正在实现。
+本项目要做一个可持续扩展的个人助手。路线图 2 曾在 Think + Cloudflare 上完成，旧代码已删除（标签 `legacy-final`）；路线图 3 改用 pi-durable；路线图 4 去掉 Cloudflare，改为单所有者、单机 VPS 自部署，并逐步转向事件驱动。
 
 ## 阅读顺序
 
 1. [产品 Intent](intents/personal-assistant.md)：用户要什么，以及已经确认的约束。
 2. [产品 Spec 草案](specs/personal-assistant.md)：建议的首个闭环、行为要求和验收条件，待评审。
-3. [架构 Design 草案](design/architecture.md)：技术职责、数据流、待定问题和实现前验证。
-4. [Cloudflare 托管决策](adr/0001-cloudflare-free-tier.md) 与 [Think + Google Drive 决策](adr/0002-think-google-drive.md)：已确认的方向及取舍。
-5. [免费额度与依赖核查](research/cloudflare-free-tier.md)：Workers / DO 额度依据（Pi 相关部分已过时）。
+3. [架构 Design](design/architecture.md)：当前代码的组件、登录、数据与备份、sandbox、插件接口和验证方式。
+4. [Cloudflare 托管决策](adr/0001-cloudflare-free-tier.md) 与 [Think + Google Drive 决策](adr/0002-think-google-drive.md)：早期方向，已被 ADR-0004、ADR-0005 取代，保留作为历史。
+5. [免费额度与依赖核查](research/cloudflare-free-tier.md)：Workers / DO 额度依据（历史资料，Cloudflare 已不再使用）。
 6. [网页界面 Spec](specs/web-ui.md)：页面、组件、移动端行为和交付阶段；前端在 [`packages/web/`](../packages/web/)（Mock 前端已删除）。
 7. [助手功能清单](intents/agent-features.md)：goal.md 按能力拆开后的清单、状态和待商量的问题（含会话工作区）。
 8. [路线图 2](plans/roadmap-2.md) 与 [ADR-0003](adr/0003-free-plan-agent-features.md)：网页搜索、文件、会话树、命令、Skills、生成式界面的分层计划和开发顺序。
 9. [OpenAI 兼容中转站的已知问题](research/openai-relay.md)：注入的托管工具、`item_reference`、生图参数，以及现有的绕开方式。
-10. [路线图 3](plans/roadmap-3.md) 与 [ADR-0004](adr/0004-pi-durable-portable-core.md)（2026-10-23 评审通过）：改用 pi-durable、Cloudflare 与自部署两种部署方式、树形会话、Event、子 agent、自部署 sandbox。
+10. [路线图 3](plans/roadmap-3.md) 与 [ADR-0004](adr/0004-pi-durable-portable-core.md)（2026-10-23 评审通过）：改用 pi-durable、树形会话、Event、子 agent、Docker sandbox。其中 Cloudflare 部署的部分已被 ADR-0005 取代。
 11. [生成式界面改用 OpenUI](plans/openui.md)（2026-10-23）：OpenUI Lang 程序、从 open-intelligent-ui 移植的组件库、校验与纠错。安装依赖时设 `OPENUI_TELEMETRY_DISABLED=1`，否则 `@openuidev/lang-core` 的 postinstall 会发送安装统计。
-
 12. [路线图 4](plans/roadmap-4.md) 与 [ADR-0005](adr/0005-event-driven-vps.md)（2026-10-31，草案）：改为事件驱动、单机 VPS 自部署，借鉴 [`ref/dsh-superagent-prototype`](../ref/dsh-superagent-prototype/)（git submodule，克隆后需 `git submodule update --init`）。
 
 原始课程材料保留在 [实验 1](intents/lab1.md) 和 [实验 2](intents/lab2.md)。它们提供长期方向，不代表其中每项功能都属于第一版交付范围。
@@ -32,6 +31,6 @@
 
 ## 当前评审重点
 
-先评审重写后的 Spec 与架构草案，再按架构草案的 V1–V6 逐项验证。验证通过之前不承诺完整方案可运行，也不通过开通 Cloudflare 付费服务绕过限制。
+先评审 [ADR-0005](adr/0005-event-driven-vps.md) 与 [路线图 4](plans/roadmap-4.md)；阶段 1（单所有者、Compose 部署、备份）已完成，下一步是在 2 GB 的 VPS 上验收内存余量，再进入阶段 2（聊天变成事件）。
 
 `AGENTS.md` 保留高层开发原则，不复制这里的产品需求和技术细节。开发用 Pi 插件的说明在 [`.pi/README.md`](../.pi/README.md)，它们不属于产品运行时。

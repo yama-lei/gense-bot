@@ -12,7 +12,7 @@
 | 2 | 不支持 `item_reference` | AI SDK 默认 `store: true`，多步工具调用时用 `item_reference` 按 id 引用上一步的推理。中转站不保存响应，整个请求返回 `502 {"error":{"message":"Upstream request failed","type":"upstream_error"}}`，重试 3 次后这一轮失败。出现在第二次及以后的工具调用之后（输入形如 `developer, user, function_call, function_call_output, item_reference, function_call, ...`） | `responsesCompat` 从 `input` 里删掉 `item_reference`。模型因此看不到前几步的推理，可能多花 token，也可能前后不连贯 | 试 `store: false` 加 `include: ["reasoning.encrypted_content"]`，让推理随请求带上。要先确认中转站是否支持 |
 | 3 | Images API 忽略 `size`、`quality`、`output_format` | `POST /v1/images/generations`，`model: gpt-image-2`，`size: 1024x1536`。直接调用也返回 `size: 1254x1254`、`quality: low`、`output_format: png`，约 1.6 MB | 按文件头识别格式；图片字节按 1 MB 分块存进会话 DO。图片插件的“默认尺寸”和“质量”目前不生效。横版、竖版只能靠提示词，并不可靠 | 问中转站能否透传这些参数，或换一个透传的端点。之后再验证设置是否生效 |
 | 4 | 生图需要分组权限 | 开通前 `/images/generations` 和 Responses `image_generation` 都返回 `Image generation is not enabled for this group` | 用户已开通（2026-10-21） | 换分组或换 Key 时要再确认。图片插件会把 403 转述为“端点没有开通生图” |
-| 5 | 两个端点的 `/v1/models` 返回同一份全量列表 | 见[架构](../design/architecture.md)“模型列表”。列表里未必有配置的默认模型 | Anthropic 端点只显示 models.dev 认作 Anthropic 的模型；两个默认模型总是显示 | 无 |
+| 5 | 两个端点的 `/v1/models` 返回同一份全量列表 | 见[架构](../design/architecture.md)“模型列表”。列表里未必有配置的默认模型 | 已不适用：现在只有一个中转端点，模型列表取自 `.env` 的 `DEFAULT_PROVIDER_MODEL`、`PROVIDER_MODELS`，不再调用 `/v1/models` | 无 |
 | 6 | 偶发 `Upstream request failed` | 表现与问题 2 相同，都是 502。目前看到的都能用问题 2 解释，没有证据表明存在独立的偶发故障 | AI SDK 默认重试 3 次 | 再出现时记下请求的 `x-request-id` 和 `input` 的结构（不含内容），确认是否另有原因 |
 
 ## 复测方法

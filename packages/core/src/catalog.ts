@@ -131,7 +131,7 @@ export const pluginCatalog: PluginEntry[] = [
   {
     id: 'sandbox',
     name: '代码沙箱',
-    description: '在你自己的隔离容器里运行命令和代码（Python、Node、git 等），可以联网安装依赖，产生的文件保存在会话工作区。只在自部署上可用。',
+    description: '在你自己的隔离容器里运行命令和代码（Python、Node、git 等），可以联网安装依赖，产生的文件保存在会话工作区。服务器关闭沙箱（SANDBOX=0）时不可用。',
     sideEffect: true,
     defaultEnabled: true,
     needsSandbox: true,

@@ -1,0 +1,302 @@
+// The contract between the web client and the server (roadmap-5): messages over one WebSocket, plus
+//   POST /api/login { password }, POST /api/logout, GET /api/me            the session cookie
+//   POST /api/password { current, next }                                   signs every other session out
+//   GET  /api/mcp/callback                                                 where an MCP server's OAuth returns
+// Types and constants only: the browser imports it too.
+import type { WireOp } from '@earendil-works/chord/delta'
+import type { AuthEvent, AuthType } from '@earendil-works/pi-ai'
+import type { CommandNote, Mention } from './notes.ts'
+import type { ChannelInfo, PluginInfo, PluginValue, SkillInfo, SkillSource } from './plugins.ts'
+
+export * from './notes.ts'
+export * from './plugins.ts'
+
+/** A conversation as the sidebar lists it: a tree of branches, titled by its main branch (roadmap-3 R35). */
+export interface TreeMeta {
+  id: string
+  title: string
+  pinned: boolean
+  /** The channel it started in, when not the web: `feishu` and the chat's name. */
+  source?: { kind: string; label: string }
+  createdAt: number
+  updatedAt: number
+}
+
+/** A conversation a search found; `snippet` is the text around the match. */
+export interface TreeHit {
+  treeId: string
+  title: string
+  snippet: string
+  updatedAt: number
+}
+
+/** What the owner tells the assistant about themselves and how to answer; part of every conversation's prompt. */
+export interface Preferences {
+  name: string
+  instructions: string
+}
+
+export type BranchRole = 'main' | 'user' | 'agent'
+export type BranchStatus = 'idle' | 'running' | 'done' | 'failed' | 'aborted'
+
+/** One conversation of a tree (roadmap-3 D2). Entry ids are global, so they order fork points across branches. */
+export interface BranchMeta {
+  id: string
+  parentId: string | null
+  /** pi-durable conversation id; view entries carry it, so a client tells which branch wrote an entry. */
+  conversationId: number
+  /** Entry of the parent's transcript it continues from; null when it starts empty (a version of the first message). */
+  forkEntryId: number | null
+  role: BranchRole
+  /** Its first message; empty while it has none. */
+  title: string
+  status: BranchStatus
+  /** Newest entry, and the start of its newest answer, for the tree map. */
+  lastEntryId: number | null
+  preview: string
+  createdAt: number
+}
+
+export interface BranchesState {
+  branches: BranchMeta[]
+  /** Where the user last was; a watch without a branch opens it. */
+  activeBranchId: string
+  /**
+   * Versions of a message (R37): branches that continue the same entry with a message of their own, oldest first.
+   * Keyed by that entry's id, or `start` for the first message.
+   */
+  versions: Record<string, string[]>
+}
+
+export interface ModelInfo {
+  provider: string
+  id: string
+  name: string
+}
+
+export type Effort = 'low' | 'medium' | 'high'
+
+/** A model service the user can sign in to with their own credentials (R62). */
+export interface ProviderState {
+  id: string
+  name: string
+  /** What the API-key login asks for, e.g. "Anthropic API key"; null when there is none. */
+  apiKey: string | null
+  /** The subscription login's label; null when there is none or the host cannot run it. */
+  oauth: string | null
+  /** How the user is signed in; null when they are not. */
+  configured: AuthType | null
+}
+
+/** A question a login asks the user; `select` answers with an option id. */
+export type LoginPrompt =
+  | { type: 'text' | 'secret' | 'manual_code'; message: string; placeholder?: string }
+  | { type: 'select'; message: string; options: { id: string; label: string; description?: string }[] }
+
+/** A file in a tree's workspace or the Skills, for the file panel. Paths are the agent's (`/data/...`). */
+export interface FileEntry {
+  path: string
+  size: number
+  mtime: number
+  /** Under the read-only Skills. */
+  readOnly: boolean
+}
+
+export interface FilePreview {
+  text: string
+  size: number
+  /** Only the start of the file is in `text`. */
+  truncated: boolean
+  /** Not UTF-8 text; `text` is empty. */
+  binary: boolean
+}
+
+/** An uploaded file; `id` is its path under /data/uploads. */
+export interface UploadedFile {
+  id: string
+  name: string
+  mimeType: string
+  size: number
+  modifiedTime: number
+}
+
+/** A tool's result as a view sees it (MCP `CallToolResult`). */
+export interface ToolCallResult {
+  content: string
+  structuredContent?: unknown
+  isError?: boolean
+}
+
+/** Kind of an entry the app places for a message that is not the user's own input (roadmap-3 D4); data is EventData. */
+export const EVENT_KIND = 'app.event'
+/** Kind of an input the app asks the model on the user's behalf, such as "summarize to the main line" (D3); data is BriefData. */
+export const BRIEF_KIND = 'app.brief'
+
+/** An Event as its card shows it (R46): where it came from, a title and a body. */
+export interface EventData {
+  id: string
+  source: { kind: 'branch' | 'agent' | 'schedule' | 'webhook' | 'system' | 'channel'; id: string; label: string }
+  type: 'report' | 'tick' | 'webhook' | 'notice'
+  title: string
+  body: string
+  /** Whether it started a run; false only lands in the transcript for the next turn (R47). */
+  wake: boolean
+  createdAt: number
+}
+
+export interface BriefData {
+  label: string
+}
+
+/** When a schedule fires (R49), as wall-clock times in the schedule's time zone. Days are 0 (Sunday) to 6. */
+export type ScheduleRule =
+  | { kind: 'once'; at: number }
+  | { kind: 'daily'; time: string }
+  | { kind: 'weekly'; days: number[]; time: string }
+  | { kind: 'interval'; minutes: number }
+
+export interface ScheduleInfo {
+  id: string
+  treeId: string
+  name: string
+  /** What the conversation is asked when it fires. */
+  prompt: string
+  rule: ScheduleRule
+  /** IANA time zone the rule's times are in. */
+  tz: string
+  enabled: boolean
+  nextRunAt: number | null
+  lastRunAt: number | null
+  lastResult: string
+  createdAt: number
+}
+
+/** A conversation's webhook (R50); POST to `path` on the host, signed with its secret. */
+export interface WebhookInfo {
+  id: string
+  treeId: string
+  path: string
+  createdAt: number
+  lastUsedAt: number | null
+}
+
+/** Requests carry an `id`; the host answers each with one `reply`. */
+export type ClientRequest =
+  | { t: 'tree.create'; id: number }
+  | { t: 'tree.update'; id: number; treeId: string; title?: string; pinned?: boolean }
+  | { t: 'tree.delete'; id: number; treeId: string }
+  /** Conversations whose title or messages match; resolves to TreeHit[], best first. */
+  | { t: 'trees.search'; id: number; query: string; limit?: number }
+  | { t: 'prefs.set'; id: number; name?: string; instructions?: string }
+  /**
+   * `attachments` are upload ids; they are copied into the tree's workspace. Goes to `branchId`, or the active branch.
+   * With `replace` (a user entry id) the message is an edit: it goes to a new branch beside that message (R37).
+   * Resolves to `{ branchId }`.
+   */
+  | {
+      t: 'send'
+      id: number
+      treeId: string
+      branchId?: string
+      replace?: number
+      text: string
+      requestId: string
+      model?: ModelInfo
+      effort?: Effort
+      attachments?: string[]
+      command?: CommandNote
+      mentions?: Mention[]
+    }
+  | { t: 'abort'; id: number; treeId: string; branchId?: string }
+  /** A new branch continuing `at` (an entry of `branchId`'s transcript); resolves to its BranchMeta (R36). */
+  | { t: 'branch.fork'; id: number; treeId: string; branchId: string; at: number }
+  /** Asks the user entry `entryId` again in a new branch beside it; resolves to its BranchMeta (R37). */
+  | { t: 'regenerate'; id: number; treeId: string; branchId: string; entryId: number; requestId: string; model?: ModelInfo; effort?: Effort }
+  /** Streams one branch of the tree (`branchId`, or the active one) and makes it the active one. */
+  | { t: 'watch'; id: number; treeId: string; branchId?: string }
+  | { t: 'unwatch'; id: number; treeId: string }
+  | { t: 'files.list'; id: number; treeId: string }
+  | { t: 'files.preview'; id: number; treeId: string; path: string }
+  /** Resolves to `{ name, mimeType, base64 }`. */
+  | { t: 'files.read'; id: number; treeId: string; path: string }
+  | { t: 'files.delete'; id: number; treeId: string; path: string }
+  /** At most 20 MB. Resolves to an UploadedFile. */
+  | { t: 'upload'; id: number; name: string; base64: string }
+  | { t: 'uploads'; id: number }
+  /** Switches a plugin or changes some of its settings; `null` returns a value to its default or clears a secret. */
+  | { t: 'plugin.set'; id: number; pluginId: string; enabled?: boolean; values?: Record<string, PluginValue | null>; secrets?: Record<string, string | null> }
+  /** Switches one tool of a plugin; a tool that is off is not offered to the model. */
+  | { t: 'plugin.tool.set'; id: number; pluginId: string; tool: string; enabled: boolean }
+  /** Adds an MCP server (Streamable HTTP) as a plugin and connects; resolves to its PluginInfo. */
+  | { t: 'mcp.add'; id: number; name: string; url: string; headers?: Record<string, string> }
+  /** Changes a server's name, address or headers (`null` removes one) and reconnects. */
+  | { t: 'mcp.update'; id: number; pluginId: string; name?: string; url?: string; headers?: Record<string, string | null> }
+  | { t: 'mcp.remove'; id: number; pluginId: string }
+  | { t: 'mcp.reconnect'; id: number; pluginId: string }
+  /** Starts the server's OAuth sign-in; resolves to `{ url }` for the browser to open. */
+  | { t: 'mcp.auth'; id: number; pluginId: string }
+  /** The view a tool's calls render with; resolves to a UiResource. */
+  | { t: 'resource.read'; id: number; pluginId: string; uri: string }
+  /** A view calls a tool (MCP Apps `tools/call`): only tools of `pluginId`, the view's own plugin. */
+  | { t: 'tool.call'; id: number; treeId: string; pluginId: string; name: string; args: unknown }
+  | { t: 'skill.set'; id: number; name: string; enabled: boolean }
+  /** Installs every Skill found at the source; resolves to the SkillInfo[] it added or replaced. */
+  | { t: 'skill.install'; id: number; source: SkillSource }
+  | { t: 'skill.remove'; id: number; name: string }
+  /** One file of a Skill, as text; resolves to a FilePreview. */
+  | { t: 'skill.read'; id: number; name: string; path: string }
+  /** Switches a channel or changes its settings; it reconnects with the new ones. */
+  | { t: 'channel.set'; id: number; channelId: string; enabled?: boolean; values?: Record<string, PluginValue | null>; secrets?: Record<string, string | null> }
+  /** A code the owner sends to the bot to pair their identity; resolves to `{ code, expiresAt }`. */
+  | { t: 'channel.pair'; id: number; channelId: string }
+  /** Lets `actorId` talk to the bot, for example someone a rejected Trigger named. */
+  | { t: 'channel.allow'; id: number; channelId: string; actorId: string; name: string }
+  | { t: 'channel.revoke'; id: number; channelId: string; actorId: string }
+  /** The newest Triggers of a channel, newest first; resolves to TriggerInfo[]. */
+  | { t: 'triggers.list'; id: number; channelId: string; limit?: number }
+  /** Runs a login and replies when it ends; meanwhile the host sends `auth.event` and `auth.prompt` for `loginId`. */
+  | { t: 'auth.login'; id: number; loginId: string; provider: string; type: AuthType }
+  /** Answers an `auth.prompt`; without `value` the prompt is cancelled. */
+  | { t: 'auth.answer'; id: number; promptId: string; value?: string }
+  | { t: 'auth.cancel'; id: number; loginId: string }
+  | { t: 'auth.logout'; id: number; provider: string }
+  /** Asks a user branch to summarize itself and `report` to the main branch (R40). */
+  | { t: 'branch.summarize'; id: number; treeId: string; branchId: string; requestId: string }
+  | { t: 'schedule.create'; id: number; treeId: string; name: string; prompt: string; rule: ScheduleRule; tz: string }
+  | { t: 'schedule.update'; id: number; scheduleId: string; enabled: boolean }
+  | { t: 'schedule.delete'; id: number; scheduleId: string }
+  /** A new webhook for the tree, replacing its old one; resolves to `{ webhook, secret }`, the secret shown only now. */
+  | { t: 'webhook.create'; id: number; treeId: string }
+  | { t: 'webhook.delete'; id: number; webhookId: string }
+
+export type ServerMessage =
+  | { t: 'hello' }
+  | { t: 'models'; models: ModelInfo[]; defaultModel: ModelInfo | null }
+  | { t: 'providers'; providers: ProviderState[] }
+  | { t: 'auth.event'; loginId: string; event: AuthEvent }
+  | { t: 'auth.prompt'; loginId: string; promptId: string; prompt: LoginPrompt }
+  /** The login no longer waits for this prompt (it was answered another way, or the login ended). */
+  | { t: 'auth.prompt.done'; promptId: string }
+  | { t: 'trees'; trees: TreeMeta[] }
+  /** Sent for each watched tree on watch and whenever its branches change. */
+  | ({ t: 'branches'; treeId: string } & BranchesState)
+  | { t: 'plugins'; plugins: PluginInfo[] }
+  /** `canInstall` is false when the server cannot unpack or fetch Skills. */
+  | { t: 'skills'; skills: SkillInfo[]; canInstall: boolean }
+  | { t: 'channels'; channels: ChannelInfo[] }
+  | { t: 'prefs'; prefs: Preferences }
+  | { t: 'schedules'; schedules: ScheduleInfo[] }
+  /** `canCreate` is false when the host has no TOKEN_ENCRYPTION_KEY to seal a webhook's secret. */
+  | { t: 'webhooks'; webhooks: WebhookInfo[]; canCreate: boolean }
+  /** The watched branch's whole view; later `ops` apply to it. Sent on watch and whenever the host restarts the stream. */
+  | { t: 'view'; treeId: string; branchId: string; value: unknown }
+  /** Chord operations of one commit, encoded with a per-watch encoder; decode with a decoder reset at each `view`. */
+  | { t: 'ops'; treeId: string; ops: WireOp[] }
+  | { t: 'reply'; id: number; value?: unknown; error?: string }
+
+/** Kind of the entry a host writes when a run ends without an answer; the model never sees it. */
+export const RUN_ERROR_KIND = 'app.run-error'
+export interface RunErrorData {
+  reason: string
+  detail?: string
+}

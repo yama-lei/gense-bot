@@ -1,6 +1,6 @@
 // Stage-8 E2E (R57–R60): `bash` in the Docker sandbox, against real containers. Needs Docker and the images
 // from `npm run sandbox:build`; skipped without them.
-import type { FileEntry, TreeMeta } from '@gense/core/protocol'
+import type { FileEntry, TreeMeta } from '@gense/protocol'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createServer } from 'node:http'

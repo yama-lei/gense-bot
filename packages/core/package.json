@@ -4,9 +4,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./protocol": "./src/protocol.ts",
-    "./catalog": "./src/catalog.ts",
-    "./notes": "./src/notes.ts"
+    "./catalog": "./src/catalog.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts"
@@ -15,6 +13,7 @@
     "@earendil-works/chord": "1.4.0",
     "@earendil-works/pi-ai": "1.4.0",
     "@earendil-works/pi-durable": "1.4.0",
+    "@gense/protocol": "*",
     "@openuidev/lang-core": "1.0.0",
     "fflate": "0.8.3",
     "typebox": "1.3.27",

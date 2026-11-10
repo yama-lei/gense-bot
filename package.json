@@ -7,7 +7,7 @@
     "dev": "npm run dev -w @gense/host-node & npm run dev -w @gense/web",
     "build": "npm run build -w @gense/web",
     "start": "npm start -w @gense/host-node",
-    "typecheck": "tsc -p packages/core && tsc -p packages/core/test && tsc -p hosts/node && npm run typecheck -w @gense/web && npm run genui:check -w @gense/web",
+    "typecheck": "tsc -p packages/protocol && tsc -p packages/core && tsc -p packages/core/test && tsc -p hosts/node && npm run typecheck -w @gense/web && npm run genui:check -w @gense/web",
     "test": "npm test -w @gense/core && npm test -w @gense/host-node",
     "passwd": "npm run passwd -w @gense/host-node --",
     "sandbox:build": "docker build --network host --target slim -t gense-sandbox:slim sandbox && docker build --network host --target full -t gense-sandbox:full sandbox"

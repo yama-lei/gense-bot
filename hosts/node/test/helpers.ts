@@ -1,8 +1,8 @@
 // Drives a real host over HTTP and WebSocket, as the browser does.
 import { applyImmutable, decoder, type Decoder } from '@earendil-works/chord/delta'
-import type { PluginState } from '@gense/core/catalog'
-import { parseNote } from '@gense/core/notes'
-import { EVENT_KIND, type BranchesState, type BranchMeta, type ClientRequest, type EventData, type FileEntry, type LoginPrompt, type ModelInfo, type ProviderState, type ScheduleInfo, type ServerMessage, type SkillInfo, type TreeMeta, type UploadedFile, type WebhookInfo } from '@gense/core/protocol'
+import type { PluginInfo as PluginState } from '@gense/protocol'
+import { parseNote } from '@gense/protocol/notes'
+import { EVENT_KIND, type BranchesState, type BranchMeta, type ClientRequest, type EventData, type FileEntry, type LoginPrompt, type ModelInfo, type ProviderState, type ScheduleInfo, type ServerMessage, type SkillInfo, type TreeMeta, type UploadedFile, type WebhookInfo } from '@gense/protocol'
 import assert from 'node:assert/strict'
 import { mkdtemp } from 'node:fs/promises'
 import { createServer } from 'node:http'
@@ -260,17 +260,17 @@ export async function pluginScenario(client: Client, upstream: { keys: string[] 
 
   // Artifacts: the model shows one, the view saves it into the workspace; saving the same content again reuses the file.
   const artifact = { title: '提纲', type: 'markdown', content: '# 提纲' }
-  await assert.rejects(client.request({ t: 'tool.call', treeId: tree.id, name: 'artifact_save', args: artifact }), /已关闭/)
+  await assert.rejects(client.request({ t: 'tool.call', pluginId: 'artifact', treeId: tree.id, name: 'artifact_save', args: artifact }), /已关闭/)
   await client.request({ t: 'plugin.set', pluginId: 'artifact', enabled: true })
   const shown = await ask(`[工具 artifact_create] ${JSON.stringify(artifact)}`, 5)
   assert.deepEqual(shown.model![0]!.details, artifact)
-  const saved = await client.request<{ structuredContent: { path: string } }>({ t: 'tool.call', treeId: tree.id, name: 'artifact_save', args: artifact })
+  const saved = await client.request<{ structuredContent: { path: string } }>({ t: 'tool.call', pluginId: 'artifact', treeId: tree.id, name: 'artifact_save', args: artifact })
   assert.equal(saved.structuredContent.path, `/data/sessions/${tree.id}/artifacts/提纲.md`)
-  const again = await client.request<{ structuredContent: { path: string } }>({ t: 'tool.call', treeId: tree.id, name: 'artifact_save', args: artifact })
+  const again = await client.request<{ structuredContent: { path: string } }>({ t: 'tool.call', pluginId: 'artifact', treeId: tree.id, name: 'artifact_save', args: artifact })
   assert.equal(again.structuredContent.path, saved.structuredContent.path)
-  const other = await client.request<{ structuredContent: { path: string } }>({ t: 'tool.call', treeId: tree.id, name: 'artifact_save', args: { ...artifact, content: '# 第二版' } })
+  const other = await client.request<{ structuredContent: { path: string } }>({ t: 'tool.call', pluginId: 'artifact', treeId: tree.id, name: 'artifact_save', args: { ...artifact, content: '# 第二版' } })
   assert.equal(other.structuredContent.path, `/data/sessions/${tree.id}/artifacts/提纲 (2).md`)
-  await assert.rejects(client.request({ t: 'tool.call', treeId: tree.id, name: 'write', args: {} }), /不能调用/)
+  await assert.rejects(client.request({ t: 'tool.call', pluginId: 'artifact', treeId: tree.id, name: 'write', args: {} }), /不能调用/)
 
   // Generative UI: a program that parses is shown, one with errors comes back to the model with what to fix (R71).
   await client.request({ t: 'plugin.set', pluginId: 'ui', enabled: true })
@@ -280,8 +280,8 @@ export async function pluginScenario(client: Client, upstream: { keys: string[] 
   assert.equal(bad.model![0]!.isError, true)
   assert.match(JSON.stringify(bad.model![0]!.content), /missing required field.*Unknown component \\"Foo/s)
   // The page's photo and route lookups check their input before going out.
-  await assert.rejects(client.request({ t: 'tool.call', treeId: tree.id, name: 'ui_photos', args: { query: 'x' } }), /2 到 200/)
-  await assert.rejects(client.request({ t: 'tool.call', treeId: tree.id, name: 'ui_route', args: { coords: '1,2' } }), /lng,lat/)
+  await assert.rejects(client.request({ t: 'tool.call', pluginId: 'ui', treeId: tree.id, name: 'ui_photos', args: { query: 'x' } }), /2 到 200/)
+  await assert.rejects(client.request({ t: 'tool.call', pluginId: 'ui', treeId: tree.id, name: 'ui_route', args: { coords: '1,2' } }), /lng,lat/)
 
   await client.request({ t: 'plugin.set', pluginId: 'web', enabled: false })
   await client.until(() => plugin('web')?.enabled === false, 5_000, 'web disabled')

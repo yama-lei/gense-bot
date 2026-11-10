@@ -13,6 +13,7 @@
     "@earendil-works/pi-ai": "1.4.0",
     "@earendil-works/pi-durable": "1.4.0",
     "@gense/core": "*",
+    "@gense/protocol": "*",
     "ws": "^8.18.3"
   },
   "devDependencies": {

@@ -134,7 +134,7 @@ export class SkillStore {
   }
 
   list(): SkillInfo[] {
-    return builtinSkills.map((s) => ({ name: s.name, description: s.description, source: 'builtin', enabled: this.#switches.get(s.name) ?? true }))
+    return builtinSkills.map((s) => ({ name: s.name, description: s.description, source: 'builtin', enabled: this.#switches.get(s.name) ?? true, files: ['SKILL.md'] }))
   }
 
   subscribe(listener: () => void) {

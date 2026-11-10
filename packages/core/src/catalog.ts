@@ -1,19 +1,10 @@
 // Plugin declarations (roadmap-3 D8): names, descriptions and settings, shared by the hosts, which validate and resolve
 // settings, and the customize page, which renders them. Pure data and functions: the web client imports it too.
 
-export type PluginValue = string | boolean
+import type { PluginSetting, PluginValue } from '@gense/protocol/plugins'
 
-/** One plugin setting; values are checked against it on the host. */
-export interface PluginSetting {
-  key: string
-  label: string
-  help?: string
-  /** `secret` values are encrypted on the host and never sent back. */
-  kind: 'text' | 'url' | 'secret' | 'select' | 'toggle'
-  options?: { value: string; label: string }[]
-  default?: PluginValue
-  placeholder?: string
-}
+export { validSetting } from '@gense/protocol/plugins'
+export type { PluginInfo, PluginSetting, PluginSettingsState, PluginValue } from '@gense/protocol/plugins'
 
 export interface PluginEntry {
   id: string
@@ -26,26 +17,6 @@ export interface PluginEntry {
   defaultEnabled?: boolean
   /** Needs the Docker sandbox, which SANDBOX=0 turns off. */
   needsSandbox?: boolean
-}
-
-/** A plugin's settings as the host sends them; secrets appear only as `secretsSet`. */
-export interface PluginSettingsState {
-  /** Values the user set; others fall back to the host's, then to the declared default. */
-  values: Record<string, PluginValue>
-  secretsSet: string[]
-  /** Keys the host configures (`.env`), used when the user sets none. */
-  serverKeys: string[]
-}
-
-/** A plugin as the host reports it to the customize page. */
-export interface PluginState {
-  id: string
-  enabled: boolean
-  /** This host implements it. */
-  available: boolean
-  config: PluginSettingsState
-  /** Why it offers no tools with its current settings; null when it does. */
-  issue: string | null
 }
 
 /** Every plugin the customize page lists. */
@@ -169,15 +140,6 @@ export function resolveSettings(id: string, user: Record<string, PluginValue>, s
     if (v !== undefined && v !== '') out[s.key] = v
   }
   return out
-}
-
-/** Whether `value` fits setting `s`; a select only takes one of its options. */
-export function validSetting(s: PluginSetting, value: unknown): value is PluginValue {
-  if (s.kind === 'toggle') return typeof value === 'boolean'
-  if (typeof value !== 'string' || value.length > 2000) return false
-  if (s.kind === 'select') return !!s.options?.some((o) => o.value === value)
-  if (s.kind === 'url' && value) return /^https?:\/\/[^\s]+$/.test(value)
-  return true
 }
 
 const str = (v: PluginValue | undefined) => (typeof v === 'string' ? v : '')

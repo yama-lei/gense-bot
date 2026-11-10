@@ -2,7 +2,7 @@
 // AES-GCM under the host's TOKEN_ENCRYPTION_KEY and only opened on the host, for the plugin's tools.
 import type { SqliteDatabase } from '@earendil-works/chord/sqlite'
 import { applySqliteMigrations } from '@earendil-works/chord/sqlite'
-import { pluginCatalog, pluginIssue, pluginSettings, resolveSettings, validSetting, type PluginState, type PluginValue } from '../catalog.ts'
+import { pluginCatalog, pluginIssue, pluginSettings, resolveSettings, validSetting, type PluginInfo, type PluginValue } from '../catalog.ts'
 
 const migrations = [
   {
@@ -103,13 +103,19 @@ export class PluginStore {
     return this.#options.available.filter((id) => this.#entry(id).enabled && !pluginIssue(id, this.resolved(id)))
   }
 
-  list(): PluginState[] {
+  list(): PluginInfo[] {
     return pluginCatalog.map((p) => {
       const e = this.#entry(p.id)
       const defaults = this.#options.defaults?.[p.id] ?? {}
       const available = this.#options.available.includes(p.id)
       return {
         id: p.id,
+        kind: 'builtin' as const,
+        name: p.name,
+        description: p.description,
+        sideEffect: p.sideEffect,
+        settings: p.settings,
+        tools: [],
         // A plugin on by default is not on where the host lacks it.
         enabled: e.enabled && available,
         available,

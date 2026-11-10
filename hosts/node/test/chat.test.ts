@@ -1,5 +1,5 @@
 // E2E against the real host with the faux model: the owner's login, chat and the scenarios in helpers.ts.
-import { RUN_ERROR_KIND, type TreeMeta } from '@gense/core/protocol'
+import { RUN_ERROR_KIND, type TreeMeta } from '@gense/protocol'
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 import { configFromEnv } from '../src/config.ts'

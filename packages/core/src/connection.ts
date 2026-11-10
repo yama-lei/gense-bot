@@ -40,7 +40,7 @@ export class Connection {
       space.accounts.subscribe(() => void accounts()),
       space.subscribeTrees((trees) => this.#send({ t: 'trees', trees })),
       space.plugins.subscribe(() => this.#send({ t: 'plugins', plugins: space.plugins.list() })),
-      space.skills.subscribe(() => this.#send({ t: 'skills', skills: space.skills.list() })),
+      space.skills.subscribe(() => this.#send({ t: 'skills', skills: space.skills.list(), canInstall: false })),
       space.subscribeBranches((treeId) => {
         if (this.#watches.has(treeId)) void space.branches(treeId).then((b) => this.#send({ t: 'branches', treeId, ...b }), () => {})
       }),
@@ -51,7 +51,7 @@ export class Connection {
     }
     this.#unsubscribe.push(space.subscribeAutomations(() => void automations().catch(() => {})))
     this.#send({ t: 'plugins', plugins: space.plugins.list() })
-    this.#send({ t: 'skills', skills: space.skills.list() })
+    this.#send({ t: 'skills', skills: space.skills.list(), canInstall: false })
     await automations()
     await accounts()
     this.#send({ t: 'trees', trees: await space.trees() })

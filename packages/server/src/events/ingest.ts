@@ -1,5 +1,5 @@
 import { BACKGROUND_CONTEXT, type Context } from '@earendil-works/chord/context'
-import type { ConversationWatch, SubmissionId } from '@earendil-works/pi-durable'
+import type { ConversationView, ConversationWatch, SubmissionId } from '@earendil-works/pi-durable'
 import type { InboundTrigger, OutboxItem } from '../channels/channel.ts'
 import type { UserSpace } from '../agent/space.ts'
 import type { send as sendInput } from '../agent/branches.ts'
@@ -76,10 +76,13 @@ export function monitorChannel(this: UserSpace, triggerId: string, treeId: strin
       watch = (await this.watch(treeId, result.branchId)).watch
       this.channelWatches.add(watch)
       const render = (value: unknown) => {
-        const entries = (value as { entries?: Parameters<typeof entryText>[0][] })?.entries ?? []
+        const view = value as ConversationView
+        const entries = view.entries ?? []
         const user = entries.findLast(e => e.kind === 'pi.user')
-        const last = entries.findLast(e => e.kind === 'pi.assistant' && (!user || e.id > user.id))
-        const text = last ? entryText(last) : ''
+        const committed = entries.filter(e => e.kind === 'pi.assistant' && (!user || e.id > user.id)).map(entryText).filter(Boolean).join('\n\n')
+        const live = view.docs['pi.live'] as { generation?: { message?: { content?: { type: string; text?: string }[] } } } | undefined
+        const partial = live?.generation?.message?.content?.filter(c => c.type === 'text').map(c => c.text ?? '').join('') ?? ''
+        const text = [committed, partial && partial !== committed ? partial : ''].filter(Boolean).join('\n\n')
         if (text) void this.triggers.get(triggerId).then(row => row && this.channels.render(row.source, triggerId, treeId, text)).catch(() => {})
       }
       render(watch.value)
@@ -99,7 +102,7 @@ export function monitorChannel(this: UserSpace, triggerId: string, treeId: strin
       const workspace = await this.workspace.list(treeId)
       for (const file of workspace.filter(f => !f.readOnly && f.size <= 50 * 1024 * 1024)) {
         const relative = file.path.slice(`/data/sessions/${treeId}/`.length)
-        if (text.includes(file.path) || text.includes('](' + relative + ')') || text.includes('`' + relative + '`')) items.push({ id: triggerId + ':file:' + relative, channelId: row.source, triggerId, treeId, kind: 'file', payload: { ...trigger.destination, path: file.path } })
+        if (text.includes(file.path) || text.includes('](' + relative + ')') || text.includes('`' + relative + '`')) items.push({ id: triggerId + ':file:' + relative, channelId: row.source, triggerId, treeId, kind: 'file', payload: { ...trigger.destination, path: file.path, file: await this.workspace.read(treeId, file.path) } })
       }
       await this.triggers.complete(triggerId, { ...result, final: true }, items)
       void this.outbox.drain()

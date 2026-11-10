@@ -101,3 +101,22 @@ test('N25: a real shallow Git fetch installs an unmodified Skill with ref and su
     assert.match((await space.skills.read('code-review', 'SKILL.md')).text, /name: code-review/)
   } finally { await space.close(); await new Promise<void>(r => server.close(() => r())) }
 })
+
+test('N24: an installed bundled script executes through the real read-only Skills mount in Docker', { timeout: 60000 }, async t => {
+  const { execFileSync } = await import('node:child_process')
+  try { execFileSync('docker', ['image','inspect','gense-sandbox:slim'], { stdio:'ignore', timeout:5000 }) } catch { t.skip('sandbox image unavailable'); return }
+  const { NodeExecutionEnv } = await import('@earendil-works/pi-durable/env/node')
+  const { Sandbox, SandboxedEnv } = await import('../src/platform/sandbox.ts')
+  const root = await tempDir()
+  const sandbox = new Sandbox({ root, name:'gense-skill-'+crypto.randomUUID().slice(0,8), image:()=> 'slim' })
+  const space = await UserSpace.open(await openNodeSqliteDatabase(':memory:'), { models:fauxModels(), sandbox:true, env:cwd=>new SandboxedEnv(new NodeExecutionEnv({cwd:root}),sandbox,{target:root,cwd}) })
+  try {
+    const upload = await space.workspace.upload('community.zip',zipSync(files))
+    await space.skills.install({upload:upload.id})
+    const tree=await space.createTree()
+    await space.send(tree.id,{text:'[工具 bash] {"command":"node /data/skills/demo-skill/scripts/run.mjs"}',requestId:'run-skill-script'})
+    await space.harness.waitForIdle(ctx)
+    const {watch}=await space.watch(tree.id);await watch.stop()
+    assert.match(JSON.stringify(watch.value.entries),/skill script ran/)
+  } finally { await space.close(); await sandbox.stop() }
+})

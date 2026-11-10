@@ -156,10 +156,11 @@ export class McpHost {
   }
   #failed(s: Server, error: unknown) {
     s.state.status = error instanceof UnauthorizedError ? 'auth' : 'error'
-    // Do not surface response bodies which may echo configured credentials.
-    let detail = error instanceof Error ? error.message : String(error)
-    for (const secret of [...Object.values(s.secret.headers), s.secret.tokens?.access_token, s.secret.tokens?.refresh_token]) if (secret) detail = detail.split(secret).join('[redacted]')
-    s.state.error = error instanceof UnauthorizedError ? 'MCP 需要授权' : detail.slice(0, 400)
+    // Error bodies can echo server credentials. Keep only a transport/protocol category and status.
+    const message = error instanceof Error ? error.message : ''
+    const status = /HTTP (\d{3})/.exec(message)?.[1]
+    const reason = /timed?\s*out|timeout/i.test(message) ? '请求超时' : /fetch failed|ECONNREFUSED|ENOTFOUND/i.test(message) ? '无法访问服务器' : '连接或协议请求失败'
+    s.state.error = error instanceof UnauthorizedError ? 'MCP 需要授权' : `${reason}${status ? '（HTTP ' + status + '）' : ''}`
     this.#publish(s)
     if (s.state.status !== 'auth') this.#schedule(s, Math.min(60_000, (this.#options.retryMs ?? 1000) * 2 ** Math.min(s.attempts++, 6)))
   }
@@ -178,9 +179,9 @@ export class McpHost {
     return { content: result.content.map(c => c.type === 'text' ? c.text : JSON.stringify(c)).join('\n'), ...(result.structuredContent !== undefined && { structuredContent: result.structuredContent }), ...(result.isError && { isError: true }) }
   }
   async #invoke(id: string, name: string, args: unknown) {
-    const s = this.#get(id), tool = s.tools.find(t => toolName(id, t.name) === name)
+    const s = this.#get(id), tool = s.tools.find(t => toolName(id, t.name) === name || t.name === name)
     if (!tool) throw new Error('工具不属于这个 MCP 服务器')
-    if (!this.#plugins.active().includes(id) || !this.#plugins.toolEnabled(id, name) || !s.client) throw new Error('MCP 插件或工具已关闭/不可用')
+    if (!this.#plugins.active().includes(id) || !this.#plugins.toolEnabled(id, toolName(id, tool.name)) || !s.client) throw new Error('MCP 插件或工具已关闭/不可用')
     if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('工具参数必须是对象')
     try {
       const result = await s.client.callTool({ name: tool.name, arguments: args as Record<string, unknown> }, undefined, { timeout: this.#options.timeoutMs ?? 30_000 })

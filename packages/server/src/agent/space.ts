@@ -1,3 +1,4 @@
+import { feishuDefinition } from '../channels/feishu/index.ts'
 import type { ConversationWatch } from '@earendil-works/pi-durable'
 import { ChannelHub } from '../channels/hub.ts'
 import { TriggerStore } from '../events/store.ts'
@@ -170,6 +171,7 @@ export class UserSpace {
     space = new UserSpace(db, harness, workspace, plugins, skills, accounts, options, preferences, mcp, channels, triggers, outbox)
     space.schedule = events.schedule
     space.agentTask = events.agent
+    channels.register(feishuDefinition(space, options.feishu))
     for (const definition of options.channels ?? []) channels.register(definition)
     await channels.start(trigger => space!.ingestChannel(trigger))
     await space.recoverTriggers()

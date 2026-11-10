@@ -37,7 +37,7 @@ test('N1/N4/N6: real gate, Trigger deduplication, thread mapping, channel settin
     assert.ok(pair.expiresAt > Date.now())
     assert.equal(await space.channels.consumePair('fixture', pair.code, { id: 'actor', name: 'Owner' }), true)
     assert.equal(await space.channels.consumePair('fixture', pair.code, { id: 'stranger', name: 'Other' }), false)
-    assert.equal(space.channels.list()[0]!.actors[0]!.role, 'owner')
+    assert.equal(space.channels.list().find(c => c.id === 'fixture')!.actors[0]!.role, 'owner')
     await Promise.all([space.ingestChannel(inbound('accepted')), space.ingestChannel(inbound('accepted'))])
     await until(async () => deliveries.length === 1)
     assert.equal(deliveries[0]!.payload.text, '收到：hello')

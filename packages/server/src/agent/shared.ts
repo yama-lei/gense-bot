@@ -124,6 +124,7 @@ export interface SpaceOptions {
   plugins?: Pick<PluginStoreOptions, 'defaults'>
   /** Passed through to the Harness: wake scheduling and settings belong to the host. */
   harness?: Pick<HarnessOptions, 'onWake' | 'setTimer' | 'now' | 'settings' | 'onReport'>
+  feishu?: import('../channels/feishu/index.ts').FeishuOptions
   channels?: import('../channels/channel.ts').ChannelDefinition[]
   outboxRetryMs?: number
   mcp?: import('../plugins/mcp/host.ts').McpOptions

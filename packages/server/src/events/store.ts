@@ -18,7 +18,7 @@ export class TriggerStore {
       const existing = await tx.get<StoredTrigger>('SELECT * FROM triggers WHERE id = ?', trigger.id)
       if (existing) return { row: existing, duplicate: true }
       const createdAt = trigger.createdAt ?? Date.now()
-      const payload = JSON.stringify({ ...trigger, ...extra, ...(!allowed && { reason: '身份不在此来源的允许名单中' }) })
+      const payload = JSON.stringify({ ...trigger, ...extra, ...(!allowed && { reason: extra.reason ?? '身份不在此来源的允许名单中' }) })
       await tx.run('INSERT INTO triggers (id, source, thread_key, actor, payload, decision, tree_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', trigger.id, trigger.source, trigger.thread.key, JSON.stringify(trigger.actor), payload, allowed ? decision : 'rejected', trigger.treeId ?? null, createdAt)
       return { row: (await tx.get<StoredTrigger>('SELECT * FROM triggers WHERE id = ?', trigger.id))!, duplicate: false }
     })

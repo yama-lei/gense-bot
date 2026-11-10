@@ -2,6 +2,7 @@ import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context'
 import { openNodeSqliteDatabase } from '@earendil-works/chord/sqlite/node'
 import type { ConversationId } from '@earendil-works/pi-durable'
 import assert from 'node:assert/strict'
+import { once } from 'node:events'
 import { test } from 'node:test'
 import { Auth, accountApi, fauxModels, UserSpace } from '../src/index.ts'
 import { diskEnv } from './fixtures.ts'
@@ -69,4 +70,24 @@ test('R5 password endpoint verifies current password, rotates the cookie and rev
     await assert.rejects(auth.login('old-password'))
     assert.ok(await auth.login('new-password'))
   } finally { await db.close() }
+})
+
+test('R5 password rotation closes old live WebSockets and admits a new cookie', async () => {
+  const { startServer } = await import('../src/platform/server.ts')
+  const { configFromEnv } = await import('../src/platform/config.ts')
+  const { login, tempDir } = await import('./host-helpers.ts')
+  const { WebSocket } = await import('ws')
+  const server = await startServer({ ...configFromEnv({ GENSE_FAUX:'1', DATA_DIR:await tempDir(), SANDBOX:'0', BACKUPS:'0' }), port:0 })
+  const sockets:InstanceType<typeof WebSocket>[]=[]
+  try {
+    await server.auth.setPassword('initial-password')
+    const a = await login(server.url,'initial-password'), b = await login(server.url,'initial-password')
+    for (const cookie of [a.cookie,b.cookie]) { const ws=new WebSocket(server.url.replace('http','ws')+'/ws',{headers:{cookie:cookie!}});sockets.push(ws);await once(ws,'open') }
+    const closed = sockets.map(ws=>once(ws,'close'))
+    const changed = await fetch(server.url+'/api/password',{method:'POST',headers:{cookie:a.cookie!,'content-type':'application/json'},body:JSON.stringify({current:'initial-password',next:'changed-password'})})
+    assert.equal(changed.status,200)
+    await Promise.all(closed)
+    const fresh=new WebSocket(server.url.replace('http','ws')+'/ws',{headers:{cookie:changed.headers.get('set-cookie')!.split(';')[0]!}});sockets.push(fresh);await once(fresh,'open')
+    assert.equal(fresh.readyState,WebSocket.OPEN)
+  } finally { for(const socket of sockets)socket.terminate(); await server.close() }
 })

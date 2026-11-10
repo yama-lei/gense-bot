@@ -14,7 +14,9 @@ COPY packages packages
 RUN npm run build && npm prune --omit=dev
 
 FROM node:24.21.0-trixie-slim
-# The server starts and stops sandbox containers through the host's Docker socket; it needs only the client.
+# Skill Git installs run on the host process; keep Git and HTTPS trust in the runtime image.
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
+# The server starts and stops sandbox containers through the host's Docker socket.
 COPY --from=docker /usr/local/bin/docker /usr/local/bin/docker
 WORKDIR /app
 COPY --from=build /app /app

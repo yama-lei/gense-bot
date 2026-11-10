@@ -76,7 +76,7 @@ export class ChannelHub {
     const channel = this.#definition(id).create(this.resolved(id), update)
     this.#channels.set(id, channel)
     try { await channel.start(this.#ingest!); if (this.#states.get(id)?.status === 'connecting') update({ status: 'ready' }) }
-    catch { update({ status: 'error', error: '渠道连接失败，请检查凭据和网络' }) }
+    catch (error) { update({ status: 'error', error: error instanceof Error ? error.message : '渠道连接失败，请检查凭据和网络' }) }
   }
   async deliver(item: OutboxItem) { const channel = this.#channels.get(item.channelId); if (!channel || !this.#config(item.channelId).enabled) throw new Error('渠道未连接'); return channel.deliver(item) }
   async render(channelId: string, triggerId: string, treeId: string, text: string) { await this.#channels.get(channelId)?.render?.(triggerId, treeId, text) }
@@ -86,7 +86,7 @@ export class ChannelHub {
     await this.#db.transaction(async tx => { await tx.run('DELETE FROM channel_pairs WHERE channel_id = ? OR expires_at < ?', id, Date.now()); await tx.run('INSERT INTO channel_pairs VALUES (?, ?, ?)', hash(code), id, expiresAt) })
     return { code, expiresAt }
   }
-  async consumePair(id: string, code: string, actor: { id: string; name: string }) {
+  async consumePair(id: string, code: string, actor: { id: string; name: string }, trigger?: InboundTrigger) {
     this.#definition(id)
     const key = id + ':' + actor.id, now = Date.now(), prior = this.#pairAttempts.get(key)
     const attempts = prior && now - prior.since < 60_000 ? prior : { count: 0, since: now }
@@ -99,6 +99,7 @@ export class ChannelHub {
       await tx.run('DELETE FROM channel_pairs WHERE channel_id = ?', id)
       for (const a of this.#actors.get(id) ?? []) if (a.role === 'owner') await tx.run('DELETE FROM channel_actors WHERE channel_id = ? AND actor_id = ?', id, a.id)
       await tx.run('INSERT INTO channel_actors VALUES (?, ?, ?) ON CONFLICT (channel_id, actor_id) DO UPDATE SET data = excluded.data', id, actor.id, JSON.stringify(owner))
+      if (trigger) await tx.run("INSERT INTO triggers (id, source, thread_key, actor, payload, decision, created_at) VALUES (?, ?, ?, ?, ?, 'command', ?) ON CONFLICT (id) DO NOTHING", trigger.id, trigger.source, trigger.thread.key, JSON.stringify(trigger.actor), JSON.stringify({ ...trigger, command: 'pair' }), now)
       return owner
     })
     if (!paired) return false

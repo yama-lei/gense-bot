@@ -64,6 +64,7 @@ test('N20–N23: real MCP initialization, deferred tool_search, tool isolation, 
     await space.send(tree.id, { text: `[工具 ${name}] {"query":"today"}`, requestId: 'mcp-tool' })
     await space.harness.waitForIdle(ctx)
     assert.deepEqual(remote.state.calls, ['tool_0'])
+    assert.match((await space.callTool(tree.id, id, 'tool_0', { query: 'app view' })).content, /app view/)
     assert.equal(remote.state.headers.at(-1), 'header-private-secret')
     const view = await space.mcp.readResource(id, 'ui://local/view')
     assert.deepEqual(view.csp?.connectDomains, ['https://weather.example'])

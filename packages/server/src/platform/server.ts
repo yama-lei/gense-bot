@@ -12,7 +12,7 @@ import { mkdir, readFile, stat } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { extname, join, normalize, resolve, sep } from 'node:path'
-import { WebSocketServer } from 'ws'
+import { WebSocket, WebSocketServer } from 'ws'
 import { startBackups } from './backup.ts'
 import type { HostConfig } from './config.ts'
 import { Sandbox, SandboxedEnv } from './sandbox.ts'
@@ -69,7 +69,7 @@ export async function startServer(config: HostConfig) {
       ? new SandboxedEnv(new NodeExecutionEnv({ cwd: files }), sandbox, { target: files, cwd })
       : new MountedEnv(new NodeExecutionEnv({ cwd: files }), { mount: DATA_DIR, target: files, cwd })
   // Opening resumes runs a previous process left unfinished (R32). The space owns `db` and closes it.
-  space = await UserSpace.open(db, { models: config.models(), env, plugins: config.plugins, secretKey: config.secretKey, sandbox: !!sandbox, webhooks: true, skillTempDir: join(config.dataDir, 'skill-tmp'), mcp: { publicUrl: config.publicUrl } })
+  space = await UserSpace.open(db, { models: config.models(), env, plugins: config.plugins, secretKey: config.secretKey, sandbox: !!sandbox, webhooks: true, skillTempDir: join(config.dataDir, 'skill-tmp'), mcp: { publicUrl: config.publicUrl }, feishu: { publicUrl: config.publicUrl } })
   const opened = space
   const backups = config.backups === false ? undefined : startBackups(db, join(config.dataDir, 'backups'), config.backups)
 
@@ -89,6 +89,12 @@ export async function startServer(config: HostConfig) {
     res.end(body)
   }
 
+  const socketSessions = new Map<WebSocket, Request>()
+  const expireSockets = async () => {
+    await Promise.all([...socketSessions].map(async ([ws, request]) => {
+      if (!(await signedIn(auth, request))) ws.close(4401, 'Session expired')
+    }))
+  }
   const server = createServer((req, res) => {
     const path = new URL(req.url ?? '/', 'http://x').pathname
     // A webhook call (R50) is signed by its secret, not by a session.
@@ -98,7 +104,7 @@ export async function startServer(config: HostConfig) {
       : hookId
       ? toRequest(req).then((request) => opened.handleWebhook(hookId, request)).then((r) => send(res, r))
       : path.startsWith('/api/')
-      ? toRequest(req).then((request) => accountApi(auth, request)).then((r) => send(res, r))
+      ? toRequest(req).then((request) => accountApi(auth, request)).then(async response => { await send(res, response); if (req.method === 'POST' && response.ok && (path === '/api/password' || path === '/api/logout')) await expireSockets() })
       : staticFile(res, path)
     handled.catch((error) => {
       if (!res.headersSent) void send(res, json(500, { error: error instanceof Error ? error.message : String(error) }))
@@ -115,13 +121,15 @@ export async function startServer(config: HostConfig) {
         return
       }
       wss.handleUpgrade(req, socket, head, (ws) => {
-        const connection = new Connection({ space: opened, send: (m) => ws.send(m) })
+        socketSessions.set(ws, request)
+        const connection = new Connection({ space: opened, send: m => { if (ws.readyState === WebSocket.OPEN) ws.send(m) } })
         // Requests are handled in arrival order so a send never overtakes the watch before it.
         let queue = connection.start()
         ws.on('message', (data) => {
-          queue = queue.then(() => connection.handle(String(data))).catch(() => {})
+          queue = queue.then(async () => { if (!(await signedIn(auth, request))) { ws.close(4401, 'Session expired'); return }; await connection.handle(String(data)) }).catch(() => {})
         })
-        ws.on('close', () => void connection.close())
+        ws.on('close', () => { socketSessions.delete(ws); void connection.close() })
+        ws.on('error', () => void connection.close())
       })
     })().catch(() => socket.destroy())
   })

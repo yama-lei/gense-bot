@@ -2,7 +2,7 @@
 // AES-GCM under the host's TOKEN_ENCRYPTION_KEY and only opened on the host, for the plugin's tools.
 import type { SqliteDatabase } from '@earendil-works/chord/sqlite'
 import { applySqliteMigrations } from '@earendil-works/chord/sqlite'
-import { pluginCatalog, pluginIssue, pluginSettings, resolveSettings, validSetting, type PluginInfo, type PluginValue } from './catalog.ts'
+import { pluginCatalog, pluginSettings, resolveSettings, validSetting, type PluginInfo, type PluginValue } from './catalog.ts'
 
 const migrations = [
   {
@@ -65,6 +65,7 @@ export class PluginStore {
   readonly #options: PluginStoreOptions
   readonly #sealer: Sealer | undefined
   readonly #entries = new Map<string, Entry>()
+  readonly #tools = new Map<string, boolean>()
   readonly #listeners = new Set<() => void>()
 
   private constructor(db: SqliteDatabase, options: PluginStoreOptions) {
@@ -82,6 +83,8 @@ export class PluginStore {
       if (row.secrets && store.#sealer) secrets = JSON.parse(await store.#sealer.open(row.secrets).catch(() => '{}'))
       store.#entries.set(row.id, { enabled: row.enabled === 1, values: JSON.parse(row.config), secrets })
     }
+    await db.run('CREATE TABLE IF NOT EXISTS plugin_tools (pluginId TEXT NOT NULL, name TEXT NOT NULL, enabled INTEGER NOT NULL, PRIMARY KEY (pluginId, name))')
+    for (const row of await db.all<{ pluginId: string; name: string; enabled: number }>('SELECT * FROM plugin_tools')) store.#tools.set(row.pluginId + ':' + row.name, row.enabled === 1)
     return store
   }
 
@@ -100,7 +103,7 @@ export class PluginStore {
 
   /** Enabled, implemented plugins whose settings are complete. Synchronous: the Harness reads it at each resolution. */
   active(): string[] {
-    return this.#options.available.filter((id) => this.#entry(id).enabled && !pluginIssue(id, this.resolved(id)))
+    return this.#options.available.filter((id) => this.#entry(id).enabled && !pluginCatalog.find(p => p.id === id)!.issue(this.resolved(id)))
   }
 
   list(): PluginInfo[] {
@@ -115,14 +118,34 @@ export class PluginStore {
         description: p.description,
         sideEffect: p.sideEffect,
         settings: p.settings,
-        tools: [],
+        tools: this.tools(p.id),
         // A plugin on by default is not on where the host lacks it.
         enabled: e.enabled && available,
         available,
         config: { values: e.values, secretsSet: Object.keys(e.secrets), serverKeys: p.settings.filter((s) => defaults[s.key]).map((s) => s.key) },
-        issue: pluginIssue(p.id, this.resolved(p.id)),
+        issue: p.issue(this.resolved(p.id)),
       }
     })
+  }
+
+  tools(id: string) {
+    const p = pluginCatalog.find(p => p.id === id)
+    if (!p) return []
+    const tools = p.extension(() => this.resolved(id)).tools ?? []
+    const entries = new Map(tools.map(t => [t.name, { name: t.name, description: t.description, enabled: this.toolEnabled(id, t.name), ...(p.resources?.[t.name] && { resourceUri: p.resources[t.name] }), ...(p.viewTools?.[t.name] && { viewOnly: true }) }]))
+    for (const [name, t] of Object.entries(p.viewTools ?? {})) entries.set(name, { name, description: t.description, enabled: this.toolEnabled(id, name), viewOnly: true })
+    return [...entries.values()]
+  }
+
+  toolEnabled(id: string, name: string) { return this.#tools.get(id + ':' + name) ?? true }
+
+  removedTools() { return pluginCatalog.flatMap(p => this.tools(p.id).filter(t => !t.enabled || t.viewOnly).map(t => t.name)) }
+
+  async setTool(id: string, name: string, enabled: boolean) {
+    if (!this.tools(id).some(t => t.name === name)) throw new Error('未知插件工具')
+    await this.#db.run('INSERT INTO plugin_tools VALUES (?, ?, ?) ON CONFLICT (pluginId, name) DO UPDATE SET enabled = excluded.enabled', id, name, enabled ? 1 : 0)
+    this.#tools.set(id + ':' + name, enabled)
+    for (const l of this.#listeners) l()
   }
 
   subscribe(listener: () => void) {

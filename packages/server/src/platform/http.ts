@@ -56,6 +56,12 @@ export async function accountApi(auth: Auth, request: Request): Promise<Response
         return json(401, { error: error instanceof Error ? error.message : '登录失败' })
       }
     }
+    if (path === '/api/password' && request.method === 'POST') {
+      if (!(await signedIn(auth, request))) return json(401, { error: '未登录' })
+      const body = await readJson(request)
+      const token = await auth.changePassword(String(body.current ?? ''), String(body.next ?? ''))
+      return json(200, {}, { 'set-cookie': sessionCookie(request, token, SESSION_MAX_AGE_S) })
+    }
     if (path === '/api/logout' && request.method === 'POST') {
       const token = parseCookies(request.headers.get('cookie'))[SESSION_COOKIE]
       if (token) await auth.logout(token)

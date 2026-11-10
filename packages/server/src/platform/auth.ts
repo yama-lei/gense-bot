@@ -94,6 +94,13 @@ export class Auth {
     return token
   }
 
+  async changePassword(current: string, next: string) {
+    const token = await this.login(current)
+    await this.logout(token)
+    await this.setPassword(next)
+    return this.login(next)
+  }
+
   /** Whether the token belongs to a live session. */
   async session(token: string | undefined): Promise<boolean> {
     if (!token) return false

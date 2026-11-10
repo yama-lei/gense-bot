@@ -31,6 +31,8 @@ export class Connection {
   async start() {
     const { space } = this.#o
     this.#send({ t: 'hello' })
+    this.#send({ t: 'prefs', prefs: space.preferences.get() })
+    this.#unsubscribe.push(space.preferences.subscribe(() => this.#send({ t: 'prefs', prefs: space.preferences.get() })))
     const accounts = async () => {
       const { accounts } = space
       this.#send({ t: 'providers', providers: accounts.providers() })
@@ -139,7 +141,7 @@ export class Connection {
       case 'uploads':
         return space.workspace.uploads()
       case 'tool.call':
-        return space.callTool(r.treeId, r.name, r.args)
+        return space.callTool(r.treeId, r.pluginId, r.name, r.args)
       case 'skill.set':
         return space.skills.set(r.name, r.enabled)
       case 'auth.login':
@@ -153,6 +155,12 @@ export class Connection {
         return this.#logins.get(r.loginId)?.abort()
       case 'auth.logout':
         return space.accounts.logout(r.provider)
+      case 'plugin.tool.set':
+        return space.plugins.setTool(r.pluginId, r.tool, r.enabled)
+      case 'prefs.set':
+        return space.preferences.set(r)
+      case 'trees.search':
+        return space.searchTrees(r.query, r.limit)
       case 'plugin.set':
         return space.plugins.set(r.pluginId, {
           ...(r.enabled !== undefined && { enabled: r.enabled }),

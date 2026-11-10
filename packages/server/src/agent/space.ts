@@ -1,3 +1,5 @@
+import { defineExtension, section } from '@earendil-works/pi-durable'
+import { PreferenceStore } from './preferences.ts'
 // One user's conversations: a pi-durable Harness plus the sidebar index, in the same SQLite database (roadmap-3 D2).
 // A tree is a main conversation and the branches forked from it, all ownerless; tree and branch ids are ours,
 // conversation ids are pi-durable's. Each tree has one workspace directory, every branch's cwd (D6).
@@ -61,6 +63,7 @@ export class UserSpace {
 
   readonly skills: SkillStore
 
+  readonly preferences: PreferenceStore
   readonly accounts: ModelAccounts
 
   readonly options: SpaceOptions
@@ -72,13 +75,14 @@ export class UserSpace {
 
   agentTask!: ReturnType<typeof eventsExtension>['agent']
 
-  constructor(db: SqliteDatabase, harness: Harness, workspace: Workspace, plugins: PluginStore, skills: SkillStore, accounts: ModelAccounts, options: SpaceOptions) {
+  constructor(db: SqliteDatabase, harness: Harness, workspace: Workspace, plugins: PluginStore, skills: SkillStore, accounts: ModelAccounts, options: SpaceOptions, preferences: PreferenceStore) {
     this.sealer = options.secretKey ? new Sealer(options.secretKey) : undefined
     this.db = db
     this.harness = harness
     this.workspace = workspace
     this.plugins = plugins
     this.skills = skills
+    this.preferences = preferences
     this.accounts = accounts
     this.options = options
     harness.subscribeCommits((publication) => {
@@ -99,6 +103,8 @@ export class UserSpace {
     await applySqliteMigrations(db, migrations, { table: 'app_migrations' })
     const storage = await SqliteStorage.open(db, { prefix: 'pi_' })
     const plugins = await PluginStore.open(db, { ...options.plugins, secretKey: options.secretKey, available: Object.keys(PLUGINS).filter((id) => id !== 'sandbox' || options.sandbox) })
+    const preferences = await PreferenceStore.open(db)
+    const prefsExtension = defineExtension({ name: 'preferences', sections: [section('preferences', () => preferences.prompt())] })
     const registry = createRegistry()
     const byName = new Map<string, Extension>()
     let space: UserSpace | undefined
@@ -106,10 +112,21 @@ export class UserSpace {
       if (!space) throw new Error('UserSpace is not open')
       return space
     })
-    for (const e of [gense, files, events.extension, noSandbox, ...Object.entries(PLUGINS).map(([id, make]) => make(() => plugins.resolved(id)))]) {
+    for (const e of [gense, files, prefsExtension, events.extension, noSandbox, ...Object.entries(PLUGINS).map(([id, make]) => make(() => plugins.resolved(id)))]) {
       registry.install(e)
       byName.set(e.name, e)
     }
+    const refreshPlugins = () => {
+      for (const [id, make] of Object.entries(PLUGINS)) {
+        const extension = make(() => plugins.resolved(id))
+        const hidden = new Set(plugins.removedTools())
+        const filtered = { ...extension, tools: extension.tools?.filter(t => !hidden.has(t.name)) }
+        registry.install(filtered)
+        byName.set(id, filtered)
+      }
+    }
+    refreshPlugins()
+    plugins.subscribe(refreshPlugins)
     const accounts = await ModelAccounts.open(db, { host: options.models, secretKey: options.secretKey, oauth: true })
     const workspace = new Workspace(options.env)
     const skills = await SkillStore.open(db, async () => workspace.env(DATA_DIR), ctx)
@@ -119,7 +136,7 @@ export class UserSpace {
       ...options.harness?.settings,
       get extensions() {
         const active = plugins.active()
-        return [gense, files, events.extension, ...active.map((id) => byName.get(id)!), ...(active.includes('sandbox') ? [] : [noSandbox])]
+        return [gense, files, prefsExtension, events.extension, ...active.map((id) => byName.get(id)!), ...(active.includes('sandbox') ? [] : [noSandbox])]
       },
     }
     const harness = await Harness.open(
@@ -127,7 +144,7 @@ export class UserSpace {
       { ...options.harness, settings, models: accounts.models, registry, env: ({ cwd }) => workspace.env(cwd ?? DATA_DIR) },
       ctx,
     )
-    space = new UserSpace(db, harness, workspace, plugins, skills, accounts, options)
+    space = new UserSpace(db, harness, workspace, plugins, skills, accounts, options, preferences)
     space.schedule = events.schedule
     space.agentTask = events.agent
     // Events stored but not yet delivered when a previous process stopped; delivery is idempotent.
@@ -155,6 +172,7 @@ export class UserSpace {
 
   closed = false
   now: OmitThisParameter<typeof trees.now> = trees.now.bind(this)
+  searchTrees: OmitThisParameter<typeof trees.searchTrees> = trees.searchTrees.bind(this)
   trees: OmitThisParameter<typeof trees.trees> = trees.trees.bind(this)
   subscribeTrees: OmitThisParameter<typeof trees.subscribeTrees> = trees.subscribeTrees.bind(this)
   subscribeBranches: OmitThisParameter<typeof trees.subscribeBranches> = trees.subscribeBranches.bind(this)

@@ -1,3 +1,4 @@
+import { pluginCatalog } from '../plugins/catalog.ts'
 // One user's conversations: a pi-durable Harness plus the sidebar index, in the same SQLite database (roadmap-3 D2).
 // A tree is a main conversation and the branches forked from it, all ownerless; tree and branch ids are ours,
 // conversation ids are pi-durable's. Each tree has one workspace directory, every branch's cwd (D6).
@@ -6,11 +7,11 @@ import {
 defineExtension,
 section,
 type EntryRecord,
-type Extension,
+
 type HarnessOptions
 } from '@earendil-works/pi-durable'
 
-import type { PluginValue } from '../plugins/catalog.ts'
+
 
 import {
 type BranchRole,
@@ -22,11 +23,11 @@ type TreeMeta
 
 import { SKILLS_DIR,type EnvFactory } from './workspace.ts'
 
-import { artifactExtension,emailExtension,uiExtension } from '../plugins/display.ts'
 
-import { imageExtension } from '../plugins/image.ts'
 
-import { sandboxExtension } from '../plugins/sandbox.ts'
+
+
+
 
 import { type PluginStoreOptions } from '../plugins/store.ts'
 
@@ -44,7 +45,7 @@ spawnTool
 
 import { skillsSection } from '../plugins/skills.ts'
 
-import { webExtension } from '../plugins/web.ts'
+
 
 import type { UserSpace } from './space.ts'
 
@@ -90,15 +91,7 @@ export const PREAMBLE = [
 
 export const gense = defineExtension({ name: 'gense', sections: [section('assistant', () => PREAMBLE)] })
 
-export /** Plugins this core implements, by catalog id; each extension reads its user's settings when a tool runs. */
-const PLUGINS: Record<string, (config: () => Record<string, PluginValue>) => Extension> = {
-  artifact: artifactExtension,
-  email: emailExtension,
-  ui: uiExtension,
-  web: webExtension,
-  image: imageExtension,
-  sandbox: sandboxExtension,
-}
+export const PLUGINS = Object.fromEntries(pluginCatalog.map(p => [p.id, p.extension]))
 
 export const files = defineExtension({
   name: 'files',

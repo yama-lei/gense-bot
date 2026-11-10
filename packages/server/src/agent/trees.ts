@@ -1,3 +1,4 @@
+import { pluginCatalog } from '../plugins/catalog.ts'
 import type { ConversationWatch } from '@earendil-works/pi-durable'
 // One user's conversations: a pi-durable Harness plus the sidebar index, in the same SQLite database (roadmap-3 D2).
 // A tree is a main conversation and the branches forked from it, all ownerless; tree and branch ids are ours,
@@ -9,7 +10,7 @@ type Conversation,
 type ConversationId
 } from '@earendil-works/pi-durable'
 
-import { Value } from 'typebox/value'
+
 
 import {
 type ToolCallResult,
@@ -18,9 +19,9 @@ type TreeMeta
 
 import { treeDir,Workspace } from './workspace.ts'
 
-import { artifactInput,saveArtifact } from '../plugins/display.ts'
 
-import { findPhotos,streetRoute } from '../plugins/genui/lookup.ts'
+
+
 import { BRANCH_COLUMNS,type BranchRow,COLUMNS,DEFAULT_TITLE,SCHEDULE_COLUMNS,type ScheduleRow,toMeta,type TreeRow } from './shared.ts'
 
 import type { UserSpace } from './space.ts'
@@ -143,24 +144,16 @@ export async function files(this: UserSpace, treeId: string): Promise<Workspace>
     return this.workspace
   }
 
-export async function callTool(this: UserSpace, treeId: string, name: string, args: unknown, ctx: Context = BACKGROUND_CONTEXT): Promise<ToolCallResult> {
-    await this.row(treeId)
-    const input = (args ?? {}) as Record<string, unknown>
-    if (name === 'ui_photos' || name === 'ui_route') {
-      if (!this.plugins.active().includes('ui')) throw new Error('界面插件已关闭')
-      if (name === 'ui_photos') {
-        const images = await findPhotos(String(input.query ?? ''))
-        return { content: `找到 ${images.length} 张照片`, structuredContent: { images } }
-      }
-      const points = await streetRoute(String(input.coords ?? ''))
-      return { content: `路线有 ${points.length} 个点`, structuredContent: { points } }
-    }
-    if (name !== 'artifact_save') throw new Error(`界面不能调用 ${name}`)
-    if (!this.plugins.active().includes('artifact')) throw new Error('Artifact 插件已关闭')
-    if (!Value.Check(artifactInput, args)) throw new Error('参数无效')
-    const path = await saveArtifact(await this.workspace.env(treeDir(treeId)), args, ctx)
-    return { content: `已保存到 ${path}`, structuredContent: { path } }
-  }
+export async function callTool(this: UserSpace, treeId: string, pluginId: string, name: string, args: unknown, ctx: Context = BACKGROUND_CONTEXT): Promise<ToolCallResult> {
+  await this.row(treeId)
+  const plugin = pluginCatalog.find(p => p.id === pluginId)
+  if (!plugin) throw new Error('未知插件')
+  if (!this.plugins.active().includes(pluginId)) throw new Error('插件已关闭或不可用')
+  if (!this.plugins.toolEnabled(pluginId, name)) throw new Error('工具已关闭')
+  const tool = plugin.viewTools?.[name]
+  if (!tool) throw new Error('界面不能调用该插件的这个工具')
+  return tool.call(args, await this.workspace.env(treeDir(treeId)), ctx)
+}
 
 export async function abort(this: UserSpace, treeId: string, branchId?: string, ctx: Context = BACKGROUND_CONTEXT): Promise<void> {
     const { branch } = await this.branchRow(treeId, branchId)
@@ -180,3 +173,22 @@ export async function close(this: UserSpace, ctx: Context = BACKGROUND_CONTEXT):
     this.automationListeners.clear()
     await this.harness.close(ctx)
   }
+/** Search every branch through the public transcript API, including inherited fork entries. */
+export async function searchTrees(this: UserSpace, query: string, limit = 30): Promise<import('@gense/protocol').TreeHit[]> {
+  const needle = query.trim().toLocaleLowerCase()
+  if (!needle) return []
+  const hits: import('@gense/protocol').TreeHit[] = []
+  for (const tree of await this.trees()) {
+    let match = tree.title.toLocaleLowerCase().includes(needle) ? tree.title : ''
+    for (const branch of (await this.branches(tree.id)).branches) {
+      const conv = await this.harness.conversation(branch.conversationId as ConversationId, BACKGROUND_CONTEXT)
+      if (!conv) continue
+      const { entries } = await conv.context(BACKGROUND_CONTEXT)
+      const text = entries.flatMap(e => (e.model ?? []).flatMap(m => typeof m.content === 'string' ? [m.content] : m.content.flatMap(c => c.type === 'text' ? [c.text] : []))).join('\n')
+      const at = text.toLocaleLowerCase().indexOf(needle)
+      if (at >= 0) { match = text.slice(Math.max(0, at - 60), at + needle.length + 140); break }
+    }
+    if (match) hits.push({ treeId: tree.id, title: tree.title, snippet: match, updatedAt: tree.updatedAt })
+  }
+  return hits.sort((a,b) => b.updatedAt - a.updatedAt).slice(0, Math.min(100, Math.max(1, Number.isFinite(limit) ? limit : 30)))
+}

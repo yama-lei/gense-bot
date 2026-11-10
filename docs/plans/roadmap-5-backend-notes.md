@@ -10,3 +10,12 @@ Work proceeds on `feat/r5-backend`, without editing `packages/web` or the fixed 
 - Tests: `npm run check:server` passed: protocol/server type checks and all 40 tests, including Docker sandbox and crash/restart recovery; 0 skipped.
 - Protocol problems: none for this stage.
 - Deviations and reasons: the existing host tests revealed that independently opened servers shared the fixed Docker container name, so closing one could kill another's command (exit 137). Container names now include a stable hash of the files directory. This isolates concurrent tests and separate data directories without changing sandbox behavior. The original 256 MB sandbox test limit is preserved.
+
+## B1 — plugin registry and tool catalog (N26)
+
+- Added `definePlugin` and a declaration directory for every built-in plugin. Each owns availability checks, settings, extension, resource URIs and view tools. Removed the catalog's ID-specific availability branches and `callTool` name dispatch.
+- Plugin messages contain complete tool descriptions, enabled state, resources and view-only flags. Persisted per-tool switches update the real Harness registry for the next resolution. View calls require the declared plugin and pass the same switches.
+- Added persisted owner preferences, initial/live `prefs` messages, and a preferences prompt section. Added title/message search across branches and authenticated password rotation with current-password verification, fresh cookie and revocation of older sessions.
+- Tests: `npm run check:server` passed, 43 tests, 0 skipped. New tests exercise real SQLite, conversation tool resolution, actual artifact files, preferences/search with the faux model, and password/session rotation.
+- Protocol problems: none.
+- Deviations and reasons: pi-durable's `search` export searches tool descriptions, not transcripts; conversation search therefore uses its public conversation/context API and orders matching trees by update time. This avoids depending on its private storage schema.

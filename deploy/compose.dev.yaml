@@ -1,0 +1,4 @@
+# `make docker-dev`: the production app container on http://127.0.0.1:8787, without Caddy.
+services:
+  app:
+    ports: ["127.0.0.1:8787:8787"]

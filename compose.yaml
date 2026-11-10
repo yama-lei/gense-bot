@@ -5,7 +5,8 @@
 #   docker compose exec app npm run passwd      set the login password
 services:
   app:
-    build: .
+    # Host network, like the sandbox images: a proxy on the machine's localhost stays reachable during the build.
+    build: { context: ., network: host }
     restart: unless-stopped
     env_file: .env
     environment:

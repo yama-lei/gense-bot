@@ -9,8 +9,14 @@ Follow an "Intent → Spec → Design" workflow:
 
 - Do not write tests that only exercise mocks rather than real functionality.
 - During beta, backward compatibility with previous designs is not required. Explain incompatible changes to the user.
+- Testings should follow the Specs.
 
 ## Guidance Maintenance
 
 - Commit only after the user gives permission. Use `{chore,feat,bugs,docs}/slug: content` for commit messages and branch name.
 - If you find conflicting content or opportunities for improvement, notify the user and obtain permission before making changes. Examples include improving grammar and clarity in `AGENTS.md` and fixing bugs in code.
+
+
+## Collobration
+1. Use `hc` to dispatch agents and communicate with other agents is suggested when you need to dispatch codex/pi for module developing.
+2. Use cheap subagent for general purpose (like Haiku/Luna for explore, Sonnet/Terra for medium tasks)

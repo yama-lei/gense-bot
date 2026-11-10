@@ -1,3 +1,5 @@
+import { McpHost } from '../plugins/mcp/host.ts'
+import { createToolSearchExtension } from '@earendil-works/pi-durable/tool-search'
 import { defineExtension, section } from '@earendil-works/pi-durable'
 import { PreferenceStore } from './preferences.ts'
 // One user's conversations: a pi-durable Harness plus the sidebar index, in the same SQLite database (roadmap-3 D2).
@@ -63,6 +65,7 @@ export class UserSpace {
 
   readonly skills: SkillStore
 
+  readonly mcp: McpHost
   readonly preferences: PreferenceStore
   readonly accounts: ModelAccounts
 
@@ -75,13 +78,14 @@ export class UserSpace {
 
   agentTask!: ReturnType<typeof eventsExtension>['agent']
 
-  constructor(db: SqliteDatabase, harness: Harness, workspace: Workspace, plugins: PluginStore, skills: SkillStore, accounts: ModelAccounts, options: SpaceOptions, preferences: PreferenceStore) {
+  constructor(db: SqliteDatabase, harness: Harness, workspace: Workspace, plugins: PluginStore, skills: SkillStore, accounts: ModelAccounts, options: SpaceOptions, preferences: PreferenceStore, mcp: McpHost) {
     this.sealer = options.secretKey ? new Sealer(options.secretKey) : undefined
     this.db = db
     this.harness = harness
     this.workspace = workspace
     this.plugins = plugins
     this.skills = skills
+    this.mcp = mcp
     this.preferences = preferences
     this.accounts = accounts
     this.options = options
@@ -105,6 +109,7 @@ export class UserSpace {
     const plugins = await PluginStore.open(db, { ...options.plugins, secretKey: options.secretKey, available: Object.keys(PLUGINS).filter((id) => id !== 'sandbox' || options.sandbox) })
     const preferences = await PreferenceStore.open(db)
     const prefsExtension = defineExtension({ name: 'preferences', sections: [section('preferences', () => preferences.prompt())] })
+    const toolSearch = createToolSearchExtension()
     const registry = createRegistry()
     const byName = new Map<string, Extension>()
     let space: UserSpace | undefined
@@ -112,14 +117,14 @@ export class UserSpace {
       if (!space) throw new Error('UserSpace is not open')
       return space
     })
-    for (const e of [gense, files, prefsExtension, events.extension, noSandbox, ...Object.entries(PLUGINS).map(([id, make]) => make(() => plugins.resolved(id)))]) {
+    for (const e of [gense, files, prefsExtension, toolSearch, events.extension, noSandbox, ...Object.entries(PLUGINS).map(([id, make]) => make(() => plugins.resolved(id)))]) {
       registry.install(e)
       byName.set(e.name, e)
     }
     const refreshPlugins = () => {
-      for (const [id, make] of Object.entries(PLUGINS)) {
+      const hidden = new Set(plugins.removedTools())
+      for (const { id, extension: make } of plugins.definitions()) {
         const extension = make(() => plugins.resolved(id))
-        const hidden = new Set(plugins.removedTools())
         const filtered = { ...extension, tools: extension.tools?.filter(t => !hidden.has(t.name)) }
         registry.install(filtered)
         byName.set(id, filtered)
@@ -127,6 +132,7 @@ export class UserSpace {
     }
     refreshPlugins()
     plugins.subscribe(refreshPlugins)
+    const mcp = await McpHost.open(db, plugins, options.secretKey, options.mcp)
     const accounts = await ModelAccounts.open(db, { host: options.models, secretKey: options.secretKey, oauth: true })
     const workspace = new Workspace(options.env)
     const skills = await SkillStore.open(db, async () => workspace.env(DATA_DIR), ctx, options.skillTempDir)
@@ -136,7 +142,7 @@ export class UserSpace {
       ...options.harness?.settings,
       get extensions() {
         const active = plugins.active()
-        return [gense, files, prefsExtension, events.extension, ...active.map((id) => byName.get(id)!), ...(active.includes('sandbox') ? [] : [noSandbox])]
+        return [gense, files, prefsExtension, toolSearch, events.extension, ...active.map((id) => byName.get(id)!), ...(active.includes('sandbox') ? [] : [noSandbox])]
       },
     }
     const harness = await Harness.open(
@@ -144,7 +150,7 @@ export class UserSpace {
       { ...options.harness, settings, models: accounts.models, registry, env: ({ cwd }) => workspace.env(cwd ?? DATA_DIR) },
       ctx,
     )
-    space = new UserSpace(db, harness, workspace, plugins, skills, accounts, options, preferences)
+    space = new UserSpace(db, harness, workspace, plugins, skills, accounts, options, preferences, mcp)
     space.schedule = events.schedule
     space.agentTask = events.agent
     // Events stored but not yet delivered when a previous process stopped; delivery is idempotent.

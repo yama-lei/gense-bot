@@ -1,8 +1,9 @@
+import type { PluginDefinition } from './registry.ts'
 // One user's plugin switches and settings (roadmap-3 D8), in the host tables next to pi's. Secrets are sealed with
 // AES-GCM under the host's TOKEN_ENCRYPTION_KEY and only opened on the host, for the plugin's tools.
 import type { SqliteDatabase } from '@earendil-works/chord/sqlite'
 import { applySqliteMigrations } from '@earendil-works/chord/sqlite'
-import { pluginCatalog, pluginSettings, resolveSettings, validSetting, type PluginInfo, type PluginValue } from './catalog.ts'
+import { pluginCatalog, validSetting, type PluginInfo, type PluginValue } from './catalog.ts'
 
 const migrations = [
   {
@@ -61,6 +62,7 @@ export class Sealer {
 }
 
 export class PluginStore {
+  readonly #catalog = [...pluginCatalog]
   readonly #db: SqliteDatabase
   readonly #options: PluginStoreOptions
   readonly #sealer: Sealer | undefined
@@ -88,32 +90,56 @@ export class PluginStore {
     return store
   }
 
+  definitions() { return [...this.#catalog] }
+  settings(id: string) { return this.#catalog.find(p => p.id === id)?.settings ?? [] }
+  resolve(id: string, user: Record<string, PluginValue>, defaults: Record<string, string | undefined>) {
+    return Object.fromEntries(this.settings(id).flatMap(s => { const v = user[s.key] ?? defaults[s.key] ?? s.default; return v !== undefined && v !== '' ? [[s.key, v]] : [] }))
+  }
+  register(definition: PluginDefinition) {
+    const at = this.#catalog.findIndex(p => p.id === definition.id)
+    if (at < 0) this.#catalog.push(definition)
+    else this.#catalog[at] = definition
+    if (!this.#options.available.includes(definition.id)) this.#options.available.push(definition.id)
+    this.notify()
+  }
+  async unregister(id: string) {
+    const at = this.#catalog.findIndex(p => p.id === id)
+    if (at >= 0) this.#catalog.splice(at, 1)
+    this.#options.available = this.#options.available.filter(p => p !== id)
+    await this.#db.run('DELETE FROM plugins WHERE id = ?', id)
+    await this.#db.run('DELETE FROM plugin_tools WHERE pluginId = ?', id)
+    this.#entries.delete(id)
+    this.notify()
+  }
+  notify() { for (const l of this.#listeners) l() }
+
   #entry(id: string): Entry {
-    return this.#entries.get(id) ?? { enabled: !!pluginCatalog.find((p) => p.id === id)?.defaultEnabled, values: {}, secrets: {} }
+    return this.#entries.get(id) ?? { enabled: !!this.#catalog.find((p) => p.id === id)?.defaultEnabled, values: {}, secrets: {} }
   }
 
   /** Settings with secrets, as the plugin's tools use them, plus host-only keys the catalog does not declare. Host side only. */
   resolved(id: string): Record<string, PluginValue> {
     const e = this.#entry(id)
     const defaults = this.#options.defaults?.[id] ?? {}
-    const declared = new Set(pluginSettings(id).map((s) => s.key))
+    const declared = new Set(this.settings(id).map((s) => s.key))
     const hostOnly = Object.fromEntries(Object.entries(defaults).filter((kv): kv is [string, string] => !declared.has(kv[0]) && !!kv[1]))
-    return { ...hostOnly, ...resolveSettings(id, { ...e.values, ...e.secrets }, defaults) }
+    return { ...hostOnly, ...this.resolve(id, { ...e.values, ...e.secrets }, defaults) }
   }
 
   /** Enabled, implemented plugins whose settings are complete. Synchronous: the Harness reads it at each resolution. */
   active(): string[] {
-    return this.#options.available.filter((id) => this.#entry(id).enabled && !pluginCatalog.find(p => p.id === id)!.issue(this.resolved(id)))
+    return this.#options.available.filter((id) => this.#entry(id).enabled && !this.#catalog.find(p => p.id === id)!.issue(this.resolved(id)))
   }
 
   list(): PluginInfo[] {
-    return pluginCatalog.map((p) => {
+    return this.#catalog.map((p) => {
       const e = this.#entry(p.id)
       const defaults = this.#options.defaults?.[p.id] ?? {}
       const available = this.#options.available.includes(p.id)
       return {
         id: p.id,
-        kind: 'builtin' as const,
+        kind: p.kind ?? 'builtin',
+        ...(p.mcp && { mcp: p.mcp() }),
         name: p.name,
         description: p.description,
         sideEffect: p.sideEffect,
@@ -129,7 +155,7 @@ export class PluginStore {
   }
 
   tools(id: string) {
-    const p = pluginCatalog.find(p => p.id === id)
+    const p = this.#catalog.find(p => p.id === id)
     if (!p) return []
     const tools = p.extension(() => this.resolved(id)).tools ?? []
     const entries = new Map(tools.map(t => [t.name, { name: t.name, description: t.description, enabled: this.toolEnabled(id, t.name), ...(p.resources?.[t.name] && { resourceUri: p.resources[t.name] }), ...(p.viewTools?.[t.name] && { viewOnly: true }) }]))
@@ -139,7 +165,7 @@ export class PluginStore {
 
   toolEnabled(id: string, name: string) { return this.#tools.get(id + ':' + name) ?? true }
 
-  removedTools() { return pluginCatalog.flatMap(p => this.tools(p.id).filter(t => !t.enabled || t.viewOnly).map(t => t.name)) }
+  removedTools() { return this.#catalog.flatMap(p => this.tools(p.id).filter(t => !t.enabled || t.viewOnly).map(t => t.name)) }
 
   async setTool(id: string, name: string, enabled: boolean) {
     if (!this.tools(id).some(t => t.name === name)) throw new Error('未知插件工具')
@@ -154,9 +180,9 @@ export class PluginStore {
   }
 
   async set(id: string, patch: PluginPatch) {
-    if (!pluginCatalog.some((p) => p.id === id)) throw new Error('未知插件')
+    if (!this.#catalog.some((p) => p.id === id)) throw new Error('未知插件')
     if (patch.enabled && !this.#options.available.includes(id)) throw new Error('这个部署还没有实现该插件')
-    const settings = pluginSettings(id)
+    const settings = this.settings(id)
     const current = this.#entry(id)
     const values = { ...current.values }
     for (const [key, v] of Object.entries(patch.values ?? {})) {

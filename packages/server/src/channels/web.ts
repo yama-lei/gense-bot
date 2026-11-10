@@ -142,6 +142,18 @@ export class Connection {
         return space.workspace.uploads()
       case 'tool.call':
         return space.callTool(r.treeId, r.pluginId, r.name, r.args)
+      case 'mcp.add':
+        return space.mcp.add(r)
+      case 'mcp.update':
+        return space.mcp.update(r.pluginId, r)
+      case 'mcp.remove':
+        return space.mcp.remove(r.pluginId)
+      case 'mcp.reconnect':
+        return space.mcp.reconnect(r.pluginId)
+      case 'mcp.auth':
+        return space.mcp.authorize(r.pluginId)
+      case 'resource.read':
+        return space.mcp.readResource(r.pluginId, r.uri)
       case 'skill.install':
         return space.skills.install(r.source)
       case 'skill.remove':

@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import type { BackupOptions } from './backup.ts'
 
 export interface HostConfig {
+  publicUrl?: string
   dataDir: string
   port: number
   host: string
@@ -25,6 +26,7 @@ const root = resolve(import.meta.dirname, '../../../..')
 
 export function configFromEnv(env = process.env): HostConfig {
   return {
+    publicUrl: env.PUBLIC_URL || undefined,
     dataDir: resolve(root, env.DATA_DIR ?? 'data'),
     port: Number(env.PORT ?? 8787),
     host: env.HOST ?? '127.0.0.1',

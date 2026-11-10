@@ -1,7 +1,7 @@
 import type { Context } from '@earendil-works/chord/context'
 import type { Extension } from '@earendil-works/pi-durable'
 import type { ExecutionEnv } from '@earendil-works/pi-durable/env'
-import type { PluginSetting, PluginValue, ToolCallResult } from '@gense/protocol'
+import type { PluginSetting, PluginValue, ToolCallResult, McpServerState } from '@gense/protocol'
 
 export type PluginConfig = Record<string, PluginValue>
 export interface ViewTool {
@@ -10,6 +10,8 @@ export interface ViewTool {
 }
 export interface PluginDefinition {
   id: string
+  kind?: 'builtin' | 'mcp'
+  mcp?: () => McpServerState
   name: string
   description: string
   sideEffect: boolean

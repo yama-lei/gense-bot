@@ -69,7 +69,7 @@ export async function startServer(config: HostConfig) {
       ? new SandboxedEnv(new NodeExecutionEnv({ cwd: files }), sandbox, { target: files, cwd })
       : new MountedEnv(new NodeExecutionEnv({ cwd: files }), { mount: DATA_DIR, target: files, cwd })
   // Opening resumes runs a previous process left unfinished (R32). The space owns `db` and closes it.
-  space = await UserSpace.open(db, { models: config.models(), env, plugins: config.plugins, secretKey: config.secretKey, sandbox: !!sandbox, webhooks: true, skillTempDir: join(config.dataDir, 'skill-tmp') })
+  space = await UserSpace.open(db, { models: config.models(), env, plugins: config.plugins, secretKey: config.secretKey, sandbox: !!sandbox, webhooks: true, skillTempDir: join(config.dataDir, 'skill-tmp'), mcp: { publicUrl: config.publicUrl } })
   const opened = space
   const backups = config.backups === false ? undefined : startBackups(db, join(config.dataDir, 'backups'), config.backups)
 
@@ -93,7 +93,9 @@ export async function startServer(config: HostConfig) {
     const path = new URL(req.url ?? '/', 'http://x').pathname
     // A webhook call (R50) is signed by its secret, not by a session.
     const hookId = parseHookPath(path)
-    const handled = hookId
+    const handled = path === '/api/mcp/callback' && req.method === 'GET'
+      ? opened.mcp.callback(new URL(req.url!, config.publicUrl ?? 'http://localhost')).then(() => send(res, new Response('MCP 授权完成，可以关闭此页面。'))).catch(() => send(res, json(400, { error: 'MCP 授权回调无效' })))
+      : hookId
       ? toRequest(req).then((request) => opened.handleWebhook(hookId, request)).then((r) => send(res, r))
       : path.startsWith('/api/')
       ? toRequest(req).then((request) => accountApi(auth, request)).then((r) => send(res, r))

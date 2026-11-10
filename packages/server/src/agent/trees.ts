@@ -1,4 +1,4 @@
-import { pluginCatalog } from '../plugins/catalog.ts'
+
 import type { ConversationWatch } from '@earendil-works/pi-durable'
 // One user's conversations: a pi-durable Harness plus the sidebar index, in the same SQLite database (roadmap-3 D2).
 // A tree is a main conversation and the branches forked from it, all ownerless; tree and branch ids are ours,
@@ -146,10 +146,11 @@ export async function files(this: UserSpace, treeId: string): Promise<Workspace>
 
 export async function callTool(this: UserSpace, treeId: string, pluginId: string, name: string, args: unknown, ctx: Context = BACKGROUND_CONTEXT): Promise<ToolCallResult> {
   await this.row(treeId)
-  const plugin = pluginCatalog.find(p => p.id === pluginId)
+  const plugin = this.plugins.definitions().find(p => p.id === pluginId)
   if (!plugin) throw new Error('未知插件')
   if (!this.plugins.active().includes(pluginId)) throw new Error('插件已关闭或不可用')
   if (!this.plugins.toolEnabled(pluginId, name)) throw new Error('工具已关闭')
+  if (plugin.kind === 'mcp') return this.mcp.call(pluginId, name, args)
   const tool = plugin.viewTools?.[name]
   if (!tool) throw new Error('界面不能调用该插件的这个工具')
   return tool.call(args, await this.workspace.env(treeDir(treeId)), ctx)
@@ -171,6 +172,7 @@ export async function close(this: UserSpace, ctx: Context = BACKGROUND_CONTEXT):
     this.listeners.clear()
     this.branchListeners.clear()
     this.automationListeners.clear()
+    await this.mcp.close()
     await this.harness.close(ctx)
   }
 /** Search every branch through the public transcript API, including inherited fork entries. */

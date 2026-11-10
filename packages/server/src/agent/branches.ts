@@ -168,6 +168,12 @@ export async function send(this: UserSpace,
       ;({ branch, conv } = await this.addBranch(tree, branch, before, ctx))
     }
 
+    const trigger = await this.triggers.get(input.requestId)
+    if (trigger?.source === 'web') {
+      const payload = JSON.parse(trigger.payload)
+      payload.webInput = { ...input, branchId: branch.id }; delete payload.webInput.replace
+      await this.db.run('UPDATE triggers SET payload = ? WHERE id = ?', JSON.stringify(payload), input.requestId)
+    }
     const attached = input.attachments?.length ? await this.workspace.attach(treeId, input.attachments, ctx) : []
     const content: (TextContent | ImageContent)[] = [{ type: 'text', text }]
     if (input.command) content.push({ type: 'text', text: commandText(input.command) })

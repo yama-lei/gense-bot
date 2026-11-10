@@ -73,7 +73,7 @@ export async function createTree(this: UserSpace, ctx: Context = BACKGROUND_CONT
     const meta: TreeMeta = { id, title: DEFAULT_TITLE, pinned: false, createdAt: now, updatedAt: now }
     const main: BranchRow = { id: crypto.randomUUID(), treeId: id, conversationId: conv.id, parentId: null, forkEntryId: null, role: 'main', mode: 'new', title: '', status: 'idle', createdAt: now }
     await this.insertBranch(main)
-    await this.db.run(`INSERT INTO trees (${COLUMNS}) VALUES (?, ?, ?, 0, ?, ?, ?)`, meta.id, conv.id, meta.title, now, now, main.id)
+    await this.db.run(`INSERT INTO trees (${COLUMNS}) VALUES (?, ?, ?, 0, ?, ?, ?, NULL)`, meta.id, conv.id, meta.title, now, now, main.id)
     await this.changed()
     return meta
   }
@@ -106,7 +106,9 @@ export async function deleteTree(this: UserSpace, treeId: string, ctx: Context =
     for (const s of await this.db.all<ScheduleRow>(`SELECT ${SCHEDULE_COLUMNS} FROM schedules WHERE treeId = ?`, treeId)) await this.stopSchedule(s, ctx)
     await this.db.run('DELETE FROM schedules WHERE treeId = ?', treeId)
     await this.db.run('DELETE FROM webhooks WHERE treeId = ?', treeId)
-    await this.db.run('DELETE FROM events WHERE treeId = ?', treeId)
+    await this.db.run('DELETE FROM triggers WHERE tree_id = ?', treeId)
+    await this.db.run('DELETE FROM threads WHERE tree_id = ?', treeId)
+    await this.db.run('DELETE FROM outbox WHERE trigger_id NOT IN (SELECT id FROM triggers)')
     this.automationsChanged()
     // The main branch first, with its background work: a subagent's anchor then does not report into a removed tree.
     for (const b of branches.sort((a, b) => Number(b.role === 'main') - Number(a.role === 'main')))
@@ -172,6 +174,10 @@ export async function close(this: UserSpace, ctx: Context = BACKGROUND_CONTEXT):
     this.listeners.clear()
     this.branchListeners.clear()
     this.automationListeners.clear()
+    await this.outbox.close()
+    for (const watch of this.channelWatches) await watch.stop().catch(() => {})
+    this.channelWatches.clear()
+    await this.channels.close()
     await this.mcp.close()
     await this.harness.close(ctx)
   }

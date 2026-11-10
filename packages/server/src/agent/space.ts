@@ -1,3 +1,8 @@
+import type { ConversationWatch } from '@earendil-works/pi-durable'
+import { ChannelHub } from '../channels/hub.ts'
+import { TriggerStore } from '../events/store.ts'
+import { Outbox } from '../events/outbox.ts'
+import * as ingest from '../events/ingest.ts'
 import { McpHost } from '../plugins/mcp/host.ts'
 import { createToolSearchExtension } from '@earendil-works/pi-durable/tool-search'
 import { defineExtension, section } from '@earendil-works/pi-durable'
@@ -39,7 +44,7 @@ import { SkillStore } from '../plugins/skills.ts'
 import * as branches from './branches.ts'
 import * as events from './events.ts'
 import * as schedules from './schedules.ts'
-import { type EventRow,eventsExtension,files,gense,migrations,PLUGINS,type SpaceOptions,type WebhookRow } from './shared.ts'
+import { eventsExtension,files,gense,migrations,PLUGINS,type SpaceOptions,type WebhookRow } from './shared.ts'
 import * as subagents from './subagents.ts'
 import * as trees from './trees.ts'
 import * as webhooks from './webhooks.ts'
@@ -65,6 +70,12 @@ export class UserSpace {
 
   readonly skills: SkillStore
 
+  readonly channels: ChannelHub
+  readonly triggers: TriggerStore
+  readonly outbox: Outbox
+  readonly ingestQueues = new Map<string, Promise<unknown>>()
+  readonly channelRuns = new Map<string, Promise<void>>()
+  readonly channelWatches = new Set<ConversationWatch>()
   readonly mcp: McpHost
   readonly preferences: PreferenceStore
   readonly accounts: ModelAccounts
@@ -78,13 +89,16 @@ export class UserSpace {
 
   agentTask!: ReturnType<typeof eventsExtension>['agent']
 
-  constructor(db: SqliteDatabase, harness: Harness, workspace: Workspace, plugins: PluginStore, skills: SkillStore, accounts: ModelAccounts, options: SpaceOptions, preferences: PreferenceStore, mcp: McpHost) {
+  constructor(db: SqliteDatabase, harness: Harness, workspace: Workspace, plugins: PluginStore, skills: SkillStore, accounts: ModelAccounts, options: SpaceOptions, preferences: PreferenceStore, mcp: McpHost, channels: ChannelHub, triggers: TriggerStore, outbox: Outbox) {
     this.sealer = options.secretKey ? new Sealer(options.secretKey) : undefined
     this.db = db
     this.harness = harness
     this.workspace = workspace
     this.plugins = plugins
     this.skills = skills
+    this.channels = channels
+    this.triggers = triggers
+    this.outbox = outbox
     this.mcp = mcp
     this.preferences = preferences
     this.accounts = accounts
@@ -105,6 +119,9 @@ export class UserSpace {
   /** Opens the database's host tables and pi-durable storage. The Harness owns `db` and closes it in `close()`. */
   static async open(db: SqliteDatabase, options: SpaceOptions, ctx: Context = BACKGROUND_CONTEXT) {
     await applySqliteMigrations(db, migrations, { table: 'app_migrations' })
+    const triggers = await TriggerStore.open(db)
+    const channels = await ChannelHub.open(db, options.secretKey)
+    const outbox = new Outbox(db, item => channels.deliver(item), options.outboxRetryMs)
     const storage = await SqliteStorage.open(db, { prefix: 'pi_' })
     const plugins = await PluginStore.open(db, { ...options.plugins, secretKey: options.secretKey, available: Object.keys(PLUGINS).filter((id) => id !== 'sandbox' || options.sandbox) })
     const preferences = await PreferenceStore.open(db)
@@ -150,13 +167,13 @@ export class UserSpace {
       { ...options.harness, settings, models: accounts.models, registry, env: ({ cwd }) => workspace.env(cwd ?? DATA_DIR) },
       ctx,
     )
-    space = new UserSpace(db, harness, workspace, plugins, skills, accounts, options, preferences, mcp)
+    space = new UserSpace(db, harness, workspace, plugins, skills, accounts, options, preferences, mcp, channels, triggers, outbox)
     space.schedule = events.schedule
     space.agentTask = events.agent
-    // Events stored but not yet delivered when a previous process stopped; delivery is idempotent.
-    for (const row of await db.all<EventRow>('SELECT id, treeId, branchId, data, wake FROM events WHERE deliveredAt IS NULL')) {
-      await space.deliver(row, ctx).catch(() => {})
-    }
+    for (const definition of options.channels ?? []) channels.register(definition)
+    await channels.start(trigger => space!.ingestChannel(trigger))
+    await space.recoverTriggers()
+    outbox.start()
     // Continue runs a previous process left unfinished (R32).
     harness.resume()
     return space
@@ -204,7 +221,12 @@ export class UserSpace {
   userEntry: OmitThisParameter<typeof branches.userEntry> = branches.userEntry.bind(this)
   regenerate: OmitThisParameter<typeof branches.regenerate> = branches.regenerate.bind(this)
   checkModel: OmitThisParameter<typeof branches.checkModel> = branches.checkModel.bind(this)
-  send: OmitThisParameter<typeof branches.send> = branches.send.bind(this)
+  sendInput: OmitThisParameter<typeof branches.send> = branches.send.bind(this)
+  send: OmitThisParameter<typeof ingest.webSend> = ingest.webSend.bind(this)
+  ingestChannel: OmitThisParameter<typeof ingest.ingestChannel> = ingest.ingestChannel.bind(this)
+  processChannel: OmitThisParameter<typeof ingest.processChannel> = ingest.processChannel.bind(this)
+  monitorChannel: OmitThisParameter<typeof ingest.monitorChannel> = ingest.monitorChannel.bind(this)
+  recoverTriggers: OmitThisParameter<typeof ingest.recoverTriggers> = ingest.recoverTriggers.bind(this)
   submit: OmitThisParameter<typeof branches.submit> = branches.submit.bind(this)
   answered: OmitThisParameter<typeof branches.answered> = branches.answered.bind(this)
   mentioned: OmitThisParameter<typeof branches.mentioned> = branches.mentioned.bind(this)

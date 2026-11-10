@@ -31,6 +31,8 @@ export class Connection {
   async start() {
     const { space } = this.#o
     this.#send({ t: 'hello' })
+    this.#send({ t: 'channels', channels: space.channels.list() })
+    this.#unsubscribe.push(space.channels.subscribe(() => this.#send({ t: 'channels', channels: space.channels.list() })))
     this.#send({ t: 'prefs', prefs: space.preferences.get() })
     this.#unsubscribe.push(space.preferences.subscribe(() => this.#send({ t: 'prefs', prefs: space.preferences.get() })))
     const accounts = async () => {
@@ -142,6 +144,16 @@ export class Connection {
         return space.workspace.uploads()
       case 'tool.call':
         return space.callTool(r.treeId, r.pluginId, r.name, r.args)
+      case 'channel.set':
+        return space.channels.set(r.channelId, r)
+      case 'channel.pair':
+        return space.channels.pair(r.channelId)
+      case 'channel.allow':
+        return space.channels.allow(r.channelId, r.actorId, r.name)
+      case 'channel.revoke':
+        return space.channels.revoke(r.channelId, r.actorId)
+      case 'triggers.list':
+        return space.triggers.list(r.channelId, r.limit)
       case 'mcp.add':
         return space.mcp.add(r)
       case 'mcp.update':

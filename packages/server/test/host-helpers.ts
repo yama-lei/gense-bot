@@ -108,6 +108,7 @@ export class Client {
   }
 
   request<T = unknown>(r: DistributiveOmit<ClientRequest, 'id'>): Promise<T> {
+    if (r.t === 'send' || r.t === 'regenerate' || r.t === 'branch.summarize') r = { ...r, requestId: r.treeId + ':' + r.requestId }
     const id = this.#next++
     return new Promise((resolve, reject) => {
       this.#pending.set(id, { resolve: resolve as (v: unknown) => void, reject })

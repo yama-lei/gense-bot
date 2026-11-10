@@ -23,35 +23,22 @@ export async function mainBranch(this: UserSpace, treeId: string): Promise<Branc
   }
 
 export async function emit(this: UserSpace, treeId: string, draft: EventDraft, options: { branchId?: string; key?: string } = {}, ctx: Context = BACKGROUND_CONTEXT): Promise<EventData> {
-    const { branch } = options.branchId ? await this.branchRow(treeId, options.branchId) : { branch: await this.mainBranch(treeId) }
-    if (options.key) {
-      const found = await this.db.get<{ data: string }>('SELECT data FROM events WHERE idempotencyKey = ?', options.key)
-      if (found) return JSON.parse(found.data) as EventData
-    }
-    let wake = draft.wake
-    let body = draft.body
-    if (wake) {
-      const recent = await this.db.get<{ n: number }>('SELECT count(*) AS n FROM events WHERE branchId = ? AND wake = 1 AND createdAt > ?', branch.id, this.now() - 60_000)
-      if (recent!.n >= WAKES_PER_MINUTE) {
-        wake = false
-        body += '\n\n（一分钟内的通知太多，这条没有立即处理，下次对话时再看。）'
-      }
-    }
-    const event: EventData = { ...draft, body, wake, id: crypto.randomUUID(), createdAt: this.now() }
-    const row: EventRow = { id: event.id, treeId, branchId: branch.id, data: JSON.stringify(event), wake: wake ? 1 : 0 }
-    await this.db.run(
-      'INSERT INTO events (id, treeId, branchId, data, wake, idempotencyKey, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      row.id,
-      treeId,
-      branch.id,
-      row.data,
-      row.wake,
-      options.key ?? null,
-      event.createdAt,
-    )
-    await this.deliver(row, ctx)
-    return event
+  const { branch } = options.branchId ? await this.branchRow(treeId, options.branchId) : { branch: await this.mainBranch(treeId) }
+  const id = options.key ?? crypto.randomUUID()
+  const existing = await this.triggers.get(id)
+  if (existing) return JSON.parse(existing.payload).event as EventData
+  let wake = draft.wake, body = draft.body
+  if (wake) {
+    const recent = await this.db.get<{ n: number }>("SELECT count(*) AS n FROM triggers WHERE tree_id = ? AND decision = 'accepted' AND json_extract(payload, '$.branchId') = ? AND json_extract(payload, '$.event.wake') = 1 AND created_at > ?", treeId, branch.id, this.now() - 60_000)
+    if (recent!.n >= WAKES_PER_MINUTE) { wake = false; body += '\n\n（一分钟内的通知太多，这条没有立即处理，下次对话时再看。）' }
   }
+  const event: EventData = { ...draft, body, wake, id, createdAt: this.now() }
+  const admitted = await this.triggers.admit({ id, source: draft.source.kind, thread: { key: treeId, label: draft.source.label, group: false }, actor: { id: 'owner', name: '所有者自动任务' }, text: body, treeId, createdAt: event.createdAt }, this.channels.isAllowed(draft.source.kind, 'owner'), { event, branchId: branch.id })
+  if (admitted.duplicate) return JSON.parse(admitted.row.payload).event as EventData
+  if (admitted.row.decision === 'rejected') return event
+  await this.deliver({ id, treeId, branchId: branch.id, data: JSON.stringify(event), wake: wake ? 1 : 0 }, ctx)
+  return event
+}
 
 export async function deliver(this: UserSpace, row: EventRow, ctx: Context): Promise<void> {
     const event = JSON.parse(row.data) as EventData
@@ -70,7 +57,7 @@ export async function deliver(this: UserSpace, row: EventRow, ctx: Context): Pro
       await this.db.run('UPDATE trees SET updatedAt = ? WHERE id = ?', this.now(), tree.id)
       await this.changed()
     }
-    await this.db.run('UPDATE events SET deliveredAt = ? WHERE id = ?', this.now(), event.id)
+    await this.triggers.delivered(event.id)
   }
 
 export async function report(this: UserSpace, conversationId: number, report: { title: string; body: string }, ctx: Context): Promise<"已交给主线；用户回到主线时能看到，主线下一轮对话会读到它。" | "已汇报给主线，你的任务完成了；简短收尾即可，不要再做别的。"> {

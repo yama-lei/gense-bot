@@ -57,7 +57,7 @@ export const migrations = [
   {
     version: 1,
     statements: [
-      'CREATE TABLE trees (id TEXT PRIMARY KEY, rootId INTEGER NOT NULL, title TEXT NOT NULL, pinned INTEGER NOT NULL DEFAULT 0, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL)',
+      'CREATE TABLE trees (id TEXT PRIMARY KEY, rootId INTEGER NOT NULL, title TEXT NOT NULL, pinned INTEGER NOT NULL DEFAULT 0, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL, source TEXT)',
     ],
   },
   {
@@ -76,8 +76,6 @@ export const migrations = [
     // Events, schedules and webhooks (stage 6).
     version: 3,
     statements: [
-      'CREATE TABLE events (id TEXT PRIMARY KEY, treeId TEXT NOT NULL, branchId TEXT NOT NULL, data TEXT NOT NULL, wake INTEGER NOT NULL, idempotencyKey TEXT UNIQUE, createdAt INTEGER NOT NULL, deliveredAt INTEGER)',
-      'CREATE INDEX events_branch ON events (branchId, createdAt)',
       'CREATE TABLE schedules (id TEXT PRIMARY KEY, treeId TEXT NOT NULL, name TEXT NOT NULL, prompt TEXT NOT NULL, rule TEXT NOT NULL, tz TEXT NOT NULL, enabled INTEGER NOT NULL, taskId INTEGER, nextRunAt INTEGER, lastRunAt INTEGER, lastResult TEXT NOT NULL, createdAt INTEGER NOT NULL)',
       'CREATE TABLE webhooks (id TEXT PRIMARY KEY, treeId TEXT NOT NULL, secret TEXT NOT NULL, createdAt INTEGER NOT NULL, lastUsedAt INTEGER)',
     ],
@@ -126,6 +124,8 @@ export interface SpaceOptions {
   plugins?: Pick<PluginStoreOptions, 'defaults'>
   /** Passed through to the Harness: wake scheduling and settings belong to the host. */
   harness?: Pick<HarnessOptions, 'onWake' | 'setTimer' | 'now' | 'settings' | 'onReport'>
+  channels?: import('../channels/channel.ts').ChannelDefinition[]
+  outboxRetryMs?: number
   mcp?: import('../plugins/mcp/host.ts').McpOptions
   skillTempDir?: string
   now?: () => number
@@ -135,11 +135,11 @@ export interface SpaceOptions {
   webhooks?: boolean
 }
 
-export type TreeRow = { id: string; rootId: number; title: string; pinned: number; createdAt: number; updatedAt: number; activeBranchId: string }
+export type TreeRow = { id: string; rootId: number; title: string; pinned: number; createdAt: number; updatedAt: number; activeBranchId: string; source: string | null }
 
-export const COLUMNS = 'id, rootId, title, pinned, createdAt, updatedAt, activeBranchId'
+export const COLUMNS = 'id, rootId, title, pinned, createdAt, updatedAt, activeBranchId, source'
 
-export const toMeta = ({ rootId: _, activeBranchId: __, ...r }: TreeRow): TreeMeta => ({ ...r, pinned: r.pinned === 1 })
+export const toMeta = ({ rootId: _, activeBranchId: __, source, ...r }: TreeRow): TreeMeta => ({ ...r, pinned: r.pinned === 1, ...(source && { source: JSON.parse(source) }) })
 
 export type BranchRow = {
   id: string

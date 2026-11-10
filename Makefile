@@ -31,10 +31,11 @@ start: ## Build the web app and run the server as in production, on http://127.0
 test: ## All tests (sandbox tests need `make sandbox` first)
 	npm test
 
-typecheck: ## Type-check every package
+typecheck: ## Type-check protocol and server
 	npm run typecheck
 
-check: typecheck test ## Type-check, then test
+check: ## Type-check protocol/server, then run server tests
+	npm run check:server
 
 passwd: ## Set the login password for `make dev` / `make start`
 	npm run passwd

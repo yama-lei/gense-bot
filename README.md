@@ -19,7 +19,7 @@ make install
 make passwd                    # 设置登录密码（单所有者，ADR-0005）
 make sandbox                   # 可选：bash 沙箱镜像；不用沙箱就在 .env 里设 SANDBOX=0
 make dev                       # 前端 http://localhost:5173，服务端 :8787
-make check                     # 类型检查 + 测试
+make check                     # protocol/server 类型检查 + 服务端全部测试
 ```
 
 `make docker-dev` 在本机跑和线上一样的 app 容器（不带 Caddy），地址 http://127.0.0.1:8787，数据放在 `data/docker/`，与 `make dev` 的数据分开；密码用 `make docker-passwd` 设置，`make docker-down` 停止。

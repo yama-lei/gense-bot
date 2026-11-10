@@ -23,14 +23,14 @@
 浏览器（手机 / 桌面）
   │  HTTPS
   ▼
-Caddy ── reverse_proxy ──► app 容器（hosts/node，一个 Node 进程）
+Caddy ── reverse_proxy ──► app 容器（packages/server/platform，一个 Node 进程）
                               ├─ 静态文件（packages/web/dist）
                               ├─ /api/login、/api/logout、/api/me
                               ├─ /hooks/<hookId>   webhook，按签名校验，不看登录
                               └─ WebSocket         校验登录 cookie 后建 Connection
                                     │
                                     ▼
-                              UserSpace（packages/core）
+                              UserSpace（packages/server）
                                 ├─ pi-durable Harness：会话树、分叉、子 agent
                                 ├─ Event、定时任务、webhook
                                 ├─ 插件（pi-durable extension）与 Skills
@@ -38,7 +38,7 @@ Caddy ── reverse_proxy ──► app 容器（hosts/node，一个 Node 进�
                                 └─ Workspace ──► 文件目录 / sandbox 容器
 ```
 
-- `packages/core` 不依赖 Node 之外的部署细节：存储、文件环境、sandbox 都由宿主（`hosts/node`）传进来。两者何时合并留给后续阶段（ADR-0005 决定 2）。
+- 路线图 5 将 core 与 Node host 合并为 `packages/server`；`platform/` 负责部署设施，`agent/` 负责会话，`events/` 负责自动任务，`channels/` 负责入口，`plugins/` 负责工具。浏览器契约固定在 `packages/protocol`。
 - 一份数据同一时间只能由一个进程打开，所以不能多副本。
 - 前端协议见路线图 3 D9：服务端转发 pi-durable `watch()` 的 Chord 操作，前端在本地组装消息；发言、中止、分叉等都是 WebSocket 上的请求。
 
@@ -88,7 +88,7 @@ Caddy ── reverse_proxy ──► app 容器（hosts/node，一个 Node 进�
 
 ## 插件与界面
 
-工具按插件组织（`packages/core/src/catalog.ts` 声明，`packages/core/src/plugins/` 实现，每个插件是一个 pi-durable extension）。插件可以自带界面，接口按 [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) 的概念设计，这样以后接入的 MCP 工具及其界面，也能和我们自己的工具走同一条渲染路径。首版用 React 渲染，只对齐接口。
+工具按插件组织（`packages/server/src/plugins/catalog.ts` 声明，`packages/server/src/plugins/` 实现，每个插件是一个 pi-durable extension）。插件可以自带界面，接口按 [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) 的概念设计，这样以后接入的 MCP 工具及其界面，也能和我们自己的工具走同一条渲染路径。首版用 React 渲染，只对齐接口。
 
 ### 工具（服务端）
 
@@ -129,7 +129,7 @@ Caddy ── reverse_proxy ──► app 容器（hosts/node，一个 Node 进�
 | web | 网页搜索与读取 |
 | image | 生成图片 |
 | sandbox | `bash`，需要 Docker sandbox |
-| drive、mcp | 已预留，未实现 |
+| mcp | 后续 B3 接入 |
 
 ## 后续能力
 
@@ -152,7 +152,7 @@ ADR-0005 决定先做内置日历，复用现有定时任务（规则、时区�
 
 | 项目 | 证据 |
 | --- | --- |
-| 功能（R 编号） | `npm test`：core 与 `hosts/node` 的测试走真实的 SQLite、文件和 Docker，模型用 faux provider；sandbox 测试需要先 `npm run sandbox:build` |
+| 功能（R 编号） | `npm test`：core 与 `packages/server/platform` 的测试走真实的 SQLite、文件和 Docker，模型用 faux provider；sandbox 测试需要先 `npm run sandbox:build` |
 | 内存 | 路线图 4 阶段 1 记录：空闲 RSS 142 MB，10 个会话同时回答时峰值 168 MB（不含 sandbox） |
 | 真实模型 | 部署前手动冒烟，覆盖中转的已知问题 |
 | 部署 | 2 GB 机器上 `docker compose up` 后的内存余量（阶段 1 验收，待在 VPS 上测） |
@@ -163,7 +163,7 @@ ADR-0005 决定先做内置日历，复用现有定时任务（规则、时区�
 
 - 是否需要会话全文搜索。
 - MCP 界面 iframe 的独立域名，以及 `@mcp-ui/client` 和官方 AppBridge 选哪个（接入 MCP 时再定）。
-- `core` 与 `hosts/node` 是否合并。
+
 
 ## 上游依据
 

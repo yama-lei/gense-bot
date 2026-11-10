@@ -1,0 +1,214 @@
+// One user's conversations: a pi-durable Harness plus the sidebar index, in the same SQLite database (roadmap-3 D2).
+// A tree is a main conversation and the branches forked from it, all ownerless; tree and branch ids are ours,
+// conversation ids are pi-durable's. Each tree has one workspace directory, every branch's cwd (D6).
+import { BACKGROUND_CONTEXT,type Context } from '@earendil-works/chord/context'
+
+import { applySqliteMigrations,type SqliteDatabase } from '@earendil-works/chord/sqlite'
+
+import {
+createRegistry,
+Harness,
+type Extension
+} from '@earendil-works/pi-durable'
+
+import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite'
+
+import {
+type TreeMeta,
+type WebhookInfo
+} from '@gense/protocol'
+
+import { DATA_DIR,Workspace } from './workspace.ts'
+
+import { noSandbox } from '../plugins/sandbox.ts'
+
+import { PluginStore,Sealer } from '../plugins/store.ts'
+
+import { ModelAccounts } from './credentials.ts'
+
+import {
+HOOKS_PATH
+} from '../events/tasks.ts'
+
+import { SkillStore } from '../plugins/skills.ts'
+
+import * as branches from './branches.ts'
+import * as events from './events.ts'
+import * as schedules from './schedules.ts'
+import { type EventRow,eventsExtension,files,gense,migrations,PLUGINS,type SpaceOptions,type WebhookRow } from './shared.ts'
+import * as subagents from './subagents.ts'
+import * as trees from './trees.ts'
+import * as webhooks from './webhooks.ts'
+export type { SpaceOptions } from './shared.ts'
+export class UserSpace {
+
+  readonly listeners = new Set<(trees: TreeMeta[]) => void>()
+
+  readonly branchListeners = new Set<(treeId: string) => void>()
+
+  readonly automationListeners = new Set<() => void>()
+
+  /** Whether each conversation last ran, from its `pi.live` commits; a change updates its tree's branches. */
+  readonly running = new Map<number, boolean>()
+
+  readonly db: SqliteDatabase
+
+  readonly harness: Harness
+
+  readonly workspace: Workspace
+
+  readonly plugins: PluginStore
+
+  readonly skills: SkillStore
+
+  readonly accounts: ModelAccounts
+
+  readonly options: SpaceOptions
+
+  readonly sealer: Sealer | undefined
+
+  /** Set once in `open`, before the Harness resumes work. */
+  schedule!: ReturnType<typeof eventsExtension>['schedule']
+
+  agentTask!: ReturnType<typeof eventsExtension>['agent']
+
+  constructor(db: SqliteDatabase, harness: Harness, workspace: Workspace, plugins: PluginStore, skills: SkillStore, accounts: ModelAccounts, options: SpaceOptions) {
+    this.sealer = options.secretKey ? new Sealer(options.secretKey) : undefined
+    this.db = db
+    this.harness = harness
+    this.workspace = workspace
+    this.plugins = plugins
+    this.skills = skills
+    this.accounts = accounts
+    this.options = options
+    harness.subscribeCommits((publication) => {
+      for (const c of publication.changes) {
+        if (c.type !== 'document' || c.record.kind !== 'pi.live' || c.conversationId === undefined) continue
+        const run = !!(c.value as { run?: unknown } | null)?.run
+        if (this.running.get(c.conversationId) === run) continue
+        this.running.set(c.conversationId, run)
+        // Listeners must not call the Session; this one reads only our tables, after the commit.
+        const id = c.conversationId
+        queueMicrotask(() => void this.conversationChanged(id).catch(() => {}))
+      }
+    })
+  }
+
+  /** Opens the database's host tables and pi-durable storage. The Harness owns `db` and closes it in `close()`. */
+  static async open(db: SqliteDatabase, options: SpaceOptions, ctx: Context = BACKGROUND_CONTEXT) {
+    await applySqliteMigrations(db, migrations, { table: 'app_migrations' })
+    const storage = await SqliteStorage.open(db, { prefix: 'pi_' })
+    const plugins = await PluginStore.open(db, { ...options.plugins, secretKey: options.secretKey, available: Object.keys(PLUGINS).filter((id) => id !== 'sandbox' || options.sandbox) })
+    const registry = createRegistry()
+    const byName = new Map<string, Extension>()
+    let space: UserSpace | undefined
+    const events = eventsExtension(() => {
+      if (!space) throw new Error('UserSpace is not open')
+      return space
+    })
+    for (const e of [gense, files, events.extension, noSandbox, ...Object.entries(PLUGINS).map(([id, make]) => make(() => plugins.resolved(id)))]) {
+      registry.install(e)
+      byName.set(e.name, e)
+    }
+    const accounts = await ModelAccounts.open(db, { host: options.models, secretKey: options.secretKey, oauth: true })
+    const workspace = new Workspace(options.env)
+    const skills = await SkillStore.open(db, async () => workspace.env(DATA_DIR), ctx)
+    // Conversations follow the host's selection, read at every resolution: a plugin switched on or off applies from the
+    // next turn of every conversation (D8). Every branch of a tree gets the same selection, so forks share its prefix (D3).
+    const settings = {
+      ...options.harness?.settings,
+      get extensions() {
+        const active = plugins.active()
+        return [gense, files, events.extension, ...active.map((id) => byName.get(id)!), ...(active.includes('sandbox') ? [] : [noSandbox])]
+      },
+    }
+    const harness = await Harness.open(
+      storage,
+      { ...options.harness, settings, models: accounts.models, registry, env: ({ cwd }) => workspace.env(cwd ?? DATA_DIR) },
+      ctx,
+    )
+    space = new UserSpace(db, harness, workspace, plugins, skills, accounts, options)
+    space.schedule = events.schedule
+    space.agentTask = events.agent
+    // Events stored but not yet delivered when a previous process stopped; delivery is idempotent.
+    for (const row of await db.all<EventRow>('SELECT id, treeId, branchId, data, wake FROM events WHERE deliveredAt IS NULL')) {
+      await space.deliver(row, ctx).catch(() => {})
+    }
+    // Continue runs a previous process left unfinished (R32).
+    harness.resume()
+    return space
+  }
+
+  // --- Subagents (R51–R56) ---
+
+  /** Spawns run one at a time, so parallel calls of one turn count each other against the limit. */
+  spawning: Promise<unknown> = Promise.resolve()
+
+  // --- Webhooks (R50) ---
+
+  webhookInfo = ({ secret: _, ...r }: WebhookRow): WebhookInfo => ({ ...r, path: `${HOOKS_PATH}/${r.id}` })
+
+  /** Webhook secrets are sealed, so creating one needs the host's TOKEN_ENCRYPTION_KEY. */
+  get canCreateWebhooks() {
+    return !!this.sealer
+  }
+
+  closed = false
+  now: OmitThisParameter<typeof trees.now> = trees.now.bind(this)
+  trees: OmitThisParameter<typeof trees.trees> = trees.trees.bind(this)
+  subscribeTrees: OmitThisParameter<typeof trees.subscribeTrees> = trees.subscribeTrees.bind(this)
+  subscribeBranches: OmitThisParameter<typeof trees.subscribeBranches> = trees.subscribeBranches.bind(this)
+  changed: OmitThisParameter<typeof trees.changed> = trees.changed.bind(this)
+  branchesChanged: OmitThisParameter<typeof trees.branchesChanged> = trees.branchesChanged.bind(this)
+  conversationChanged: OmitThisParameter<typeof trees.conversationChanged> = trees.conversationChanged.bind(this)
+  createTree: OmitThisParameter<typeof trees.createTree> = trees.createTree.bind(this)
+  insertBranch: OmitThisParameter<typeof trees.insertBranch> = trees.insertBranch.bind(this)
+  updateTree: OmitThisParameter<typeof trees.updateTree> = trees.updateTree.bind(this)
+  deleteTree: OmitThisParameter<typeof trees.deleteTree> = trees.deleteTree.bind(this)
+  row: OmitThisParameter<typeof trees.row> = trees.row.bind(this)
+  branchRow: OmitThisParameter<typeof trees.branchRow> = trees.branchRow.bind(this)
+  open: OmitThisParameter<typeof trees.open> = trees.open.bind(this)
+  files: OmitThisParameter<typeof trees.files> = trees.files.bind(this)
+  callTool: OmitThisParameter<typeof trees.callTool> = trees.callTool.bind(this)
+  branches: OmitThisParameter<typeof branches.branches> = branches.branches.bind(this)
+  branchMeta: OmitThisParameter<typeof branches.branchMeta> = branches.branchMeta.bind(this)
+  versions: OmitThisParameter<typeof branches.versions> = branches.versions.bind(this)
+  continuing: OmitThisParameter<typeof branches.continuing> = branches.continuing.bind(this)
+  addBranch: OmitThisParameter<typeof branches.addBranch> = branches.addBranch.bind(this)
+  emptyLike: OmitThisParameter<typeof branches.emptyLike> = branches.emptyLike.bind(this)
+  fork: OmitThisParameter<typeof branches.fork> = branches.fork.bind(this)
+  userEntry: OmitThisParameter<typeof branches.userEntry> = branches.userEntry.bind(this)
+  regenerate: OmitThisParameter<typeof branches.regenerate> = branches.regenerate.bind(this)
+  checkModel: OmitThisParameter<typeof branches.checkModel> = branches.checkModel.bind(this)
+  send: OmitThisParameter<typeof branches.send> = branches.send.bind(this)
+  submit: OmitThisParameter<typeof branches.submit> = branches.submit.bind(this)
+  answered: OmitThisParameter<typeof branches.answered> = branches.answered.bind(this)
+  mentioned: OmitThisParameter<typeof branches.mentioned> = branches.mentioned.bind(this)
+  transcript: OmitThisParameter<typeof branches.transcript> = branches.transcript.bind(this)
+  mainBranch: OmitThisParameter<typeof events.mainBranch> = events.mainBranch.bind(this)
+  emit: OmitThisParameter<typeof events.emit> = events.emit.bind(this)
+  deliver: OmitThisParameter<typeof events.deliver> = events.deliver.bind(this)
+  report: OmitThisParameter<typeof events.report> = events.report.bind(this)
+  spawn: OmitThisParameter<typeof subagents.spawn> = subagents.spawn.bind(this)
+  spawnAgent: OmitThisParameter<typeof subagents.spawnAgent> = subagents.spawnAgent.bind(this)
+  runAgent: OmitThisParameter<typeof subagents.runAgent> = subagents.runAgent.bind(this)
+  finishAgent: OmitThisParameter<typeof subagents.finishAgent> = subagents.finishAgent.bind(this)
+  summarize: OmitThisParameter<typeof subagents.summarize> = subagents.summarize.bind(this)
+  subscribeAutomations: OmitThisParameter<typeof schedules.subscribeAutomations> = schedules.subscribeAutomations.bind(this)
+  automationsChanged: OmitThisParameter<typeof schedules.automationsChanged> = schedules.automationsChanged.bind(this)
+  schedules: OmitThisParameter<typeof schedules.schedules> = schedules.schedules.bind(this)
+  scheduleRow: OmitThisParameter<typeof schedules.scheduleRow> = schedules.scheduleRow.bind(this)
+  createSchedule: OmitThisParameter<typeof schedules.createSchedule> = schedules.createSchedule.bind(this)
+  startSchedule: OmitThisParameter<typeof schedules.startSchedule> = schedules.startSchedule.bind(this)
+  stopSchedule: OmitThisParameter<typeof schedules.stopSchedule> = schedules.stopSchedule.bind(this)
+  updateSchedule: OmitThisParameter<typeof schedules.updateSchedule> = schedules.updateSchedule.bind(this)
+  deleteSchedule: OmitThisParameter<typeof schedules.deleteSchedule> = schedules.deleteSchedule.bind(this)
+  fireSchedule: OmitThisParameter<typeof schedules.fireSchedule> = schedules.fireSchedule.bind(this)
+  webhooks: OmitThisParameter<typeof webhooks.webhooks> = webhooks.webhooks.bind(this)
+  createWebhook: OmitThisParameter<typeof webhooks.createWebhook> = webhooks.createWebhook.bind(this)
+  deleteWebhook: OmitThisParameter<typeof webhooks.deleteWebhook> = webhooks.deleteWebhook.bind(this)
+  handleWebhook: OmitThisParameter<typeof webhooks.handleWebhook> = webhooks.handleWebhook.bind(this)
+  abort: OmitThisParameter<typeof trees.abort> = trees.abort.bind(this)
+  watch: OmitThisParameter<typeof trees.watch> = trees.watch.bind(this)
+  close: OmitThisParameter<typeof trees.close> = trees.close.bind(this)
+}

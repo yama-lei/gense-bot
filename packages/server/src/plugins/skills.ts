@@ -1,3 +1,7 @@
+import { parseDocument, stringify } from 'yaml'
+import { resolve } from 'node:path'
+import { archiveFiles, gitFiles, safePath, type SkillFiles } from './skills/sources.ts'
+import { toBase64, fromBase64, UPLOADS_DIR } from '../agent/workspace.ts'
 // Agent Skills (roadmap-3 R33: R19, R28, R29). A Skill is a folder with a SKILL.md: `name` and `description` front
 // matter, then instructions the model reads with `read` when the task fits. Enabled shared Skills are written to
 // /data/skills; a conversation's own Skills live in its workspace under skills/ and win on a name clash.
@@ -5,13 +9,17 @@ import { BACKGROUND_CONTEXT, type Context } from '@earendil-works/chord/context'
 import type { SqliteDatabase } from '@earendil-works/chord/sqlite'
 import { applySqliteMigrations } from '@earendil-works/chord/sqlite'
 import type { ExecutionEnv } from '@earendil-works/pi-durable/env'
-import type { SkillInfo } from '@gense/protocol'
+import type { SkillInfo, SkillSource, FilePreview } from '@gense/protocol'
 import { SKILLS_DIR } from '../agent/workspace.ts'
 
 export interface SkillDoc {
   name: string
   description: string
   body: string
+  license?: string
+  compatibility?: string
+  metadata?: Record<string, string>
+  'allowed-tools'?: string
 }
 
 export const builtinSkills: SkillDoc[] = [
@@ -66,21 +74,26 @@ export const builtinSkills: SkillDoc[] = [
 export const SKILL_NAME = /^[\p{L}\p{N}][\p{L}\p{N}_-]{0,63}$/u
 
 /** Reads SKILL.md: simple `key: value` front matter, then the body. Null when name or description is missing. */
-export function parseSkill(raw: string): SkillDoc | null {
-  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(raw.replace(/^﻿/, ''))
-  if (!m) return null
-  const fields: Record<string, string> = {}
-  for (const line of m[1]!.split(/\r?\n/)) {
-    const kv = /^([A-Za-z_-]+)\s*:\s*(.*)$/.exec(line)
-    if (kv) fields[kv[1]!.toLowerCase()] = kv[2]!.trim().replace(/^(['"])(.*)\1$/, '$2')
-  }
-  const name = fields.name ?? ''
-  const description = fields.description ?? ''
-  if (!SKILL_NAME.test(name) || !description) return null
-  return { name, description: description.slice(0, 1024), body: m[2]!.trim() }
+export function parseSkill(raw: string, installed = false): SkillDoc | null {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/.exec(raw.replace(/^\uFEFF/, ''))
+  if (!match) return null
+  try {
+    const yaml = parseDocument(match[1]!, { uniqueKeys: true })
+    if (yaml.errors.length) return null
+    const value = yaml.toJS({ maxAliasCount: 20 }) as Record<string, unknown>
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+    const { name, description, license, compatibility, metadata } = value
+    if (typeof name !== 'string' || !(installed ? /^[a-z0-9]+(?:-[a-z0-9]+)*$/ : SKILL_NAME).test(name) || name.length > 64) return null
+    if (typeof description !== 'string' || !description.trim() || description.length > 1024) return null
+    if (license !== undefined && typeof license !== 'string') return null
+    if (compatibility !== undefined && (typeof compatibility !== 'string' || !compatibility.length || compatibility.length > 500)) return null
+    if (metadata !== undefined && (!metadata || typeof metadata !== 'object' || Array.isArray(metadata) || Object.values(metadata).some(v => typeof v !== 'string'))) return null
+    if (value['allowed-tools'] !== undefined && typeof value['allowed-tools'] !== 'string') return null
+    return { name, description, body: match[2]!.trim(), ...(license !== undefined && { license }), ...(compatibility !== undefined && { compatibility }), ...(metadata !== undefined && { metadata: metadata as Record<string, string> }), ...(value['allowed-tools'] !== undefined && { 'allowed-tools': value['allowed-tools'] as string }) }
+  } catch { return null }
 }
 
-export const skillFile = (s: SkillDoc) => `---\nname: ${s.name}\ndescription: ${s.description}\n---\n\n${s.body}\n`
+export const skillFile = ({ body, ...frontmatter }: SkillDoc) => `---\n${stringify(frontmatter)}---\n\n${body}\n`
 
 /** The Skills in `dir`'s subfolders, with the path of each SKILL.md; folders without a valid one are skipped. */
 export async function readSkills(env: ExecutionEnv, dir: string, ctx: Context): Promise<(SkillDoc & { path: string })[]> {
@@ -117,24 +130,29 @@ export class SkillStore {
   readonly #db: SqliteDatabase
   readonly #env: () => Promise<ExecutionEnv>
   readonly #switches = new Map<string, boolean>()
+  readonly #installed = new Map<string, { doc: SkillDoc; source: 'upload' | 'git'; origin: string; files: Record<string, string> }>()
+  readonly #temporaryRoot: string
   readonly #listeners = new Set<() => void>()
 
-  private constructor(db: SqliteDatabase, env: () => Promise<ExecutionEnv>) {
+  private constructor(db: SqliteDatabase, env: () => Promise<ExecutionEnv>, temporaryRoot: string) {
+    this.#temporaryRoot = temporaryRoot
     this.#db = db
     this.#env = env
   }
 
   /** `env` reaches /data; the enabled Skills are written to /data/skills now and after every switch. */
-  static async open(db: SqliteDatabase, env: () => Promise<ExecutionEnv>, ctx: Context) {
+  static async open(db: SqliteDatabase, env: () => Promise<ExecutionEnv>, ctx: Context, temporaryRoot = resolve(import.meta.dirname, '../../../../data/skill-tmp')) {
     await applySqliteMigrations(db, migrations, { table: 'skill_migrations' })
-    const store = new SkillStore(db, env)
+    const store = new SkillStore(db, env, temporaryRoot)
     for (const row of await db.all<{ name: string; enabled: number }>('SELECT name, enabled FROM skills')) store.#switches.set(row.name, row.enabled === 1)
+    await db.run('CREATE TABLE IF NOT EXISTS installed_skills (name TEXT PRIMARY KEY, data TEXT NOT NULL)')
+    for (const row of await db.all<{ name: string; data: string }>('SELECT * FROM installed_skills')) store.#installed.set(row.name, JSON.parse(row.data))
     await store.#sync(ctx)
     return store
   }
 
   list(): SkillInfo[] {
-    return builtinSkills.map((s) => ({ name: s.name, description: s.description, source: 'builtin', enabled: this.#switches.get(s.name) ?? true, files: ['SKILL.md'] }))
+    return [...builtinSkills.map((s): SkillInfo => ({ name: s.name, description: s.description, source: 'builtin', enabled: this.#switches.get(s.name) ?? true, files: ['SKILL.md'] })), ...[...this.#installed].map(([name, item]): SkillInfo => ({ name, description: item.doc.description, source: item.source, origin: item.origin, ...(item.doc.license && { license: item.doc.license }), enabled: this.#switches.get(name) ?? true, files: Object.keys(item.files).sort((a,b) => a === 'SKILL.md' ? -1 : b === 'SKILL.md' ? 1 : a.localeCompare(b)) }))]
   }
 
   subscribe(listener: () => void) {
@@ -143,11 +161,65 @@ export class SkillStore {
   }
 
   async set(name: string, enabled: boolean, ctx: Context = BACKGROUND_CONTEXT) {
-    if (!builtinSkills.some((s) => s.name === name)) throw new Error('未知 Skill')
+    if (!this.list().some((s) => s.name === name)) throw new Error('未知 Skill')
     await this.#db.run('INSERT INTO skills (name, enabled) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET enabled = excluded.enabled', name, enabled ? 1 : 0)
     this.#switches.set(name, enabled)
     await this.#sync(ctx)
     for (const l of this.#listeners) l()
+  }
+
+  get canInstall() { return true }
+
+  async install(source: SkillSource, ctx: Context = BACKGROUND_CONTEXT): Promise<SkillInfo[]> {
+    const env = await this.#env()
+    let files: SkillFiles, origin: string, kind: 'upload' | 'git'
+    if ('upload' in source) {
+      if (!source.upload.startsWith(UPLOADS_DIR + '/') || source.upload.slice(UPLOADS_DIR.length + 1).includes('/')) throw new Error('上传 ID 无效')
+      const read = await env.readBinaryFile(source.upload, ctx)
+      if (!read.ok) throw read.error
+      files = archiveFiles(read.value); origin = source.upload.split('/').at(-1)!; kind = 'upload'
+    } else { files = await gitFiles(source, this.#temporaryRoot); origin = source.git; kind = 'git' }
+    const candidates = Object.keys(files).filter(path => path === 'SKILL.md' || path.endsWith('/SKILL.md'))
+    const batch = new Map<string, { doc: SkillDoc; source: 'upload' | 'git'; origin: string; files: Record<string, string> }>()
+    for (const path of candidates) {
+      const doc = parseSkill(new TextDecoder('utf-8', { fatal: true }).decode(files[path]!), true)
+      if (!doc) throw new Error('Skill front matter 无效：' + path)
+      const prefix = path.slice(0, -'SKILL.md'.length)
+      if (prefix && prefix.slice(0, -1).split('/').at(-1) !== doc.name) throw new Error('Skill 名称必须匹配目录')
+      if (builtinSkills.some(s => s.name === doc.name) || batch.has(doc.name)) throw new Error('Skill 名称重复')
+      const contained = Object.fromEntries(Object.entries(files).filter(([p]) => p.startsWith(prefix)).map(([p, b]) => [safePath(p.slice(prefix.length)), toBase64(b)]))
+      batch.set(doc.name, { doc, source: kind, origin, files: contained })
+    }
+    if (!batch.size) throw new Error('没有找到 SKILL.md')
+    await this.#db.transaction(async tx => {
+      for (const [name, item] of batch) await tx.run('INSERT INTO installed_skills VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET data = excluded.data', name, JSON.stringify(item))
+    })
+    for (const [name, item] of batch) this.#installed.set(name, item)
+    await this.#sync(ctx)
+    for (const l of this.#listeners) l()
+    return this.list().filter(s => batch.has(s.name))
+  }
+
+  async remove(name: string, ctx: Context = BACKGROUND_CONTEXT) {
+    if (!this.#installed.has(name)) throw new Error('不能删除内置或未知 Skill')
+    await this.#db.transaction(async tx => { await tx.run('DELETE FROM installed_skills WHERE name = ?', name); await tx.run('DELETE FROM skills WHERE name = ?', name) })
+    this.#installed.delete(name); this.#switches.delete(name)
+    const env = await this.#env()
+    const removed = await env.remove(`${SKILLS_DIR}/${name}`, { recursive: true, force: true }, ctx)
+    if (!removed.ok) throw removed.error
+    for (const l of this.#listeners) l()
+  }
+
+  async read(name: string, path: string): Promise<FilePreview> {
+    safePath(path)
+    const builtin = builtinSkills.find(s => s.name === name)
+    const encoded = this.#installed.get(name)?.files[path]
+    const bytes = builtin && path === 'SKILL.md' ? new TextEncoder().encode(skillFile(builtin)) : encoded !== undefined ? fromBase64(encoded) : undefined
+    if (!bytes) throw new Error('Skill 文件不存在')
+    const head = bytes.subarray(0, 64 * 1024)
+    let text = '', binary = false
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(head); binary = text.includes('\0'); if (binary) text = '' } catch { binary = true }
+    return { text, size: bytes.length, truncated: head.length < bytes.length, binary }
   }
 
   /** Makes /data/skills hold exactly the enabled Skills. */
@@ -157,6 +229,15 @@ export class SkillStore {
     const listed = await env.listDir(SKILLS_DIR, ctx)
     for (const info of listed.ok ? listed.value : [])
       if (!enabled.has(info.name)) await env.remove(info.path, { recursive: true, force: true }, ctx)
+    for (const [name, item] of this.#installed) {
+      if (!enabled.has(name)) continue
+      const removed = await env.remove(`${SKILLS_DIR}/${name}`, { recursive: true, force: true }, ctx)
+      if (!removed.ok) throw removed.error
+      for (const [path, bytes] of Object.entries(item.files)) {
+        const written = await env.writeFile(`${SKILLS_DIR}/${name}/${path}`, fromBase64(bytes), ctx)
+        if (!written.ok) throw written.error
+      }
+    }
     for (const s of builtinSkills) {
       if (!enabled.has(s.name)) continue
       const written = await env.writeFile(`${SKILLS_DIR}/${s.name}/SKILL.md`, skillFile(s), ctx)

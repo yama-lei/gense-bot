@@ -42,7 +42,7 @@ export class Connection {
       space.accounts.subscribe(() => void accounts()),
       space.subscribeTrees((trees) => this.#send({ t: 'trees', trees })),
       space.plugins.subscribe(() => this.#send({ t: 'plugins', plugins: space.plugins.list() })),
-      space.skills.subscribe(() => this.#send({ t: 'skills', skills: space.skills.list(), canInstall: false })),
+      space.skills.subscribe(() => this.#send({ t: 'skills', skills: space.skills.list(), canInstall: space.skills.canInstall })),
       space.subscribeBranches((treeId) => {
         if (this.#watches.has(treeId)) void space.branches(treeId).then((b) => this.#send({ t: 'branches', treeId, ...b }), () => {})
       }),
@@ -53,7 +53,7 @@ export class Connection {
     }
     this.#unsubscribe.push(space.subscribeAutomations(() => void automations().catch(() => {})))
     this.#send({ t: 'plugins', plugins: space.plugins.list() })
-    this.#send({ t: 'skills', skills: space.skills.list(), canInstall: false })
+    this.#send({ t: 'skills', skills: space.skills.list(), canInstall: space.skills.canInstall })
     await automations()
     await accounts()
     this.#send({ t: 'trees', trees: await space.trees() })
@@ -142,6 +142,12 @@ export class Connection {
         return space.workspace.uploads()
       case 'tool.call':
         return space.callTool(r.treeId, r.pluginId, r.name, r.args)
+      case 'skill.install':
+        return space.skills.install(r.source)
+      case 'skill.remove':
+        return space.skills.remove(r.name)
+      case 'skill.read':
+        return space.skills.read(r.name, r.path)
       case 'skill.set':
         return space.skills.set(r.name, r.enabled)
       case 'auth.login':

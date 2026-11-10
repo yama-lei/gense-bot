@@ -69,7 +69,7 @@ export async function startServer(config: HostConfig) {
       ? new SandboxedEnv(new NodeExecutionEnv({ cwd: files }), sandbox, { target: files, cwd })
       : new MountedEnv(new NodeExecutionEnv({ cwd: files }), { mount: DATA_DIR, target: files, cwd })
   // Opening resumes runs a previous process left unfinished (R32). The space owns `db` and closes it.
-  space = await UserSpace.open(db, { models: config.models(), env, plugins: config.plugins, secretKey: config.secretKey, sandbox: !!sandbox, webhooks: true })
+  space = await UserSpace.open(db, { models: config.models(), env, plugins: config.plugins, secretKey: config.secretKey, sandbox: !!sandbox, webhooks: true, skillTempDir: join(config.dataDir, 'skill-tmp') })
   const opened = space
   const backups = config.backups === false ? undefined : startBackups(db, join(config.dataDir, 'backups'), config.backups)
 

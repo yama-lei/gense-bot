@@ -19,3 +19,12 @@ Work proceeds on `feat/r5-backend`, without editing `packages/web` or the fixed 
 - Tests: `npm run check:server` passed, 43 tests, 0 skipped. New tests exercise real SQLite, conversation tool resolution, actual artifact files, preferences/search with the faux model, and password/session rotation.
 - Protocol problems: none.
 - Deviations and reasons: pi-durable's `search` export searches tool descriptions, not transcripts; conversation search therefore uses its public conversation/context API and orders matching trees by update time. This avoids depending on its private storage schema.
+
+## B2 — Skills (N24, N25)
+
+- Parse YAML front matter, including folded/multiline descriptions, license, compatibility, metadata and allowed-tools, against the [Agent Skills specification](https://agentskills.io/specification). Preserve the three Chinese built-in names; enforce standard installed names and matching folder names.
+- Install one or more Skills from uploaded ZIPs or shallow HTTP(S) Git fetches with optional ref/path. Reject traversal, symlinks, special files, duplicate archive paths, excessive file counts and oversized content. Git runs on the host without credentials/global config/hooks or prompts; fetches have time and disk limits and scratch cleanup.
+- Persist complete directory bytes and origin in SQLite and project enabled directories into `/data/skills`. Disabled Skills remain available through `skill.read`; enabling or restarting reconstructs their files. Added install/remove/read requests, complete file lists, license/origin, and `canInstall: true`.
+- Tests: `npm run check:server` passed, 46 tests, 0 skipped. Added ZIP byte preservation, nested files, YAML parsing, restart/switch/remove, invalid-source rejection, and a real shallow Git HTTP fetch selecting an unmodified Skill. The Git fixture serves this repository read-only; temporary downloads stay under repository-local `data/` and are removed.
+- Protocol problems: `SkillInfo` has no compatibility/metadata/allowed-tools fields; they are preserved in `SKILL.md` and in server metadata, accessible through `skill.read`, without changing the contract.
+- Deviations and reasons: SQLite retains installed file bytes so disabled directories can be removed from model discovery and reconstructed reliably after restart, while read/remove continue to work. Git installation accepts credential-free HTTP(S) URLs; SSH/local-file transports are excluded to prevent ambient host credentials and out-of-tree access.

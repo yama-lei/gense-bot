@@ -126,6 +126,7 @@ export interface SpaceOptions {
   plugins?: Pick<PluginStoreOptions, 'defaults'>
   /** Passed through to the Harness: wake scheduling and settings belong to the host. */
   harness?: Pick<HarnessOptions, 'onWake' | 'setTimer' | 'now' | 'settings' | 'onReport'>
+  skillTempDir?: string
   now?: () => number
   /** The environment's `exec` runs in this user's sandbox, so the sandbox plugin and its `bash` are offered (D7). */
   sandbox?: boolean

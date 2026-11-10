@@ -129,7 +129,7 @@ export class UserSpace {
     plugins.subscribe(refreshPlugins)
     const accounts = await ModelAccounts.open(db, { host: options.models, secretKey: options.secretKey, oauth: true })
     const workspace = new Workspace(options.env)
-    const skills = await SkillStore.open(db, async () => workspace.env(DATA_DIR), ctx)
+    const skills = await SkillStore.open(db, async () => workspace.env(DATA_DIR), ctx, options.skillTempDir)
     // Conversations follow the host's selection, read at every resolution: a plugin switched on or off applies from the
     // next turn of every conversation (D8). Every branch of a tree gets the same selection, so forks share its prefix (D3).
     const settings = {

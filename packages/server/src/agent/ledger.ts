@@ -124,7 +124,12 @@ function writeTool(): ToolRegistration {
   const write = createWriteTool() as unknown as ToolRegistration
   return {
     ...write,
-    description: `${write.description} An existing file must be read first.`,
+    description: [
+      'Write a file in the workspace, creating parent directories as needed. Overwrites an existing file, so read it first; otherwise the write fails.',
+      '- Use it for anything the user should keep: documents, data, code, results. The user sees the file in the file panel.',
+      '- To change part of an existing file, use `edit`.',
+      '- Write the complete content; never leave placeholders such as "rest unchanged".',
+    ].join('\n'),
     async execute(args, api, ctx) {
       const env = envOf(api)
       const { content } = args as { content: string }
@@ -138,7 +143,12 @@ function editTool(): ToolRegistration {
   const edit = createEditTool() as unknown as ToolRegistration
   return {
     ...edit,
-    description: `${edit.description} The file must be read first.`,
+    description: [
+      'Change a file by replacing exact text. Read the file first; otherwise the edit fails.',
+      '- Each edits[].oldText must match exactly one place in the file, including whitespace, and must not overlap another edit. Add surrounding lines to make it unique.',
+      '- Merge changes to the same or nearby lines into one edit; do not copy large unchanged regions just to connect distant changes.',
+      '- To replace most of a file, use `write`.',
+    ].join('\n'),
     async execute(args, api, ctx) {
       const env = envOf(api)
       const path = await resolve(env, (args as { path: string }).path, true, ctx)
@@ -149,7 +159,7 @@ function editTool(): ToolRegistration {
 
 const deleteTool = defineTool({
   name: 'delete',
-  description: 'Delete a file in the workspace. The file must be read first.',
+  description: 'Delete one file in the workspace (not a directory). Read it first; otherwise the delete fails. Delete only files you created or the user asked you to remove.',
   parameters: Type.Object({ path: Type.String({ description: 'Path to the file to delete (relative or absolute)' }) }),
   async execute({ path: given }, api, ctx) {
     const env = envOf(api)

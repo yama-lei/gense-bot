@@ -145,8 +145,12 @@ export class HostSocket {
         return this.#set({ skills: m.skills, canInstallSkills: m.canInstall })
       case 'channels':
         return this.#set({ channels: m.channels })
-      case 'prefs':
+      case 'prefs': {
+        // The assistant's notion of "today" follows the browser (roadmap-6 A10).
+        const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+        if (timeZone && m.prefs.timeZone !== timeZone) void this.request({ t: 'prefs.set', timeZone }).catch(() => {})
         return this.#set({ prefs: m.prefs })
+      }
       case 'schedules':
         return this.#set({ schedules: m.schedules })
       case 'webhooks':

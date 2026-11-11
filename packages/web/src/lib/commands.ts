@@ -52,7 +52,7 @@ export function localSkillNames(files: FileEntry[] = []): string[] {
 export function availableCommands(enabledPlugins: string[], skills: SkillInfo[], local: string[] = []): Command[] {
   return [
     ...builtinCommands.filter((c) => !c.plugin || enabledPlugins.includes(c.plugin)),
-    ...skills.filter((s) => s.enabled && !local.includes(s.name)).map(skillCommand),
+    ...skills.filter((s) => s.enabled && (!s.plugin || enabledPlugins.includes(s.plugin)) && !local.includes(s.name)).map(skillCommand),
     ...local.map((name) => skillCommand({ name, description: '本会话的 Skill' })),
   ]
 }

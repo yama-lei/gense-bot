@@ -37,7 +37,10 @@ test('R5 preferences enter the prompt and search finds titles and messages acros
   const space = await UserSpace.open(await openNodeSqliteDatabase(':memory:'), { models: fauxModels(), env: await diskEnv() })
   try {
     await space.preferences.set({ name: 'Ada', instructions: 'Answer carefully' })
-    assert.match(space.preferences.prompt()!, /Ada.*\nAnswer carefully/)
+    assert.match(space.preferences.prompt()!, /Ada[\s\S]*<user_instructions>\nAnswer carefully\n<\/user_instructions>/)
+    await assert.rejects(space.preferences.set({ timeZone: 'Mars/Olympus' }), /时区无效/)
+    await space.preferences.set({ timeZone: 'Asia/Shanghai' })
+    assert.equal(space.preferences.get().timeZone, 'Asia/Shanghai')
     const tree = await space.createTree()
     await space.send(tree.id, { text: 'needle in message', requestId: 'search' })
     await space.harness.waitForIdle(ctx)

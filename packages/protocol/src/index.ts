@@ -34,6 +34,8 @@ export interface TreeHit {
 export interface Preferences {
   name: string
   instructions: string
+  /** IANA time zone, e.g. Asia/Shanghai; the web client keeps it in step with the browser. */
+  timeZone?: string
 }
 
 export type BranchRole = 'main' | 'user' | 'agent'
@@ -187,7 +189,7 @@ export type ClientRequest =
   | { t: 'tree.delete'; id: number; treeId: string }
   /** Conversations whose title or messages match; resolves to TreeHit[], best first. */
   | { t: 'trees.search'; id: number; query: string; limit?: number }
-  | { t: 'prefs.set'; id: number; name?: string; instructions?: string }
+  | { t: 'prefs.set'; id: number; name?: string; instructions?: string; timeZone?: string }
   /**
    * `attachments` are upload ids; they are copied into the tree's workspace. Goes to `branchId`, or the active branch.
    * With `replace` (a user entry id) the message is an edit: it goes to a new branch beside that message (R37).

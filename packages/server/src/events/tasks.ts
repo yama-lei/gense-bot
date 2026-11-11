@@ -219,7 +219,14 @@ export const spawnTool = (spawn: () => Spawn) =>
   defineTool({
     name: 'agent_spawn',
     description:
-      `Start a subagent that works on a self-contained task in the background, in its own branch of this conversation tree, and reports its result back with \`report\`. Returns at once: tell the user what you started and do not wait; each report arrives later as an <event> and wakes you. At most ${MAX_AGENTS} subagents run at once; only the main line can spawn, and subagents cannot spawn their own.`,
+      [
+        'Start a subagent that works on a self-contained task in the background, in its own branch of this conversation tree, and reports back with `report`.',
+        '- Use it when work splits into independent parts that each take many steps, such as researching several companies separately, so they run in parallel.',
+        '- Do simple or step-by-step work yourself; a subagent is a whole extra conversation.',
+        '- Write `task` as a complete brief: the goal, what you already know, and exactly what to report.',
+        `- Returns at once. Tell the user what you started and end your turn; each report arrives later as an <event> and wakes you. Answer once all reports are in.`,
+        `- At most ${MAX_AGENTS} run at once. Only the main line can spawn; subagents cannot.`,
+      ].join('\n'),
     parameters: Type.Object({
       task: Type.String({ description: 'Everything the subagent needs to know to do the task and what to report' }),
       title: Type.String({ description: 'A short name for the subagent, shown to the user' }),
@@ -246,10 +253,10 @@ export const reportTool = (report: () => Report) =>
   defineTool({
     name: 'report',
     description:
-      'Hand a result to the main line of this conversation tree. Use it in a branch when the user asks to summarize the branch for the main line, or when your task in the branch is done. Not available on the main line itself.',
+      'Hand a result to the main line of this conversation tree. Call it in a branch when your task there is done, or when the user asks to summarize the branch for the main line. The main line gets it as an <event>. Not available on the main line itself.',
     parameters: Type.Object({
-      title: Type.String({ description: 'One sentence: the conclusion' }),
-      body: Type.String({ description: 'The summary in Markdown' }),
+      title: Type.String({ description: 'The conclusion, in one sentence' }),
+      body: Type.String({ description: 'What the main line needs to know, in Markdown: findings, sources, files written, open questions' }),
     }),
     async execute({ title, body }, api, ctx) {
       const text = await report()(api.conversationId, { title, body }, ctx)

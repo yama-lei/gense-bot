@@ -7,8 +7,8 @@
     "build": "tsc -p . && vite build",
     "typecheck": "tsc -p .",
     "preview": "vite preview",
-    "genui": "vite build --ssr scripts/genui.ts --outDir node_modules/.genui --emptyOutDir --logLevel warn && node node_modules/.genui/genui.js ../core/src/plugins/genui/generated.ts",
-    "genui:check": "vite build --ssr scripts/genui.ts --outDir node_modules/.genui --emptyOutDir --logLevel warn && node node_modules/.genui/genui.js ../core/src/plugins/genui/generated.ts --check"
+    "genui": "vite build --ssr scripts/genui.ts --outDir node_modules/.genui --emptyOutDir --logLevel warn && node node_modules/.genui/genui.js ../server",
+    "genui:check": "vite build --ssr scripts/genui.ts --outDir node_modules/.genui --emptyOutDir --logLevel warn && node node_modules/.genui/genui.js ../server --check"
   },
   "dependencies": {
     "@earendil-works/chord": "1.4.0",

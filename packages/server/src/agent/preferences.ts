@@ -17,9 +17,10 @@ export class PreferenceStore {
   subscribe(listener: () => void) { this.#listeners.add(listener); return () => { this.#listeners.delete(listener) } }
   async set(patch: Partial<Preferences>) {
     const next = { ...this.#value }
-    for (const key of ['name', 'instructions'] as const) {
+    for (const key of ['name', 'instructions', 'timeZone'] as const) {
       if (patch[key] === undefined) continue
-      if (typeof patch[key] !== 'string' || patch[key].length > (key === 'name' ? 200 : 20_000)) throw new Error('偏好无效')
+      if (typeof patch[key] !== 'string' || patch[key].length > (key === 'instructions' ? 20_000 : 200)) throw new Error('偏好无效')
+      if (key === 'timeZone' && !validTimeZone(patch[key])) throw new Error('时区无效')
       next[key] = patch[key]
     }
     await this.db.run('INSERT INTO preferences VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET value = excluded.value', JSON.stringify(next))
@@ -27,7 +28,22 @@ export class PreferenceStore {
     for (const l of this.#listeners) l()
     return this.get()
   }
+  /** The user's own words about how to answer; the time zone goes into the assistant section instead. */
   prompt() {
-    return [this.#value.name && `称呼用户：${this.#value.name}`, this.#value.instructions].filter(Boolean).join('\n') || undefined
+    const { name, instructions } = this.#value
+    if (!name && !instructions) return undefined
+    return [
+      name && `The user's name is ${name}; address them by it when it fits.`,
+      instructions && `The user's instructions for how you should work. Where they differ from your default guidance, follow them:\n<user_instructions>\n${instructions}\n</user_instructions>`,
+    ].filter(Boolean).join('\n')
+  }
+}
+
+function validTimeZone(tz: string) {
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: tz })
+    return true
+  } catch {
+    return false
   }
 }

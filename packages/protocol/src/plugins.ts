@@ -91,6 +91,8 @@ export interface SkillInfo {
   /** Where an installed Skill came from: the archive's name or the Git URL. */
   origin?: string
   license?: string
+  /** The plugin it comes with (`metadata.plugin`): always on while installed, listed in that plugin's prompt instead. */
+  plugin?: string
   enabled: boolean
   /** Paths in its folder, relative to it, `SKILL.md` first. */
   files: string[]

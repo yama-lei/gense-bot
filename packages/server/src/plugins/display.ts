@@ -5,15 +5,26 @@ import { defineExtension, defineTool, section } from '@earendil-works/pi-durable
 import { getOrThrow, type ExecutionEnv } from '@earendil-works/pi-durable/env'
 import { Type, type Static } from 'typebox'
 import type { PluginValue } from './catalog.ts'
-import { safeName } from '../agent/workspace.ts'
+import { safeName, SKILLS_DIR } from '../agent/workspace.ts'
 import { createParser } from '@openuidev/lang-core'
-import { UI_PROMPT, UI_ROOT, UI_SCHEMA, UI_SIGNATURES } from './genui/generated.ts'
+import { UI_ROOT, UI_SCHEMA, UI_SIGNATURES } from './genui/generated.ts'
+
+/** The generative UI's own Skill (roadmap-6 A4): the language and practices the model reads before its first page. */
+export const UI_SKILL = `${SKILLS_DIR}/generative-ui`
+
+/** All the system prompt says about pages; the rest is in the Skill, read on first use (A5). */
+export const UI_PROMPT = [
+  'The user reads your answers in an app that renders interactive pages. `ui_render` puts one inside your answer: cards, tables, charts, maps, diagrams, calculators, small games.',
+  '- When the answer holds a comparison, data, places or a route, steps, a choice between options, a calculation or a game, show it with ui_render by default, instead of a Markdown table or list. Write only a sentence or two of text around the page, and do not repeat what it shows.',
+  '- Answer in text only for simple questions, general knowledge, and anything about safety.',
+  `- Before your first ui_render call in a conversation, read ${UI_SKILL}/SKILL.md and the references it lists, and write programs the way they show.`,
+].join('\n')
 
 export const artifactInput = Type.Object({
-  title: Type.String({ minLength: 1, maxLength: 120, description: '产物标题，也用作保存时的文件名' }),
-  type: Type.Union([Type.Literal('markdown'), Type.Literal('code')]),
-  language: Type.Optional(Type.String({ maxLength: 32, description: 'type 为 code 时的语言，例如 python' })),
-  content: Type.String({ description: '完整内容' }),
+  title: Type.String({ minLength: 1, maxLength: 120, description: 'Title, also the file name when it is saved' }),
+  type: Type.Union([Type.Literal('markdown'), Type.Literal('code')], { description: '`markdown` for a document, `code` for source code' }),
+  language: Type.Optional(Type.String({ maxLength: 32, description: 'The language when type is code, e.g. python' })),
+  content: Type.String({ description: 'The complete content; never placeholders such as "rest unchanged"' }),
 })
 export type ArtifactInput = Static<typeof artifactInput>
 
@@ -43,7 +54,12 @@ export function artifactExtension() {
     tools: [
       defineTool({
         name: 'artifact_create',
-        description: '在会话中展示一个产物（提纲、报告、代码等），用户可以在侧边面板预览、复制并保存到工作区。只用于展示，不会保存。',
+        description: [
+          'Show a document or a piece of code in a side panel, where the user can preview it, copy it and save it to the workspace.',
+          '- Use it for content the user will take away and reuse as a whole, such as a report, an outline, a letter or a script, roughly 20 lines or more. Shorter content belongs in your reply.',
+          '- It only shows the content. To save a file yourself, use `write`; for interactive content, use `ui_render`.',
+          '- Do not repeat the content in your reply; a sentence about what it is and what to check is enough.',
+        ].join('\n'),
         parameters: artifactInput,
         replay: 'safe',
         async execute(input) {
@@ -52,7 +68,7 @@ export function artifactExtension() {
       }),
       defineTool({
         name: 'artifact_save',
-        description: '把产物保存到工作区的 artifacts/ 下。不会覆盖已有的不同文件。只在用户要求保存时调用。',
+        description: 'Save an artifact under `artifacts/` in the workspace. It never overwrites a different existing file. Call it only when the user asks to save.',
         parameters: artifactInput,
         replay: 'safe',
         async execute(input, api, context) {
@@ -66,9 +82,9 @@ export function artifactExtension() {
 }
 
 export const draftInput = Type.Object({
-  to: Type.String({ maxLength: 500, description: '收件人地址，多个用逗号分隔' }),
-  subject: Type.String({ maxLength: 300 }),
-  body: Type.String({ maxLength: 20_000, description: '纯文本正文' }),
+  to: Type.String({ maxLength: 500, description: 'Recipient addresses, comma-separated; empty when you do not know them' }),
+  subject: Type.String({ maxLength: 300, description: 'Subject line' }),
+  body: Type.String({ maxLength: 20_000, description: 'The body in plain text, not Markdown' }),
 })
 
 export function emailExtension() {
@@ -77,7 +93,12 @@ export function emailExtension() {
     tools: [
       defineTool({
         name: 'email_draft',
-        description: '展示一封邮件草稿，用户可以修改、复制，或在邮箱 App 中打开后自己发送。不会发送邮件。',
+        description: [
+          'Show an email draft that the user can edit, copy, or open in their mail app and send themselves. Nothing is sent.',
+          '- Leave `to` empty when you do not know the address; never guess one.',
+          '- Write in the language and register the recipient expects.',
+          '- Do not repeat the draft in your reply.',
+        ].join('\n'),
         parameters: draftInput,
         replay: 'safe',
         async execute(input) {
@@ -89,7 +110,7 @@ export function emailExtension() {
 }
 
 export const uiInput = Type.Object({
-  program: Type.String({ minLength: 1, maxLength: 60_000, description: 'openui-lang 程序，第一行是 root = Col(...)' }),
+  program: Type.String({ minLength: 1, maxLength: 60_000, description: 'The openui-lang program. The first line is `root = Col(...)`, and every name it uses must be defined' }),
 })
 export type UiInput = Static<typeof uiInput>
 
@@ -114,12 +135,16 @@ export function uiExtension(config: () => Record<string, PluginValue>) {
     tools: [
       defineTool({
         name: 'ui_render',
-        description: '在回答中显示一个用 openui-lang 写的交互页面。写法见系统提示中的 openui-lang 说明。',
+        description: [
+          'Show an interactive page, written as an openui-lang program, inside your answer.',
+          `- Read ${UI_SKILL}/SKILL.md and its references before your first call; they list the components and how to lay out a good page.`,
+          '- If the program has errors, nothing is shown and the result lists them. Fix them and call again; do not tell the user about the errors.',
+        ].join('\n'),
         parameters: uiInput,
         replay: 'safe',
         async execute(input) {
           const { problems, orphaned } = checkProgram(input.program)
-          if (problems.length) throw new Error(`程序有错误，没有显示。改正后重新调用 ui_render：\n${problems.map((p) => `- ${p}`).join('\n')}`)
+          if (problems.length) throw new Error(`程序有错误，没有显示。改正后重新调用 ui_render：\n${problems.map((p) => `- ${p}`).join('\n')}\n组件签名和语法见 ${UI_SKILL}/references/language.md，没读过就先读。`)
           const unused = orphaned.length ? `（${orphaned.join('、')} 没有从 root 引用到，没有显示）` : ''
           return { output: [{ type: 'text', text: `已显示页面${unused}，用户能看到并操作；不要在文字里重复其中的内容。` }], details: { shown: true } }
         },
@@ -127,7 +152,7 @@ export function uiExtension(config: () => Record<string, PluginValue>) {
     ],
     sections: [
       section('ui', () =>
-        [UI_PROMPT, config().usage === 'often' ? '\n用户希望多用界面：只要回答里有可以结构化或交互的内容（步骤、对比、数据、地点、选择），就用 ui_render。' : ''].join(''),
+        [UI_PROMPT, config().usage === 'often' ? '\n- The user wants pages more often: use ui_render whenever part of the answer can be structured or interacted with.' : ''].join(''),
       ),
     ],
   })

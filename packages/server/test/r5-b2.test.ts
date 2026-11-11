@@ -2,9 +2,11 @@ import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context'
 import { openNodeSqliteDatabase } from '@earendil-works/chord/sqlite/node'
 import { strToU8, zipSync } from 'fflate'
 import assert from 'node:assert/strict'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fauxModels, parseSkill, UserSpace } from '../src/index.ts'
+import { builtinSkills, loadBuiltinSkills } from '../src/plugins/skills.ts'
 import { archiveFiles, gitFiles, MAX_FILES } from '../src/plugins/skills/sources.ts'
 import { diskEnv } from './fixtures.ts'
 import { tempDir } from './host-helpers.ts'
@@ -56,7 +58,7 @@ test('N24/N25: full community front matter and directory files survive install, 
     await space.skills.remove('demo-skill')
     assert.ok(!space.skills.list().some(s => s.name === 'demo-skill'))
     assert.equal((await mounted.listDir('/data/skills/demo-skill', ctx)).ok, false)
-    assert.equal(space.skills.list().filter(s => s.source === 'builtin').length, 3)
+    assert.equal(space.skills.list().filter(s => s.source === 'builtin').length, builtinSkills().size)
   } finally { await space.close() }
 })
 
@@ -119,4 +121,31 @@ test('N24: an installed bundled script executes through the real read-only Skill
     const {watch}=await space.watch(tree.id);await watch.stop()
     assert.match(JSON.stringify(watch.value.entries),/skill script ran/)
   } finally { await space.close(); await sandbox.stop() }
+})
+
+test('roadmap-6 A2/A3: built-in Skills load from packages/server/skills, each with its licence; generative-ui comes with the UI plugin', async () => {
+  const builtin = builtinSkills()
+  for (const name of ['generative-ui', 'humanizer-zh', 'pdf', 'markitdown', 'paper-lookup', 'literature-review', 'baoyu-translate', 'md-report-summary', 'xlsx', 'docx']) assert.ok(builtin.has(name), name)
+  for (const [name, item] of builtin) {
+    if (name === 'generative-ui') continue
+    assert.ok(Object.keys(item.files).some((f) => /^LICENSE/.test(f)), `${name} has no licence`)
+    assert.match(item.doc.metadata?.source ?? '', /^https:\/\/github.com\/.+\/tree\/[0-9a-f]{40}/, name)
+  }
+  assert.equal(builtin.get('generative-ui')!.doc.metadata?.plugin, 'ui')
+  assert.ok(builtin.get('generative-ui')!.files['references/language.md'])
+
+  const root = await tempDir(), space = await UserSpace.open(await openNodeSqliteDatabase(join(root, 'a.sqlite')), { models: fauxModels(), env: await diskEnv(root) })
+  try {
+    const ui = space.skills.list().find((s) => s.name === 'generative-ui')!
+    assert.equal(ui.plugin, 'ui')
+    assert.equal(ui.enabled, true)
+    await assert.rejects(space.skills.set('generative-ui', false), /随插件提供/)
+    assert.equal((await space.skills.read('generative-ui', 'references/practices.md')).text.startsWith('<!-- Generated'), true)
+  } finally { await space.close() }
+
+  // A built-in Skill whose directory and name differ is a packaging error, not something to skip.
+  const bad = await tempDir()
+  mkdirSync(join(bad, 'one'))
+  writeFileSync(join(bad, 'one/SKILL.md'), '---\nname: other\ndescription: x\n---\n')
+  assert.throws(() => loadBuiltinSkills(bad), /无效/)
 })

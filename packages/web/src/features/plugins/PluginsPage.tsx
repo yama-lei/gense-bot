@@ -413,10 +413,11 @@ function SkillsTab() {
                 <div className="flex flex-wrap items-center gap-x-2">
                   <span className="font-medium">{s.name}</span>
                   <Badge variant="outline">{skillSource[s.source]}</Badge>
+                  {s.plugin && <Badge variant="outline">随插件提供</Badge>}
                 </div>
                 <p className="line-clamp-2 text-sm text-muted-foreground">{s.description}</p>
               </button>
-              <Switch checked={s.enabled} aria-label={`启用 ${s.name}`} onCheckedChange={(enabled) => void client.request({ t: 'skill.set', name: s.name, enabled }).catch(report)} />
+              <Switch checked={s.enabled} disabled={!!s.plugin} title={s.plugin ? '随插件开关' : undefined} aria-label={`启用 ${s.name}`} onCheckedChange={(enabled) => void client.request({ t: 'skill.set', name: s.name, enabled }).catch(report)} />
             </li>
           ))}
         </ul>

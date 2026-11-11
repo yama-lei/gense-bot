@@ -1,5 +1,6 @@
-import { parseDocument, stringify } from 'yaml'
-import { resolve } from 'node:path'
+import { parseDocument } from 'yaml'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { archiveFiles, gitFiles, safePath, type SkillFiles } from './skills/sources.ts'
 import { toBase64, fromBase64, UPLOADS_DIR } from '../agent/workspace.ts'
 // Agent Skills (roadmap-3 R33: R19, R28, R29). A Skill is a folder with a SKILL.md: `name` and `description` front
@@ -22,53 +23,38 @@ export interface SkillDoc {
   'allowed-tools'?: string
 }
 
-export const builtinSkills: SkillDoc[] = [
-  {
-    name: '周报整理',
-    description: '把零散的工作记录、聊天摘录或旧周报整理成结构清晰的周报，或改写成组会汇报提纲',
-    body: `# 周报整理
+/** Built-in Skills ship as ordinary Skill folders in packages/server/skills (roadmap-6 A1). */
+export const BUILTIN_SKILLS_DIR = resolve(import.meta.dirname, '../../skills')
 
-1. 先弄清材料来源：用户附上的文件（在工作区的 attachments/ 下）、提到的文件，或直接贴在消息里的文字。需要时用 read 读取，不要编造进展。
-2. 按下面的结构整理，每条一句话，写具体的结果和数字：
-   - **本周完成**：已经完成并可以验证的事
-   - **进行中**：当前进度与下一步
-   - **问题与求助**：卡住的地方、需要导师或同事决定的事
-   - **下周计划**：3–5 条，按优先级排列
-3. 用户对周报格式有要求（例如三段式）时，以用户的要求为准。
-4. 用户要求汇报提纲时，把同样的内容改成幻灯片式提纲：每页一个标题和不超过 4 条要点。
-5. 内容较长时用 artifact_create 展示（插件开启时）；用户要求保存时用 write 写到工作区。`,
-  },
-  {
-    name: '论文速读',
-    description: '快速读一篇论文（PDF 或网页），提炼问题、方法、结果和局限，并给出是否值得精读的建议',
-    body: `# 论文速读
+interface SkillItem { doc: SkillDoc; source: 'builtin' | 'upload' | 'git'; origin?: string; files: Record<string, string> }
 
-1. 读取全文：附件用 read（较长时用 offset 分段读完）；网址用 web_fetch（网页插件开启时）。
-2. 按以下结构输出，每部分 2–4 句：
-   - **一句话总结**
-   - **要解决的问题**：为什么重要，现有方法缺什么
-   - **方法**：核心思路，关键公式或模块用通俗的话解释
-   - **实验与结果**：数据集、对比基线、主要数字
-   - **局限与疑问**：作者承认的和你发现的
-   - **是否值得精读**：结合用户的研究方向（如果对话里提到过）给出建议
-3. 引用论文原文时逐字摘录并注明页码或小节，让用户可以回到原文核对。
-4. 术语第一次出现时给出英文原词。`,
-  },
-  {
-    name: '邮件起草',
-    description: '按场景起草得体的中文或英文邮件（请假、咨询导师、投稿、催办等），给出主题和正文',
-    body: `# 邮件起草
+/** Every file under `dir`, by path relative to it. */
+function readTree(dir: string, prefix = ''): Record<string, Uint8Array> {
+  const out: Record<string, Uint8Array> = {}
+  for (const entry of readdirSync(join(dir, prefix), { withFileTypes: true })) {
+    const path = prefix ? `${prefix}/${entry.name}` : entry.name
+    if (entry.isDirectory()) Object.assign(out, readTree(dir, path))
+    else if (entry.isFile()) out[path] = readFileSync(join(dir, path))
+  }
+  return out
+}
 
-1. 确认收件人身份、目的和需要对方做的事；信息不全时先问，最多问两个问题。
-2. 结构：
-   - **主题**：一眼能看出目的，例如“咨询：奖学金申请材料截止时间”
-   - **称呼**：对老师用“X 老师您好”，英文用 “Dear Prof. X”
-   - **正文**：第一段说明来意；第二段给出必要背景；最后一段明确请求和时间
-   - **署名**：按用户给出的署名
-3. 语气礼貌、简洁，不超过 250 字（英文不超过 180 词）。
-4. 只起草，不发送。邮件插件开启时用 email_draft 展示草稿，否则把草稿完整写在回复里。`,
-  },
-]
+/** The built-in Skills, held to the same naming rules as installed ones. */
+export function loadBuiltinSkills(dir = BUILTIN_SKILLS_DIR): Map<string, SkillItem> {
+  const out = new Map<string, SkillItem>()
+  if (!existsSync(dir)) return out
+  for (const entry of readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
+    const files = readTree(join(dir, entry.name))
+    const raw = files['SKILL.md']
+    const doc = raw && parseSkill(new TextDecoder().decode(raw), true)
+    if (!doc || doc.name !== entry.name) throw new Error(`内置 Skill ${entry.name} 的 SKILL.md 无效`)
+    out.set(doc.name, { doc, source: 'builtin', files: Object.fromEntries(Object.entries(files).map(([p, b]) => [p, toBase64(b)])) })
+  }
+  return out
+}
+
+/** The plugin a Skill belongs to (`metadata.plugin`): always on, and that plugin's prompt points to it. */
+const pluginOf = (doc: Pick<SkillDoc, 'metadata'>) => doc.metadata?.plugin
 
 /** Skill names: letters, digits, `-` and `_`, as used in `/` commands and folder names. */
 export const SKILL_NAME = /^[\p{L}\p{N}][\p{L}\p{N}_-]{0,63}$/u
@@ -93,7 +79,6 @@ export function parseSkill(raw: string, installed = false): SkillDoc | null {
   } catch { return null }
 }
 
-export const skillFile = ({ body, ...frontmatter }: SkillDoc) => `---\n${stringify(frontmatter)}---\n\n${body}\n`
 
 /** The Skills in `dir`'s subfolders, with the path of each SKILL.md; folders without a valid one are skipped. */
 export async function readSkills(env: ExecutionEnv, dir: string, ctx: Context): Promise<(SkillDoc & { path: string })[]> {
@@ -111,17 +96,30 @@ export async function readSkills(env: ExecutionEnv, dir: string, ctx: Context): 
 }
 
 /** The system prompt's Skill list; a conversation's own Skills replace shared ones of the same name. */
+/** The list shows at most this much of a description (A11); the whole of it is in SKILL.md. */
+export const SKILL_DESCRIPTION_CHARS = 250
+const clipDescription = (d: string) => {
+  const flat = d.replace(/\s+/g, ' ').trim()
+  return flat.length > SKILL_DESCRIPTION_CHARS ? `${flat.slice(0, SKILL_DESCRIPTION_CHARS - 1).trimEnd()}…` : flat
+}
+
 export async function skillsSection(env: ExecutionEnv, ctx: Context) {
   const own = await readSkills(env, `${env.cwd}/skills`, ctx)
   const shared = (await readSkills(env, SKILLS_DIR, ctx)).filter((s) => !own.some((o) => o.name === s.name))
-  const all = [...own, ...shared]
+  const all = [...own, ...shared].filter((s) => !pluginOf(s))
   if (!all.length) return undefined
   return [
-    '可用的 Skills。任务符合某个 Skill 的描述，或用户用 /名称 要求使用它时，先用 read 读取它的 SKILL.md，再按说明完成任务；读取后在回答开头写一句“使用 Skill：名称”。',
-    `你也可以为这个会话写新的 Skill：在工作区写 skills/<名称>/SKILL.md，开头是含 name 和 description 的 front matter；下一轮生效。`,
-    ...all.map((s) => `- ${s.name}：${s.description}（${s.path}）`),
+    "Skills are folders of instructions and scripts for particular tasks. When a task matches a Skill's description, or the user asks for one with /name, read its SKILL.md before anything else and follow it; it may point to more files. Tell the user in a few words which Skill you are using. Do not read Skills the task does not need.",
+    'You can write a Skill for this conversation: `skills/<name>/SKILL.md` in the workspace, starting with front matter that has `name` and `description`. It is available from the next turn.',
+    '',
+    'Available Skills:',
+    ...all.map((s) => `- ${s.name}: ${clipDescription(s.description)} (${s.path})`),
   ].join('\n')
 }
+
+/** Loaded once per process: the folders do not change while it runs. */
+let builtinCache: Map<string, SkillItem> | undefined
+export const builtinSkills = () => (builtinCache ??= loadBuiltinSkills())
 
 const migrations = [{ version: 1, statements: ['CREATE TABLE skills (name TEXT PRIMARY KEY, enabled INTEGER NOT NULL)'] }]
 
@@ -130,20 +128,22 @@ export class SkillStore {
   readonly #db: SqliteDatabase
   readonly #env: () => Promise<ExecutionEnv>
   readonly #switches = new Map<string, boolean>()
-  readonly #installed = new Map<string, { doc: SkillDoc; source: 'upload' | 'git'; origin: string; files: Record<string, string> }>()
+  readonly #builtin: Map<string, SkillItem>
+  readonly #installed = new Map<string, SkillItem>()
   readonly #temporaryRoot: string
   readonly #listeners = new Set<() => void>()
 
-  private constructor(db: SqliteDatabase, env: () => Promise<ExecutionEnv>, temporaryRoot: string) {
+  private constructor(db: SqliteDatabase, env: () => Promise<ExecutionEnv>, temporaryRoot: string, builtin: Map<string, SkillItem>) {
+    this.#builtin = builtin
     this.#temporaryRoot = temporaryRoot
     this.#db = db
     this.#env = env
   }
 
   /** `env` reaches /data; the enabled Skills are written to /data/skills now and after every switch. */
-  static async open(db: SqliteDatabase, env: () => Promise<ExecutionEnv>, ctx: Context, temporaryRoot = resolve(import.meta.dirname, '../../../../data/skill-tmp')) {
+  static async open(db: SqliteDatabase, env: () => Promise<ExecutionEnv>, ctx: Context, temporaryRoot = resolve(import.meta.dirname, '../../../../data/skill-tmp'), builtin = builtinSkills()) {
     await applySqliteMigrations(db, migrations, { table: 'skill_migrations' })
-    const store = new SkillStore(db, env, temporaryRoot)
+    const store = new SkillStore(db, env, temporaryRoot, builtin)
     for (const row of await db.all<{ name: string; enabled: number }>('SELECT name, enabled FROM skills')) store.#switches.set(row.name, row.enabled === 1)
     await db.run('CREATE TABLE IF NOT EXISTS installed_skills (name TEXT PRIMARY KEY, data TEXT NOT NULL)')
     for (const row of await db.all<{ name: string; data: string }>('SELECT * FROM installed_skills')) store.#installed.set(row.name, JSON.parse(row.data))
@@ -152,7 +152,15 @@ export class SkillStore {
   }
 
   list(): SkillInfo[] {
-    return [...builtinSkills.map((s): SkillInfo => ({ name: s.name, description: s.description, source: 'builtin', enabled: this.#switches.get(s.name) ?? true, files: ['SKILL.md'] })), ...[...this.#installed].map(([name, item]): SkillInfo => ({ name, description: item.doc.description, source: item.source, origin: item.origin, ...(item.doc.license && { license: item.doc.license }), enabled: this.#switches.get(name) ?? true, files: Object.keys(item.files).sort((a,b) => a === 'SKILL.md' ? -1 : b === 'SKILL.md' ? 1 : a.localeCompare(b)) }))]
+    return [...this.#builtin, ...this.#installed].map(([name, item]): SkillInfo => {
+      const plugin = pluginOf(item.doc)
+      return {
+        name, description: item.doc.description, source: item.source,
+        ...(item.origin && { origin: item.origin }), ...(item.doc.license && { license: item.doc.license }), ...(plugin && { plugin }),
+        enabled: plugin ? true : this.#switches.get(name) ?? true,
+        files: Object.keys(item.files).sort((a, b) => a === 'SKILL.md' ? -1 : b === 'SKILL.md' ? 1 : a.localeCompare(b)),
+      }
+    })
   }
 
   subscribe(listener: () => void) {
@@ -161,7 +169,9 @@ export class SkillStore {
   }
 
   async set(name: string, enabled: boolean, ctx: Context = BACKGROUND_CONTEXT) {
-    if (!this.list().some((s) => s.name === name)) throw new Error('未知 Skill')
+    const skill = this.list().find((s) => s.name === name)
+    if (!skill) throw new Error('未知 Skill')
+    if (skill.plugin) throw new Error('这个 Skill 随插件提供，不能单独关闭')
     await this.#db.run('INSERT INTO skills (name, enabled) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET enabled = excluded.enabled', name, enabled ? 1 : 0)
     this.#switches.set(name, enabled)
     await this.#sync(ctx)
@@ -180,13 +190,13 @@ export class SkillStore {
       files = archiveFiles(read.value); origin = source.upload.split('/').at(-1)!; kind = 'upload'
     } else { files = await gitFiles(source, this.#temporaryRoot); origin = source.git; kind = 'git' }
     const candidates = Object.keys(files).filter(path => path === 'SKILL.md' || path.endsWith('/SKILL.md'))
-    const batch = new Map<string, { doc: SkillDoc; source: 'upload' | 'git'; origin: string; files: Record<string, string> }>()
+    const batch = new Map<string, SkillItem>()
     for (const path of candidates) {
       const doc = parseSkill(new TextDecoder('utf-8', { fatal: true }).decode(files[path]!), true)
       if (!doc) throw new Error('Skill front matter 无效：' + path)
       const prefix = path.slice(0, -'SKILL.md'.length)
       if (prefix && prefix.slice(0, -1).split('/').at(-1) !== doc.name) throw new Error('Skill 名称必须匹配目录')
-      if (builtinSkills.some(s => s.name === doc.name) || batch.has(doc.name)) throw new Error('Skill 名称重复')
+      if (this.#builtin.has(doc.name) || batch.has(doc.name)) throw new Error('Skill 名称重复')
       const contained = Object.fromEntries(Object.entries(files).filter(([p]) => p.startsWith(prefix)).map(([p, b]) => [safePath(p.slice(prefix.length)), toBase64(b)]))
       batch.set(doc.name, { doc, source: kind, origin, files: contained })
     }
@@ -212,9 +222,8 @@ export class SkillStore {
 
   async read(name: string, path: string): Promise<FilePreview> {
     safePath(path)
-    const builtin = builtinSkills.find(s => s.name === name)
-    const encoded = this.#installed.get(name)?.files[path]
-    const bytes = builtin && path === 'SKILL.md' ? new TextEncoder().encode(skillFile(builtin)) : encoded !== undefined ? fromBase64(encoded) : undefined
+    const encoded = (this.#builtin.get(name) ?? this.#installed.get(name))?.files[path]
+    const bytes = encoded !== undefined ? fromBase64(encoded) : undefined
     if (!bytes) throw new Error('Skill 文件不存在')
     const head = bytes.subarray(0, 64 * 1024)
     let text = '', binary = false
@@ -229,7 +238,7 @@ export class SkillStore {
     const listed = await env.listDir(SKILLS_DIR, ctx)
     for (const info of listed.ok ? listed.value : [])
       if (!enabled.has(info.name)) await env.remove(info.path, { recursive: true, force: true }, ctx)
-    for (const [name, item] of this.#installed) {
+    for (const [name, item] of [...this.#builtin, ...this.#installed]) {
       if (!enabled.has(name)) continue
       const removed = await env.remove(`${SKILLS_DIR}/${name}`, { recursive: true, force: true }, ctx)
       if (!removed.ok) throw removed.error
@@ -237,11 +246,6 @@ export class SkillStore {
         const written = await env.writeFile(`${SKILLS_DIR}/${name}/${path}`, fromBase64(bytes), ctx)
         if (!written.ok) throw written.error
       }
-    }
-    for (const s of builtinSkills) {
-      if (!enabled.has(s.name)) continue
-      const written = await env.writeFile(`${SKILLS_DIR}/${s.name}/SKILL.md`, skillFile(s), ctx)
-      if (!written.ok) throw written.error
     }
   }
 }

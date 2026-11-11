@@ -1,6 +1,6 @@
 # 路线图 6：插件页重做、Skill 瘦身、上下文压缩、多用户
 
-状态：草案，2026-11-11，待用户确认。来源：`known-bugs-or-gap.md`、`docs/inbox/`。
+状态：已实现，2026-11-11。阶段 A–E 都已合并到 `main`（E 的结论见 [herdr-connect 调研](../research/herdr-connect.md)）；`npm run check` 全部通过，D8 用真实 Docker 沙箱跑过。还没做的验收要用真实账号：D6 用两个真实飞书应用、B4 用真实的 alphaXiv OAuth 和高德 key。来源：`known-bugs-or-gap.md`、`docs/inbox/`。
 
 依据：[ADR-0006](../adr/0006-multi-user.md)（多用户）、[路线图 5](roadmap-5.md)、[网页界面](../specs/web-ui.md)。
 

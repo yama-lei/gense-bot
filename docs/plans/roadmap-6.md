@@ -110,6 +110,7 @@ E  调研（I6）                          已在后台进行，只出文档
 - 页面拆成 `PluginsLayout`（页签、切换、搜索、添加）、`CatalogGrid`、`PluginCard`、`PluginDetail`；现有 `SettingsForm` 搬进详情。
 - 发现目录放在 `packages/protocol/src/discover.ts`（类型）和 `packages/server/src/plugins/discover.ts`（数据）：`{ kind: 'mcp' | 'skill' | 'builtin', id, name, description, icon, by, install }`，`install` 是 MCP 地址模板（含要用户填写的字段）或 Git 地址。以后换成 MCP Registry 时只换数据来源。
 - 图标：预置条目带 SVG；用户自己加的 MCP 用名称首字母生成。
+- 实现（2026-11-11）：客户端用 `discover` 请求取目录，和已安装的按插件 id、Skill 名、MCP 地址模板（`fromTemplate`）对上，所以从预置添加的条目在“已安装”里保留图标。图标 SVG 以 `<img>` 显示、不作为标记执行；其中的品牌色是内容图片，不受 N40 的 token 约束。地址里的 `key=`/`token=` 在界面上打码。
 
 ### C. 上下文压缩
 

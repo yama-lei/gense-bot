@@ -10,6 +10,7 @@ import type { ChannelInfo, PluginInfo, PluginValue, SkillInfo, SkillSource } fro
 
 export * from './notes.ts'
 export * from './plugins.ts'
+export * from './discover.ts'
 
 /** A conversation as the sidebar lists it: a tree of branches, titled by its main branch (roadmap-3 R35). */
 export interface TreeMeta {
@@ -234,6 +235,8 @@ export type ClientRequest =
   /** Changes a server's name, address or headers (`null` removes one) and reconnects. */
   | { t: 'mcp.update'; id: number; pluginId: string; name?: string; url?: string; headers?: Record<string, string | null> }
   | { t: 'mcp.remove'; id: number; pluginId: string }
+  /** The Discover catalog (roadmap-6 B3); resolves to DiscoverItem[]. */
+  | { t: 'discover'; id: number }
   | { t: 'mcp.reconnect'; id: number; pluginId: string }
   /** Starts the server's OAuth sign-in; resolves to `{ url }` for the browser to open. */
   | { t: 'mcp.auth'; id: number; pluginId: string }

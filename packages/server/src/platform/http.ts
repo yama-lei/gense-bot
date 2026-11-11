@@ -30,36 +30,40 @@ const sessionCookie = (request: Request, token: string, maxAge: number) =>
 export const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...headers } })
 
-async function readJson(request: Request): Promise<Record<string, unknown>> {
+export async function readJson(request: Request): Promise<Record<string, unknown>> {
   const text = await request.text()
   if (text.length > MAX_BODY) throw new Error('请求太大')
   const value = JSON.parse(text || '{}')
   return value && typeof value === 'object' ? value : {}
 }
 
-/** Whether the request carries the owner's live session cookie. */
+/** The enabled user owning the request’s live session cookie. */
 export async function signedIn(auth: Auth, request: Request) {
   return auth.session(parseCookies(request.headers.get('cookie'))[SESSION_COOKIE])
 }
 
-/** Handles `/api/login`, `/api/logout` and `/api/me`; other paths get 404. */
+/** Email registration/login, session identity, logout and password rotation. */
 export async function accountApi(auth: Auth, request: Request): Promise<Response> {
   const path = new URL(request.url).pathname
   if (request.method === 'POST' && !sameOrigin(request)) return json(403, { error: '来源不匹配' })
   try {
-    if (path === '/api/login' && request.method === 'POST') {
+    if (path === '/api/registration' && request.method === 'GET') return json(200, { open: await auth.registrationOpen() })
+    if ((path === '/api/login' || path === '/api/register') && request.method === 'POST') {
       const body = await readJson(request)
       try {
-        const token = await auth.login(String(body.password ?? ''))
-        return json(200, {}, { 'set-cookie': sessionCookie(request, token, SESSION_MAX_AGE_S) })
+        const email = String(body.email ?? ''), password = String(body.password ?? '')
+        if (path === '/api/register') await auth.register(email, password)
+        const token = await auth.login(email, password)
+        return json(200, { user: await auth.session(token) }, { 'set-cookie': sessionCookie(request, token, SESSION_MAX_AGE_S) })
       } catch (error) {
-        return json(401, { error: error instanceof Error ? error.message : '登录失败' })
+        return json(path === '/api/register' ? 400 : 401, { error: error instanceof Error ? error.message : '登录失败' })
       }
     }
     if (path === '/api/password' && request.method === 'POST') {
-      if (!(await signedIn(auth, request))) return json(401, { error: '未登录' })
+      const user = await signedIn(auth, request)
+      if (!user) return json(401, { error: '未登录' })
       const body = await readJson(request)
-      const token = await auth.changePassword(String(body.current ?? ''), String(body.next ?? ''))
+      const token = await auth.changePassword(user.id, String(body.current ?? ''), String(body.next ?? ''))
       return json(200, {}, { 'set-cookie': sessionCookie(request, token, SESSION_MAX_AGE_S) })
     }
     if (path === '/api/logout' && request.method === 'POST') {
@@ -68,7 +72,8 @@ export async function accountApi(auth: Auth, request: Request): Promise<Response
       return json(200, {}, { 'set-cookie': sessionCookie(request, '', 0) })
     }
     if (path === '/api/me' && request.method === 'GET') {
-      return (await signedIn(auth, request)) ? json(200, {}) : json(401, { error: '未登录' })
+      const user = await signedIn(auth, request)
+      return user ? json(200, { user }) : json(401, { error: '未登录' })
     }
   } catch (error) {
     return json(400, { error: error instanceof Error ? error.message : String(error) })

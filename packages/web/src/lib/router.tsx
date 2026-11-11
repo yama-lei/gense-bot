@@ -1,9 +1,12 @@
-// Path routes (roadmap-5 N45): /, /c/:treeId, /plugins, /automations, /channels, /settings. The server answers any
+// Path routes (roadmap-5 N45): /, /c/:treeId, /plugins, /automations, /channels, /settings, /admin (roadmap-6 D7). The server answers any
 // unknown path with index.html, so a reload or a shared link lands on the same page.
 import { useSyncExternalStore, type ComponentProps, type MouseEvent } from 'react'
 
 export const settingsSections = ['personal', 'models', 'appearance', 'account'] as const
 export type SettingsSection = (typeof settingsSections)[number]
+
+export const adminSections = ['users', 'models', 'usage'] as const
+export type AdminSection = (typeof adminSections)[number]
 
 export type Route =
   | { name: 'home' }
@@ -12,6 +15,7 @@ export type Route =
   | { name: 'automations' }
   | { name: 'channels' }
   | { name: 'settings'; section?: SettingsSection }
+  | { name: 'admin'; section?: AdminSection }
   | { name: 'missing' }
 
 export function parse(pathname: string): Route {
@@ -36,6 +40,10 @@ export function parse(pathname: string): Route {
       const section = settingsSections.find((s) => s === parts[1])
       return section ? { name: 'settings', section } : { name: 'settings' }
     }
+    case 'admin': {
+      const section = adminSections.find((s) => s === parts[1])
+      return section ? { name: 'admin', section } : { name: 'admin' }
+    }
     default:
       return { name: 'missing' }
   }
@@ -51,7 +59,8 @@ export function href(route: Route): string {
     case 'plugins':
       return route.tab ? '/plugins/skills' : '/plugins'
     case 'settings':
-      return route.section ? `/settings/${route.section}` : '/settings'
+    case 'admin':
+      return route.section ? `/${route.name}/${route.section}` : `/${route.name}`
     default:
       return `/${route.name}`
   }

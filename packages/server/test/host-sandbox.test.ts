@@ -31,7 +31,7 @@ before(async () => {
   upstream = await fakeUpstream()
   const config = configFromEnv({ GENSE_FAUX: '1', DATA_DIR: await tempDir(), ...env(upstream.url) })
   server = await startServer({ ...config, sandbox: { memory: '256m', idleMs: IDLE_MS }, port: 0 })
-  await server.auth.setPassword(PASSWORD)
+  await server.auth.register('owner@example.com', PASSWORD)
 })
 after(async () => {
   if (!ready) return
@@ -150,7 +150,7 @@ test('R60: a runaway command is stopped at its limit; an idle sandbox stops and 
   assert.match((await bash('echo alive')).text, /alive/, 'the sandbox survives')
 
   await bash('echo kept > kept.txt')
-  const name = server.sandbox!.name
+  const name = server.spaces.sandbox((await server.auth.find('owner@example.com'))!.id)!.name
   const deadline = Date.now() + IDLE_MS + 30_000
   while (Date.now() < deadline && docker('ps', '-q', '--filter', `name=^${name}$`)) await new Promise((r) => setTimeout(r, 500))
   assert.equal(docker('ps', '-q', '--filter', `name=^${name}$`), '', 'stopped when idle')

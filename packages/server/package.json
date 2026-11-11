@@ -10,7 +10,9 @@
     "dev": "node --env-file-if-exists=../../.env --watch src/platform/main.ts",
     "start": "node --env-file-if-exists=../../.env src/platform/main.ts",
     "test": "mkdir -p ../../data/test-tmp && TMPDIR=\"$PWD/../../data/test-tmp\" node --test test/*.test.ts",
-    "passwd": "node --env-file-if-exists=../../.env src/platform/passwd.ts"
+    "passwd": "node --env-file-if-exists=../../.env src/platform/passwd.ts",
+    "user:import-owner": "node --env-file-if-exists=../../.env src/platform/user-cli.ts import-owner",
+    "user:admin": "node --env-file-if-exists=../../.env src/platform/user-cli.ts admin"
   },
   "dependencies": {
     "@earendil-works/chord": "1.4.0",

@@ -1,5 +1,5 @@
-// Nightly copies of the database (ADR-0005 decision 13). `VACUUM INTO` writes a consistent, compacted copy while the
-// server keeps running; a copy is a plain SQLite file, restored by putting it back as gense.sqlite while stopped.
+// Nightly snapshots (ADR-0006). The host starts one job for app.sqlite and one for each user’s space.sqlite,
+// in separate backup directories. VACUUM INTO writes a consistent, compacted copy while the server keeps running.
 import type { SqliteDatabase } from '@earendil-works/chord/sqlite'
 import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'

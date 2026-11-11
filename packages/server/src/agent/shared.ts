@@ -140,7 +140,10 @@ const MENTIONED_CHAT_CHARS = 20_000
 
 export interface SpaceOptions {
   /** The host's providers; each user adds their own with `accounts` (R62). */
-  models: ModelSetup
+  models: ModelSetup | (() => ModelSetup)
+  /** Host-only tenant identity and model metering, installed before work resumes. */
+  userId?: string
+  meterModels?: (models: import('@earendil-works/pi-ai').MutableModels, source: (provider: string) => import('@gense/protocol').ModelSource) => void
   /** Seals the user's plugin secrets and model credentials. */
   secretKey?: string
   /** The user's files (roadmap-3 D6): an environment for a virtual working directory under /data. */

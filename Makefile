@@ -1,6 +1,6 @@
 # Common commands. `make` lists them; the npm scripts in package.json do the work.
 .DEFAULT_GOAL := help
-.PHONY: help install dev start test typecheck check passwd sandbox \
+.PHONY: help install dev start test typecheck check passwd admin import-owner sandbox \
 	docker-dev docker-passwd docker-logs docker-down deploy deploy-remote
 
 export OPENUI_TELEMETRY_DISABLED := 1
@@ -37,8 +37,14 @@ typecheck: ## Type-check protocol and server
 check: ## Type-check everything, run server tests, verify the generated UI reference
 	npm run check
 
-passwd: ## Set the login password for `make dev` / `make start`
-	npm run passwd
+passwd: ## Reset a user's password and sign them out: make passwd EMAIL=a@example.com
+	npm run passwd -- $(EMAIL)
+
+admin: ## Make a registered user an admin (and enable them): make admin EMAIL=a@example.com
+	npm run user:admin -- $(EMAIL)
+
+import-owner: ## With the server stopped, turn single-owner data into EMAIL's account: make import-owner EMAIL=a@example.com
+	npm run user:import-owner -- $(EMAIL)
 
 sandbox: ## Build the sandbox images (slim and full)
 	npm run sandbox:build
@@ -47,8 +53,8 @@ docker-dev: ## The production container on http://127.0.0.1:8787, data in data/d
 	mkdir -p $(DOCKER_DEV_DATA)
 	$(DEV_ENV) $(DEV_COMPOSE) up --build app
 
-docker-passwd: ## Set the password inside the `make docker-dev` container
-	$(DEV_ENV) $(DEV_COMPOSE) exec app npm run passwd
+docker-passwd: ## Reset a user's password inside the `make docker-dev` container: make docker-passwd EMAIL=a@example.com
+	$(DEV_ENV) $(DEV_COMPOSE) exec app npm run passwd -- $(EMAIL)
 
 # logs and down do not use these values, but compose.yaml needs them set; a server's .env loses to them harmlessly.
 docker-logs: ## Follow the app's logs (docker-dev or deploy)

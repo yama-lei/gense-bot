@@ -138,6 +138,13 @@ data/
 | `platform/backup.ts` | 备份 `app.sqlite` 和每个用户的库 |
 | `web` | 登录 / 注册页；`/admin` 后台；模型选择器标出共享和自带 |
 
+实现记录（2026-11-11）：
+
+- 账号和后台走 HTTP（`/api/register`、`/api/login`、`/api/me`、`/api/registration`、`/api/admin/*`），类型在 `protocol/src/accounts.ts`；对话仍走 WebSocket。`.env` 的 `PROVIDER_*` 不再提供聊天模型，只剩图片插件的默认地址。
+- `ModelInfo` 加 `source`（`shared` / `byok`）和 `providerName`：共享提供方的 id 是 `shared-<uuid>`，模型菜单的分组名用 admin 填的名称。
+- `/admin` 分三页：用户（注册开关、停用 / 启用、设为 / 取消管理员；不能在这里改自己，避免把自己锁在外面）、共享模型（密钥只写不读，编辑时留空保留）、用量（UTC 日期范围，按用户 / 天 / 模型汇总）。非 admin 打开 `/admin` 看到“没有权限”，服务端对每个 `/api/admin/*` 请求再查一次角色。
+- 顺手修了开发环境：Vite 代理 `/api` 的字符串写法会把 `Host` 改成目标地址，浏览器的 POST 因 `Origin` 不一致被拒（`make dev` 下无法登录）；改为对象写法保留 `Host`。
+
 ## 内置 Skill 候选
 
 详见 [调研报告](../research/builtin-skills.md)。`packages/server/skills/import.py` 按锁定的上游提交拉取并整改，附原许可证；保留上游名字，方便以后更新。

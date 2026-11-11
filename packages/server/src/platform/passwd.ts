@@ -1,4 +1,4 @@
-// npm run passwd        sets the owner's password and signs out every session
+// npm run passwd <email> sets one registered user’s password and revokes that user’s sessions
 // The password is read from the terminal without echo, or from stdin when piped. Safe while the server runs: SQLite
 // waits for the server's write lock.
 import { Auth } from '../index.ts'
@@ -33,7 +33,9 @@ async function readPassword() {
 const db = await openDatabase(configFromEnv().dataDir)
 try {
   const auth = await Auth.open(db)
-  await auth.setPassword(await readPassword())
+  const user = await auth.find(process.argv[2] ?? '')
+  if (!user) throw new Error('用法：npm run passwd <已注册邮箱>')
+  await auth.setPassword(user.id, await readPassword())
   console.log('密码已设置，已有的登录都已退出')
 } catch (error) {
   console.error(error instanceof Error ? error.message : error)

@@ -154,6 +154,7 @@ export class UserSpace {
     plugins.subscribe(refreshPlugins)
     const mcp = await McpHost.open(db, plugins, options.secretKey, options.mcp)
     const accounts = await ModelAccounts.open(db, { host: options.models, secretKey: options.secretKey, oauth: true })
+    options.meterModels?.(accounts.models, provider => accounts.source(provider))
     const workspace = new Workspace(options.env)
     const skills = await SkillStore.open(db, async () => workspace.env(DATA_DIR), ctx, options.skillTempDir)
     // Conversations follow the host's selection, read at every resolution: a plugin switched on or off applies from the
@@ -190,7 +191,7 @@ export class UserSpace {
 
   // --- Webhooks (R50) ---
 
-  webhookInfo = ({ secret: _, ...r }: WebhookRow): WebhookInfo => ({ ...r, path: `${HOOKS_PATH}/${r.id}` })
+  webhookInfo = ({ secret: _, ...r }: WebhookRow): WebhookInfo => ({ ...r, path: `${HOOKS_PATH}${this.options.userId ? `/${this.options.userId}` : ''}/${r.id}` })
 
   /** Webhook secrets are sealed, so creating one needs the host's TOKEN_ENCRYPTION_KEY. */
   get canCreateWebhooks() {

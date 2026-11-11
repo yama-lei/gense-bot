@@ -1,6 +1,6 @@
 // The app's data: the server's state over one WebSocket (lib/socket.ts), what this browser keeps for itself, and the
 // actions pages call. Failures of actions nobody awaits become toasts.
-import type { BranchMeta, BranchesState, Effort, FileEntry, FilePreview, ModelInfo, ToolCallResult, UploadedFile } from '@gense/protocol'
+import type { BranchMeta, BranchesState, Effort, FileEntry, FilePreview, ModelInfo, ToolCallResult, UploadedFile, UserInfo } from '@gense/protocol'
 import { createContext, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { errorText, fileBase64, saveBlob, toBlob } from '../lib/format'
@@ -160,7 +160,16 @@ export class Client {
 
 const Context = createContext<Client | null>(null)
 
-export function AppProvider({ onUnauthorized, children }: { onUnauthorized: () => void; children: ReactNode }) {
+const UserContext = createContext<UserInfo | null>(null)
+
+/** The signed-in account. */
+export function useUser() {
+  const user = useContext(UserContext)
+  if (!user) throw new Error('useUser outside AppProvider')
+  return user
+}
+
+export function AppProvider({ user, onUnauthorized, children }: { user: UserInfo; onUnauthorized: () => void; children: ReactNode }) {
   // Made in an effect: StrictMode mounts twice, and a socket closed by the first unmount must not be the one in use.
   const [client, setClient] = useState<Client | null>(null)
   useEffect(() => {
@@ -169,7 +178,13 @@ export function AppProvider({ onUnauthorized, children }: { onUnauthorized: () =
     return () => made.socket.close()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-  return client && <Context.Provider value={client}>{children}</Context.Provider>
+  return (
+    client && (
+      <Context.Provider value={client}>
+        <UserContext.Provider value={user}>{children}</UserContext.Provider>
+      </Context.Provider>
+    )
+  )
 }
 
 export function useClient() {

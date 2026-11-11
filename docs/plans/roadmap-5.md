@@ -1,6 +1,6 @@
 # 路线图 5：聊天 + Bot、插件生态、界面重写
 
-状态：已确认，2026-11-10，实施中。前后端的契约是 `packages/protocol`；后端任务见 [roadmap-5-backend.md](roadmap-5-backend.md)。
+状态：已确认，2026-11-10。阶段 0–5 已实现（`feat/r5-web`，含合并进来的 `feat/r5-backend`）；阶段 6 的走查做了浏览器冒烟（浅色 / 深色、390px、命令面板、生成式界面），真实飞书应用和真实 MCP 服务器的验收还没做。前后端的契约是 `packages/protocol`；后端任务见 [roadmap-5-backend.md](roadmap-5-backend.md)。
 
 依据：[ADR-0005](../adr/0005-event-driven-vps.md)、[架构](../design/architecture.md)、[路线图 4](roadmap-4.md)。
 

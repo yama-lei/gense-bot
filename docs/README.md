@@ -9,7 +9,7 @@
 3. [架构 Design](design/architecture.md)：当前代码的组件、登录、数据与备份、sandbox、插件接口和验证方式。
 4. [Cloudflare 托管决策](adr/0001-cloudflare-free-tier.md) 与 [Think + Google Drive 决策](adr/0002-think-google-drive.md)：早期方向，已被 ADR-0004、ADR-0005 取代，保留作为历史。
 5. [免费额度与依赖核查](research/cloudflare-free-tier.md)：Workers / DO 额度依据（历史资料，Cloudflare 已不再使用）。
-6. [网页界面 Spec](specs/web-ui.md)：页面、组件、移动端行为和交付阶段；前端在 [`packages/web/`](../packages/web/)（Mock 前端已删除）。
+6. [网页界面 Spec](specs/web-ui.md)：页面、对话、插件与 Skill、渠道、设置和质量要求；2026-11-10 按路线图 5 重写，前端在 [`packages/web/`](../packages/web/)。
 7. [助手功能清单](intents/agent-features.md)：goal.md 按能力拆开后的清单、状态和待商量的问题（含会话工作区）。
 8. [路线图 2](plans/roadmap-2.md) 与 [ADR-0003](adr/0003-free-plan-agent-features.md)：网页搜索、文件、会话树、命令、Skills、生成式界面的分层计划和开发顺序。
 9. [OpenAI 兼容中转站的已知问题](research/openai-relay.md)：注入的托管工具、`item_reference`、生图参数，以及现有的绕开方式。
@@ -31,6 +31,6 @@
 
 ## 当前评审重点
 
-先评审 [ADR-0005](adr/0005-event-driven-vps.md) 与 [路线图 4](plans/roadmap-4.md)；阶段 1（单所有者、Compose 部署、备份）已完成，下一步是在 2 GB 的 VPS 上验收内存余量，再进入阶段 2（聊天变成事件）。
+[路线图 5](plans/roadmap-5.md)（聊天 + 飞书 Bot、插件生态、界面重写）的阶段 0–5 已在 `feat/r5-web` 上实现并合并了后端（记录见 [roadmap-5-backend-notes.md](plans/roadmap-5-backend-notes.md)）。还没做的验收：用真实的飞书应用和真实的 MCP 服务器走一遍，以及阶段 6 的逐条走查。路线图 4 中未被路线图 5 吸收的部分（GitHub / GitLab Source、内置日历）暂时搁置。
 
 `AGENTS.md` 保留高层开发原则，不复制这里的产品需求和技术细节。开发用 Pi 插件的说明在 [`.pi/README.md`](../.pi/README.md)，它们不属于产品运行时。

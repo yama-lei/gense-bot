@@ -1,16 +1,18 @@
 // Host settings from the environment (.env at the repo root; see .env.example).
-import { fauxModels, pluginDefaultsFromEnv, relayFromEnv, type ModelSetup, type SpaceOptions } from '../index.ts'
+import { fauxModels, pluginDefaultsFromEnv, type ModelSetup, type SpaceOptions } from '../index.ts'
 import { resolve } from 'node:path'
 import type { BackupOptions } from './backup.ts'
 
 export interface HostConfig {
+  /** Optional channel transport settings (also allow local integration platforms). */
+  feishu?: Omit<import('../channels/feishu/index.ts').FeishuOptions, 'publicUrl'>
   publicUrl?: string
   dataDir: string
   port: number
   host: string
   /** Built front end; missing in dev, where Vite serves it. */
   webDir: string
-  /** The host's own providers (the relay). */
+  /** Development/test providers. Production shared models are registered in app.sqlite. */
   models: () => ModelSetup
   /** Plugin defaults from `.env`. */
   plugins: NonNullable<SpaceOptions['plugins']>
@@ -31,7 +33,7 @@ export function configFromEnv(env = process.env): HostConfig {
     port: Number(env.PORT ?? 8787),
     host: env.HOST ?? '127.0.0.1',
     webDir: resolve(root, 'packages/web/dist'),
-    models: env.GENSE_FAUX === '1' ? fauxModels : () => relayFromEnv(env),
+    models: env.GENSE_FAUX === '1' ? fauxModels : () => ({ providers: [], options: [], defaultModel: null }),
     plugins: { defaults: pluginDefaultsFromEnv(env) },
     secretKey: env.TOKEN_ENCRYPTION_KEY || undefined,
     sandbox:

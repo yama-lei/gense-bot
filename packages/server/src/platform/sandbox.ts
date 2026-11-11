@@ -5,6 +5,7 @@ import { ExecutionError, err, type ExecutionEnv, type ShellExecOptions, type She
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node'
 import { DATA_DIR, MountedEnv, SKILLS_DIR } from '../index.ts'
 import { execFile } from 'node:child_process'
+import { assertConfined, withConfinedParent } from './fs/confined-env.ts'
 import { randomUUID } from 'node:crypto'
 import { mkdir, rename, rm } from 'node:fs/promises'
 import { basename, join } from 'node:path'
@@ -13,7 +14,7 @@ import { promisify } from 'node:util'
 const run = promisify(execFile)
 
 export interface SandboxOptions {
-  /** Container name; one server per Docker host unless each sets its own. */
+  /** Stable container name, unique to the host data directory and user. */
   name?: string
   /** The owner's files directory, mounted at /data. */
   root: string
@@ -99,13 +100,18 @@ export class Sandbox {
     await docker(['rm', '-f', this.name]).catch(() => {})
     // A fresh /tmp for each container, as a reboot would leave it.
     await rm(tmpDir(root), { recursive: true, force: true })
-    for (const dir of ['skills', '.cache', '.local', '.home', '.tmp']) await mkdir(join(root, dir), { recursive: true })
+    for (const dir of ['skills', '.cache', '.local', '.home', '.tmp']) {
+      await assertConfined(root, join(root, dir))
+      await mkdir(join(root, dir), { recursive: true })
+    }
     const uid = process.getuid?.() ?? 1000
     const gid = process.getgid?.() ?? 1000
     await docker([
       'run', '-d', '--name', this.name, '--label', 'gense.sandbox=1', '--hostname', 'sandbox',
       // The host's uid, so files the sandbox writes stay the host's; no root, no added capabilities (D7).
-      '--user', `${uid}:${gid}`, '--security-opt', 'no-new-privileges', '--init',
+      '--user', `${uid}:${gid}`, '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--init',
+      // IPv4 egress rules below are the only supported network policy; do not leave an IPv6 bypass.
+      '--sysctl', 'net.ipv6.conf.all.disable_ipv6=1',
       '--network', NETWORK,
       '--memory', this.#options.memory ?? '1g', '--memory-swap', this.#options.memory ?? '1g',
       '--cpus', this.#options.cpus ?? '2', '--pids-limit', String(this.#options.pids ?? 512),
@@ -170,9 +176,8 @@ export class Sandbox {
     const spillPath = result.ok ? result.value.spillPath : result.error.spillPath
     if (!spillPath) return result
     const dir = join(this.#options.root, '.cache', 'output')
-    await mkdir(dir, { recursive: true })
     const name = basename(spillPath)
-    const moved = await rename(spillPath, join(dir, name)).then(() => `${DATA_DIR}/.cache/output/${name}`, () => spillPath)
+    const moved = await withConfinedParent(this.#options.root, join(dir, name), true, destination => rename(spillPath, destination)).then(() => `${DATA_DIR}/.cache/output/${name}`, () => spillPath)
     if (result.ok) return { ok: true, value: { ...result.value, spillPath: moved } }
     result.error.spillPath = moved
     return result

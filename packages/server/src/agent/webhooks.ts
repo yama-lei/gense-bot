@@ -36,6 +36,7 @@ export async function createWebhook(this: UserSpace, treeId: string): Promise<{ 
   }
 
 export async function deleteWebhook(this: UserSpace, id: string): Promise<void> {
+    if (!(await this.db.get('SELECT 1 FROM webhooks WHERE id = ?', id))) throw new Error('Webhook 不存在')
     await this.db.run('DELETE FROM webhooks WHERE id = ?', id)
     this.automationsChanged()
   }

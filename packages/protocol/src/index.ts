@@ -1,5 +1,5 @@
 // The contract between the web client and the server (roadmap-5): messages over one WebSocket, plus
-//   POST /api/login { password }, POST /api/logout, GET /api/me            the session cookie
+//   POST /api/register, /api/login { email, password }, POST /api/logout, GET /api/me            the session cookie
 //   POST /api/password { current, next }                                   signs every other session out
 //   GET  /api/mcp/callback                                                 where an MCP server's OAuth returns
 // Types and constants only: the browser imports it too.
@@ -8,6 +8,7 @@ import type { AuthEvent, AuthType } from '@earendil-works/pi-ai'
 import type { CommandNote, Mention } from './notes.ts'
 import type { ChannelInfo, PluginInfo, PluginValue, SkillInfo, SkillSource } from './plugins.ts'
 
+export * from './accounts.ts'
 export * from './notes.ts'
 export * from './plugins.ts'
 export * from './discover.ts'
@@ -72,7 +73,11 @@ export interface BranchesState {
 }
 
 export interface ModelInfo {
+  /** Shared by the admin, or authenticated with this user’s credentials. */
+  source?: import('./accounts.ts').ModelSource
   provider: string
+  /** The provider's display name when it differs from its id (a shared provider is `shared-<uuid>`). */
+  providerName?: string
   id: string
   name: string
 }

@@ -1,5 +1,5 @@
 import type { TreeMeta } from '@gense/protocol'
-import { Blocks, Ellipsis, MessageCircle, PanelLeftClose, Pencil, Pin, PinOff, Radio, Search, Settings, SquarePen, Timer, Trash2 } from 'lucide-react'
+import { Blocks, Ellipsis, MessageCircle, PanelLeftClose, Pencil, Pin, PinOff, Radio, Search, Settings, ShieldCheck, SquarePen, Timer, Trash2 } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import { cn } from '../lib/cn'
 import { dayGroup } from '../lib/format'
@@ -11,7 +11,7 @@ import { Skeleton } from '../ui/feedback'
 import { Logo } from '../ui/logo'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../ui/menu'
 import { Tooltip } from '../ui/tooltip'
-import { report, useClient, useHost } from './client'
+import { report, useClient, useHost, useUser } from './client'
 import { useShell } from './shell-context'
 
 const row = 'flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-sm outline-offset-[-2px] hover:bg-hover'
@@ -125,6 +125,7 @@ export function Sidebar({ onNavigate, onCollapse }: { onNavigate: () => void; on
   const route = useRoute()
   const host = useHost()
   const { openPalette } = useShell()
+  const user = useUser()
   const groups = useMemo(() => grouped(host.trees ?? []), [host.trees])
 
   return (
@@ -186,6 +187,11 @@ export function Sidebar({ onNavigate, onCollapse }: { onNavigate: () => void; on
       </div>
 
       <div className="shrink-0 border-t px-2 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]" onClick={(e) => (e.target as HTMLElement).closest('a') && onNavigate()}>
+        {user.role === 'admin' && (
+          <NavLink to={{ name: 'admin' }} active={route.name === 'admin'} icon={<ShieldCheck />}>
+            管理后台
+          </NavLink>
+        )}
         <NavLink to={{ name: 'settings' }} active={route.name === 'settings'} icon={<Settings />}>
           设置
         </NavLink>

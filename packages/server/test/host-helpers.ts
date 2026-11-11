@@ -14,11 +14,11 @@ import { hmac } from '../src/events/tasks.ts'
 
 export const tempDir = () => mkdtemp(join(tmpdir(), 'gense-test-'))
 
-export async function login(url: string, password: string) {
+export async function login(url: string, password: string, email = 'owner@example.com') {
   const res = await fetch(`${url}/api/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ password }),
+    body: JSON.stringify({ email, password }),
   })
   const cookie = res.headers.get('set-cookie')?.split(';')[0]
   return { status: res.status, body: (await res.json()) as { error?: string }, cookie }

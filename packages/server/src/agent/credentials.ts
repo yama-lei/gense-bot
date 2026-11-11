@@ -91,7 +91,7 @@ export class SealedCredentialStore implements CredentialStore {
 
 export interface AccountsOptions {
   /** The host's providers (the relay), usable by everyone and not listed as accounts. */
-  host: ModelSetup
+  host: ModelSetup | (() => ModelSetup)
   secretKey: string | undefined
   /** Whether subscription (OAuth) logins are offered; they need a callback to the host or a code pasted back. */
   oauth: boolean
@@ -105,6 +105,7 @@ export class ModelAccounts {
   readonly #deviceId: string
   readonly #listeners = new Set<() => void>()
   readonly #hostIds: Set<string>
+  #host: ModelSetup
   #configured: readonly CredentialInfo[]
 
   private constructor(store: SealedCredentialStore, options: AccountsOptions, deviceId: string, configured: readonly CredentialInfo[]) {
@@ -112,15 +113,27 @@ export class ModelAccounts {
     this.#o = options
     this.#deviceId = deviceId
     this.#configured = configured
-    this.#hostIds = new Set(options.host.providers.map((p) => p.id))
+    this.#host = typeof options.host === 'function' ? options.host() : options.host
+    this.#hostIds = new Set(this.#host.providers.map((p) => p.id))
     this.models = builtinModels({ credentials: store, authContext: NO_AMBIENT_AUTH })
-    for (const p of options.host.providers) this.models.setProvider(p)
+    for (const p of this.#host.providers) this.models.setProvider(p)
   }
 
   static async open(db: SqliteDatabase, options: AccountsOptions) {
     const store = await SealedCredentialStore.open(db, options.secretKey)
     return new ModelAccounts(store, options, await store.deviceId(), await store.list())
   }
+
+  /** Refresh shared providers before the next resolution; open sockets receive an updated picker. */
+  async refreshHost() {
+    const next = typeof this.#o.host === 'function' ? this.#o.host() : this.#o.host
+    for (const id of this.#hostIds) this.models.deleteProvider(id)
+    this.#hostIds.clear()
+    this.#host = next
+    for (const p of next.providers) { this.#hostIds.add(p.id); this.models.setProvider(p) }
+    for (const l of this.#listeners) l()
+  }
+  source(provider: string) { return this.#hostIds.has(provider) ? 'shared' as const : 'byok' as const }
 
   subscribe(listener: () => void) {
     this.#listeners.add(listener)
@@ -153,11 +166,11 @@ export class ModelAccounts {
         .filter((c) => !this.#hostIds.has(c.providerId))
         .map((c) => this.models.getAvailable(c.providerId).catch(() => [])),
     )
-    return [...this.#o.host.options, ...own.flat().map((m) => ({ provider: m.provider, id: m.id, name: m.name }))]
+    return [...this.#host.options.map(m => ({ ...m, source: 'shared' as const })), ...own.flat().map((m) => ({ provider: m.provider, id: m.id, name: m.name, source: 'byok' as const }))]
   }
 
   async defaultModel() {
-    return this.#o.host.defaultModel ?? (await this.list())[0] ?? null
+    return this.#host.defaultModel ?? (await this.list())[0] ?? null
   }
 
   async login(providerId: string, type: AuthType, interaction: AuthInteraction) {

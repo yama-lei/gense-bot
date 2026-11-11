@@ -3,7 +3,7 @@ import type { LoginPrompt, ProviderState } from '@gense/protocol'
 import { ExternalLink, LogOut, Monitor, Moon, Sun } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { report, useClient, useHost } from '../../app/client'
+import { report, useClient, useHost, useUser } from '../../app/client'
 import { Page } from '../../app/Shell'
 import { cn } from '../../lib/cn'
 import { errorText } from '../../lib/format'
@@ -160,7 +160,7 @@ function Models() {
 
   return (
     <>
-      <Section title="模型账户" description="用 API Key 或订阅账号登录模型服务，它的模型会出现在输入框的模型菜单里。凭据加密保存在服务器上。">
+      <Section title="模型账户" description="用 API Key 或订阅账号登录模型服务，它的模型会出现在输入框的模型菜单里。凭据加密保存在服务器上，只有你能用。">
         {signedIn.length > 0 && (
           <ul className="mb-4 divide-y overflow-hidden rounded-2xl border bg-card">
             {signedIn.map((p) => (
@@ -208,14 +208,17 @@ function Models() {
           {error && <Notice tone="error">{error}</Notice>}
         </div>
       </Section>
-      <Section title="可用模型" description="默认模型在输入框的模型菜单里选择，按浏览器记住。">
+      <Section title="可用模型" description="“共享”的模型由管理员提供，“自带”的用你自己的账户。默认模型在输入框的模型菜单里选择，按浏览器记住。">
         {models.length === 0 ? (
-          <Notice tone="warning">还没有可用的模型。登录一个模型服务，或在服务器上配置 API Key。</Notice>
+          <Notice tone="warning">还没有可用的模型。登录一个模型服务，或请管理员共享模型。</Notice>
         ) : (
           <ul className="flex flex-wrap gap-1.5">
             {models.map((m) => (
               <li key={`${m.provider}:${m.id}`}>
-                <Badge variant="outline">{m.name}</Badge>
+                <Badge variant={m.source === 'byok' ? 'accent' : 'outline'} title={m.providerName ?? m.provider}>
+                  {m.name}
+                  {m.source && <span className="font-normal opacity-75">· {m.source === 'shared' ? '共享' : '自带'}</span>}
+                </Badge>
               </li>
             ))}
           </ul>
@@ -360,6 +363,7 @@ function Appearance() {
 
 function Account() {
   const client = useClient()
+  const user = useUser()
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
   const [again, setAgain] = useState('')
@@ -385,6 +389,13 @@ function Account() {
 
   return (
     <>
+      <Section title="账号">
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="font-medium break-all">{user.email}</span>
+          {user.role === 'admin' && <Badge variant="accent">管理员</Badge>}
+        </div>
+        <p className="mt-1 text-sm text-muted-foreground">注册于 {new Date(user.createdAt).toLocaleDateString()}</p>
+      </Section>
       <Section title="修改密码" description="修改后，其他浏览器和设备上的登录都会失效。">
         <form
           className="flex max-w-sm flex-col gap-4"

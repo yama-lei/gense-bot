@@ -60,18 +60,18 @@ test('R5 password endpoint verifies current password, rotates the cookie and rev
   const db = await openNodeSqliteDatabase(':memory:')
   try {
     const auth = await Auth.open(db)
-    await auth.setPassword('old-password')
-    const a = await auth.login('old-password'), b = await auth.login('old-password')
+    await auth.register('owner@example.com', 'old-password')
+    const a = await auth.login('owner@example.com', 'old-password'), b = await auth.login('owner@example.com', 'old-password')
     const change = (current: string, next: string) => accountApi(auth, new Request('http://localhost/api/password', { method: 'POST', headers: { cookie: `gense_session=${a}` }, body: JSON.stringify({ current, next }) }))
     assert.equal((await change('bad', 'new-password')).status, 400)
-    assert.equal(await auth.session(b), true)
+    assert.ok(await auth.session(b))
     const result = await change('old-password', 'new-password')
     assert.equal(result.status, 200)
-    assert.equal(await auth.session(a), false)
-    assert.equal(await auth.session(b), false)
+    assert.equal(await auth.session(a), undefined)
+    assert.equal(await auth.session(b), undefined)
     assert.ok(result.headers.get('set-cookie')?.includes('HttpOnly'))
-    await assert.rejects(auth.login('old-password'))
-    assert.ok(await auth.login('new-password'))
+    await assert.rejects(auth.login('owner@example.com', 'old-password'))
+    assert.ok(await auth.login('owner@example.com', 'new-password'))
   } finally { await db.close() }
 })
 
@@ -83,7 +83,7 @@ test('R5 password rotation closes old live WebSockets and admits a new cookie', 
   const server = await startServer({ ...configFromEnv({ GENSE_FAUX:'1', DATA_DIR:await tempDir(), SANDBOX:'0', BACKUPS:'0' }), port:0 })
   const sockets:InstanceType<typeof WebSocket>[]=[]
   try {
-    await server.auth.setPassword('initial-password')
+    await server.auth.register('owner@example.com', 'initial-password')
     const a = await login(server.url,'initial-password'), b = await login(server.url,'initial-password')
     for (const cookie of [a.cookie,b.cookie]) { const ws=new WebSocket(server.url.replace('http','ws')+'/ws',{headers:{cookie:cookie!}});sockets.push(ws);await once(ws,'open') }
     const closed = sockets.map(ws=>once(ws,'close'))

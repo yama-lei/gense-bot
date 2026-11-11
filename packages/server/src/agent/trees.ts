@@ -103,6 +103,7 @@ export async function updateTree(this: UserSpace, treeId: string, patch: { title
   }
 
 export async function deleteTree(this: UserSpace, treeId: string, ctx: Context = BACKGROUND_CONTEXT): Promise<void> {
+    await this.row(treeId)
     const branches = await this.db.all<BranchRow>(`SELECT ${BRANCH_COLUMNS} FROM branches WHERE treeId = ?`, treeId)
     for (const s of await this.db.all<ScheduleRow>(`SELECT ${SCHEDULE_COLUMNS} FROM schedules WHERE treeId = ?`, treeId)) await this.stopSchedule(s, ctx)
     await this.db.run('DELETE FROM schedules WHERE treeId = ?', treeId)

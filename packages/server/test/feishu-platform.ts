@@ -28,7 +28,7 @@ export async function feishuPlatform() {
     const chunks:Buffer[]=[];for await(const c of req)chunks.push(Buffer.from(c));const bytes=Buffer.concat(chunks)
     const json=(value:unknown,status=200)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(value))}
     if(url.pathname==='/callback/ws/endpoint'){state.handshake++;return json({code:0,data:{URL:origin.replace('http','ws')+'/ws?device_id=device&service_id=1',ClientConfig:{PingInterval:3600,ReconnectCount:-1,ReconnectInterval:0.1,ReconnectNonce:0}}})}
-    if(url.pathname.includes('/auth/v3/tenant_access_token'))return json({code:0,tenant_access_token:'tenant-token',expire:7200})
+    if(url.pathname.includes('/auth/v3/tenant_access_token'))return json({code:0,tenant_access_token:'tenant-token-'+JSON.parse(bytes.toString()).app_id,expire:7200})
     if(url.pathname==='/open-apis/bot/v3/info')return json({code:0,bot:{open_id:'bot-open-id',app_name:'Test Bot'}})
     if(url.pathname.includes('/resources/')){state.downloads++;res.writeHead(200,{'content-type':url.searchParams.get('type')==='image'?'image/png':'text/plain'});res.end(url.searchParams.get('type')==='image'?Buffer.from([137,80,78,71,13,10,26,10]):'attached content');return}
     if(url.pathname==='/open-apis/im/v1/images'||url.pathname==='/open-apis/im/v1/files'){const image=url.pathname.endsWith('images');uploads.push({type:image?'image':'file',body:bytes});return json({code:0,data:image?{image_key:'uploaded-image-'+uploads.length}:{file_key:'uploaded-file-'+uploads.length}})}
@@ -37,9 +37,9 @@ export async function feishuPlatform() {
     if(req.method==='GET'&&messagePath)return json({code:0,data:{items:[messages.get(messagePath[1]!)??{message_id:messagePath[1],root_id:'root-message',body:{content:JSON.stringify({text:'quoted message context'})}}]}})
     if((req.method==='POST'&&url.pathname==='/open-apis/im/v1/messages')||(req.method==='POST'&&messagePath?.[2])){
       if(state.failSends)return json({code:999,msg:'temporary failure'},503)
-      const data=JSON.parse(bytes.toString()),known=receipts.get(data.uuid)
+      const data=JSON.parse(bytes.toString()),receiptKey=String(req.headers.authorization)+':'+data.uuid,known=receipts.get(receiptKey)
       if(known)return json({code:0,data:{message_id:known}})
-      const id='out-'+(sent.length+1);sent.push({id,type:data.msg_type,content:data.content,...(messagePath?.[2]&&{replyTo:messagePath[1]}),uuid:data.uuid});receipts.set(data.uuid,id)
+      const id='out-'+(sent.length+1);sent.push({id,type:data.msg_type,content:data.content,...(messagePath?.[2]&&{replyTo:messagePath[1]}),uuid:data.uuid});receipts.set(receiptKey,id)
       return json({code:0,data:{message_id:id}})
     }
     if(req.method==='PATCH'&&messagePath){if(state.failSends)return json({code:999,msg:'temporary failure'},503);const data=JSON.parse(bytes.toString());patches.push({id:messagePath[1]!,content:data.content,at:Date.now()});const prior=sent.find(m=>m.id===messagePath[1]);if(prior)prior.content=data.content;return json({code:0,data:{}})}
@@ -49,8 +49,8 @@ export async function feishuPlatform() {
   wss.on('connection',socket=>{sockets.push(socket);socket.on('message',buffer=>{const decoded=fields(Buffer.from(buffer as Buffer));const id=decoded.find(f=>f.field===1)?.value;const payload=decoded.find(f=>f.field===8)?.value;if(typeof id!=='number'||!Buffer.isBuffer(payload))return;const p=pending.get(id);if(p){clearTimeout(p.timer);pending.delete(id);p.resolve(JSON.parse(payload.toString()).code)}})})
   await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));origin=`http://127.0.0.1:${(server.address() as {port:number}).port}`
   return {origin,state,sent,patches,uploads,calls,messages,sockets,
-    async event(eventId:string,text:string,options:{actor?:string;group?:boolean;mention?:boolean;thread?:string;parent?:string;root?:string;type?:string;content?:Record<string,unknown>}={}){
-      const socket=sockets.findLast(s=>s.readyState===WebSocket.OPEN);if(!socket)throw new Error('no Feishu socket')
+    async event(eventId:string,text:string,options:{socket?:number;actor?:string;group?:boolean;mention?:boolean;thread?:string;parent?:string;root?:string;type?:string;content?:Record<string,unknown>}={}){
+      const socket=options.socket === undefined ? sockets.findLast(s=>s.readyState===WebSocket.OPEN) : sockets[options.socket];if(!socket)throw new Error('no Feishu socket')
       const id=++sequence,messageId='in-'+eventId
       const message={message_id:messageId,chat_id:options.group?'group-chat':'private-chat',chat_type:options.group?'group':'p2p',message_type:options.type??'text',content:JSON.stringify(options.content??{text:(options.mention?'@_bot ':'')+text}),...(options.thread&&{thread_id:options.thread}),...(options.parent&&{parent_id:options.parent}),...(options.root&&{root_id:options.root}),...(options.mention&&{mentions:[{key:'@_bot',id:{open_id:'bot-open-id'},name:'Bot'}]})}
       messages.set(messageId,{...message,body:{content:message.content}})

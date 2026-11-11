@@ -14,17 +14,22 @@ My implementation for [生成式软件工程](https://jyywiki.cn/GSE/2026/).
 `make` 列出所有命令。
 
 ```bash
-cp .env.example .env           # 填 PROVIDER_*、TOKEN_ENCRYPTION_KEY
+cp .env.example .env           # 填 TOKEN_ENCRYPTION_KEY
 make install
-make passwd                    # 设置登录密码（单所有者，ADR-0005）
 make sandbox                   # 可选：bash 沙箱镜像；不用沙箱就在 .env 里设 SANDBOX=0
 make dev                       # 前端 http://localhost:5173，服务端 :8787
 make check                     # protocol/server 类型检查 + 服务端全部测试
 ```
 
-`make docker-dev` 在本机跑和线上一样的 app 容器（不带 Caddy），地址 http://127.0.0.1:8787，数据放在 `data/docker/`，与 `make dev` 的数据分开；密码用 `make docker-passwd` 设置，`make docker-down` 停止。
+打开网页注册：**第一个注册的账号是管理员**（[ADR-0006](docs/adr/0006-multi-user.md)）。在侧边栏的“管理后台”里添加共享模型（地址、密钥、模型列表），所有用户的模型菜单里都会出现；用户也可以在“设置 → 模型”里登录自己的模型账户，只有自己能用。注册默认开放，任何能打开网址的人都能注册并使用共享模型，自己用的话建完账号就在管理后台关掉“开放注册”。
 
-数据都在 `DATA_DIR`（默认 `data/`）：`gense.sqlite` 是登录、会话与 pi-durable 状态，`files/` 是工作区文件，`backups/` 是每天一份的数据库副本（默认保留 7 份）。恢复：停服务，把一份副本放回为 `gense.sqlite`，删掉旁边的 `-wal`、`-shm` 文件后启动。
+忘记密码：`make passwd EMAIL=a@example.com`。把已注册的人设为管理员：`make admin EMAIL=…`。
+
+`make docker-dev` 在本机跑和线上一样的 app 容器（不带 Caddy），地址 http://127.0.0.1:8787，数据放在 `data/docker/`，与 `make dev` 的数据分开；重设密码用 `make docker-passwd EMAIL=…`，`make docker-down` 停止。
+
+数据都在 `DATA_DIR`（默认 `data/`）：`app.sqlite` 是账号、登录会话、共享模型和用量；`users/<userId>/space.sqlite` 是这个用户的对话与 pi-durable 状态，`users/<userId>/files/` 是他的工作区文件；`backups/app/` 和 `backups/users/<userId>/` 是每天一份的数据库副本（默认保留 7 份）。恢复：停服务，把副本放回对应位置（`app.sqlite` 或 `users/<userId>/space.sqlite`），删掉旁边的 `-wal`、`-shm` 文件后启动。
+
+从单所有者版本升级：停服务，运行 `make import-owner EMAIL=a@example.com`，它把原来的 `gense.sqlite` 和 `files/` 变成这个邮箱的账号（沿用原密码；还没有任何账号时它就是管理员，否则再运行 `make admin EMAIL=…`），然后启动。只能做一次，目标账号已存在时拒绝。原来 `.env` 里的 `PROVIDER_*` 不再提供聊天模型，请在管理后台添加为共享模型；`TOKEN_ENCRYPTION_KEY` 必须保持不变。
 
 ## 部署到 VPS
 
@@ -34,8 +39,9 @@ make check                     # protocol/server 类型检查 + 服务端全部�
 git clone <repo> gense-bot && cd gense-bot
 cp .env.example .env           # 另填 GENSE_DOMAIN、GENSE_DATA（绝对路径）、GENSE_UID/GID、DOCKER_GID
 make deploy                    # 第一次会先构建沙箱镜像
-docker compose exec app npm run passwd
 ```
+
+部署后马上打开网址注册第一个账号（它是管理员），再按需关闭注册；重设密码用 `docker compose exec app npm run passwd -- <email>`。
 
 - Caddy 自动申请 TLS 证书，并把 HTTPS 与 WebSocket 转给 `app`。
 - `app` 通过挂载的 Docker socket 启动沙箱容器；能控制这个进程就能控制本机的 Docker。令牌只在 `app` 进程里，不进沙箱。
@@ -51,8 +57,8 @@ docker compose exec app npm run passwd
 
 在渠道页启用飞书或 Lark，生成配对码，十分钟内私聊发给 Bot。之后私聊持续对话；群里需 @Bot，按话题分会话。支持 `/new`、`/stop`、`/model`、`/model <provider/id>`、`/help`。群回复留在原话题；网页继续对话不会发回飞书。卡片中的链接使用 `PUBLIC_URL`。附件下载上限 20 MB，发送文件上限 30 MB；超过平台限制时通过网页下载。
 
-插件页可添加 Streamable HTTP MCP 地址和可选请求头；请求头及 OAuth 凭据加密保存。OAuth 使用 `PUBLIC_URL/api/mcp/callback`，需要服务器支持动态客户端注册。默认超过 20 个工具时由 `tool_search` 按需加载。界面资源由后端按固定协议提供，沙箱 iframe 由前端维护。
+插件页可添加 Streamable HTTP MCP 地址和可选请求头；请求头及 OAuth 凭据加密保存。OAuth 使用 `PUBLIC_URL/api/users/<userId>/mcp/callback`，需要服务器支持动态客户端注册。默认超过 20 个工具时由 `tool_search` 按需加载。界面资源由后端按固定协议提供，沙箱 iframe 由前端维护。
 
-Skills 支持上传 ZIP（可含多个 Skill）或无凭据的 HTTP(S) Git 地址，可指定 ref/path。宿主需 Git（生产镜像已包含）。完整目录及来源保存在数据库，启用的文件位于 `<DATA_DIR>/files/skills/`；脚本可通过 sandbox 的 bash/Python/Node 解释器运行。安装最多 2,000 个文件、解压后 50 MB，拒绝符号链接和越界路径。安装临时文件位于 `<DATA_DIR>/skill-tmp/`，操作结束后清理。
+Skills 支持上传 ZIP（可含多个 Skill）或无凭据的 HTTP(S) Git 地址，可指定 ref/path。宿主需 Git（生产镜像已包含）。完整目录及来源保存在数据库，启用的文件位于 `<DATA_DIR>/users/<userId>/files/skills/`；脚本可通过 sandbox 的 bash/Python/Node 解释器运行。安装最多 2,000 个文件、解压后 50 MB，拒绝符号链接和越界路径。安装临时文件位于 `<DATA_DIR>/users/<userId>/skill-tmp/`，操作结束后清理。
 
 架构与逐阶段测试记录见 [architecture](docs/design/architecture.md) 和 [backend notes](docs/plans/roadmap-5-backend-notes.md)。

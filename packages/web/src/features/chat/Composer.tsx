@@ -8,6 +8,7 @@ import { availableCommands, localSkillNames, toOutgoingCommand, type Command } f
 import { baseName, errorText } from '../../lib/format'
 import { Link } from '../../lib/router'
 import type { Attachment, Outgoing } from '../../lib/types'
+import { Badge } from '../../ui/badge'
 import { Spinner } from '../../ui/feedback'
 import { DropdownMenu, DropdownMenuCheckItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '../../ui/menu'
 import { Tooltip } from '../../ui/tooltip'
@@ -439,7 +440,10 @@ function ModelPicker() {
       <DropdownMenuContent align="end" side="top" className="w-72">
         {[...groups].map(([provider, list]) => (
           <div key={provider}>
-            <DropdownMenuLabel>{provider}</DropdownMenuLabel>
+            <DropdownMenuLabel className="flex items-center gap-1.5">
+              <span className="min-w-0 truncate">{list[0]!.providerName ?? provider}</span>
+              {list[0]!.source && <Badge variant={list[0]!.source === 'shared' ? 'neutral' : 'accent'}>{list[0]!.source === 'shared' ? '共享' : '自带'}</Badge>}
+            </DropdownMenuLabel>
             {list.map((m) => (
               <DropdownMenuCheckItem
                 key={modelKey(m)}

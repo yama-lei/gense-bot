@@ -13,12 +13,12 @@ test('a copy is a complete database, and only the newest copies are kept', async
   const dir = join(dataDir, 'backups')
   const db = await openDatabase(dataDir)
   const auth = await Auth.open(db)
-  await auth.setPassword('correct horse')
+  await auth.register('owner@example.com', 'correct horse')
   const first = await backupNow(db, dir, 2)
 
   const copy = await openNodeSqliteDatabase(first)
   const restored = await Auth.open(copy)
-  assert.ok(await restored.login('correct horse'), 'the copy holds the password')
+  assert.ok(await restored.login('owner@example.com', 'correct horse'), 'the copy holds the password')
   await copy.close()
 
   for (let i = 0; i < 3; i++) {

@@ -14,7 +14,9 @@
     "passwd": "npm run passwd -w @gense/server --",
     "sandbox:build": "docker build --network host --target slim -t gense-sandbox:slim sandbox && docker build --network host --target full -t gense-sandbox:full sandbox",
     "check": "npm run typecheck && npm run typecheck -w @gense/web && OPENUI_TELEMETRY_DISABLED=1 npm run genui:check -w @gense/web && npm test",
-    "check:server": "npm run typecheck && npm test -w @gense/server"
+    "check:server": "npm run typecheck && npm test -w @gense/server",
+    "user:import-owner": "npm run user:import-owner -w @gense/server --",
+    "user:admin": "npm run user:admin -w @gense/server --"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",

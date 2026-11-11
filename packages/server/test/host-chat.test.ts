@@ -13,7 +13,7 @@ let upstream: Awaited<ReturnType<typeof fakeUpstream>>
 before(async () => {
   upstream = await fakeUpstream()
   server = await startServer({ ...configFromEnv({ GENSE_FAUX: '1', DATA_DIR: await tempDir(), ...pluginEnv(upstream.url) }), port: 0 })
-  await server.auth.setPassword(PASSWORD)
+  await server.auth.register('owner@example.com', PASSWORD)
 })
 after(async () => {
   await server.close()

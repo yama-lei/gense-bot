@@ -29,7 +29,7 @@ const exited = (child: ChildProcess) => new Promise((r) => child.once('exit', r)
 test('R32: an answer interrupted by SIGKILL completes after restart', { timeout: 60_000 }, async () => {
   const dataDir = await tempDir()
   const db = await openDatabase(dataDir)
-  await (await Auth.open(db)).setPassword('correct horse')
+  await (await Auth.open(db)).register('owner@example.com', 'correct horse')
   await db.close()
 
   const first = host(dataDir)

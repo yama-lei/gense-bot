@@ -15,7 +15,7 @@ import { PluginStore, Sealer } from '../store.ts'
 type Secret = { headers: Record<string, string>; client?: OAuthClientInformationMixed; tokens?: OAuthTokens; verifier?: string; state?: string; expiresAt?: number }
 type RecordData = { id: string; name: string; url: string; secret: Secret }
 type Server = RecordData & { client?: Client; transport?: StreamableHTTPClientTransport; tools: Tool[]; state: McpServerState; timer?: NodeJS.Timeout; attempts: number; generation: number; connecting?: Promise<void>; authorizationUrl?: string }
-export interface McpOptions { publicUrl?: string; deferredThreshold?: number; retryMs?: number; pollMs?: number; timeoutMs?: number }
+export interface McpOptions { publicUrl?: string; callbackPath?: string; deferredThreshold?: number; retryMs?: number; pollMs?: number; timeoutMs?: number }
 const urlOf = (value: string) => {
   const url = new URL(value)
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.hash) throw new Error('MCP 地址必须是无凭据的 HTTP(S) 地址')
@@ -202,7 +202,7 @@ export class McpHost {
   #provider(s: Server): OAuthClientProvider {
     const host = this
     return {
-      get redirectUrl() { return new URL('/api/mcp/callback', host.#options.publicUrl!).href },
+      get redirectUrl() { return new URL(host.#options.callbackPath ?? '/api/mcp/callback', host.#options.publicUrl!).href },
       get clientMetadata() { return { client_name: 'Gense', redirect_uris: [String(this.redirectUrl)], grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: 'none' } },
       state: () => s.secret.state ?? '',
       clientInformation: () => s.secret.client,

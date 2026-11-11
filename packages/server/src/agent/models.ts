@@ -1,4 +1,4 @@
-// The default model endpoint: an OpenAI-compatible relay configured by the host (.env PROVIDER_*; roadmap-3 D1).
+// OpenAI-compatible shared model providers (ADR-0006); host metadata and sealed keys live in app.sqlite.
 import { createProvider, type Provider } from '@earendil-works/pi-ai'
 import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy'
 import type { ModelInfo } from '@gense/protocol'
@@ -12,6 +12,8 @@ export interface ModelSetup {
 }
 
 export interface RelayConfig {
+  providerId?: string
+  name?: string
   baseUrl: string
   apiKey: string
   /** Offered models; the first is the default. */
@@ -21,16 +23,17 @@ export interface RelayConfig {
 export const RELAY_PROVIDER = 'relay'
 
 export function relayModels(config: RelayConfig): ModelSetup {
+  const providerId = config.providerId ?? RELAY_PROVIDER
   const provider = createProvider({
-    id: RELAY_PROVIDER,
-    name: 'Relay',
+    id: providerId,
+    name: config.name ?? 'Relay',
     baseUrl: config.baseUrl,
     auth: { apiKey: { name: 'relay', resolve: async () => ({ auth: { apiKey: config.apiKey } }) } },
     models: config.modelIds.map((id) => ({
       id,
       name: id,
       api: 'openai-responses',
-      provider: RELAY_PROVIDER,
+      provider: providerId,
       baseUrl: config.baseUrl,
       reasoning: true,
       input: ['text', 'image'],
@@ -40,7 +43,7 @@ export function relayModels(config: RelayConfig): ModelSetup {
     })),
     api: openAIResponsesApi(),
   })
-  const options = config.modelIds.map((id) => ({ provider: RELAY_PROVIDER, id, name: id }))
+  const options = config.modelIds.map((id) => ({ provider: providerId, ...(config.name && { providerName: config.name }), id, name: id, source: 'shared' as const }))
   return { providers: [provider], options, defaultModel: options[0] ?? null }
 }
 

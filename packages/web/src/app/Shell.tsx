@@ -9,7 +9,7 @@ import { Button } from '../ui/button'
 import { Drawer } from '../ui/dialog'
 import { Empty, Spinner } from '../ui/feedback'
 import { Tooltip } from '../ui/tooltip'
-import { localPrefs, useClient, useHost, useLocalPrefs } from './client'
+import { localPrefs, useClient, useHost, useLocalPrefs, useUser } from './client'
 import { CommandPalette } from './CommandPalette'
 import { phoneQuery, ShellContext, useShell, type ShellApi } from './shell-context'
 import { Sidebar } from './Sidebar'
@@ -18,6 +18,7 @@ const PluginsPage = lazy(() => import('../features/plugins/PluginsPage'))
 const AutomationsPage = lazy(() => import('../features/automations/AutomationsPage'))
 const ChannelsPage = lazy(() => import('../features/channels/ChannelsPage'))
 const SettingsPage = lazy(() => import('../features/settings/SettingsPage'))
+const AdminPage = lazy(() => import('../features/admin/AdminPage'))
 
 /** The button that brings the sidebar back; pages put it at the start of their header. */
 export function SidebarToggle({ className }: { className?: string }) {
@@ -65,6 +66,7 @@ export function Shell() {
   const route = useRoute()
   const host = useHost()
   const client = useClient()
+  const user = useUser()
   const phone = useMediaQuery(phoneQuery)
   const { sidebar } = useLocalPrefs()
   const [drawer, setDrawer] = useState(false)
@@ -75,7 +77,7 @@ export function Shell() {
   useEffect(() => client.socket.watch(chatId ? [chatId] : []), [client, chatId])
 
   useEffect(() => {
-    const titles: Record<string, string> = { plugins: '插件与 Skill', automations: '自动化', channels: '机器人渠道', settings: '设置' }
+    const titles: Record<string, string> = { plugins: '插件与 Skill', automations: '自动化', channels: '机器人渠道', settings: '设置', admin: '管理后台' }
     const title = route.name === 'chat' ? host.trees?.find((t) => t.id === route.id)?.title : titles[route.name]
     document.title = title ? `${title} · GenseBot` : 'GenseBot'
   }, [route, host.trees])
@@ -138,6 +140,9 @@ export function Shell() {
       break
     case 'settings':
       page = <SettingsPage section={route.section ?? 'personal'} />
+      break
+    case 'admin':
+      page = user.role === 'admin' ? <AdminPage section={route.section ?? 'users'} /> : <Missing title="没有权限">只有管理员能打开管理后台。</Missing>
       break
     default:
       page = <Missing title="没有这个页面">地址可能输错了。</Missing>

@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { pluginDefaultsFromEnv, UserSpace } from '../src/index.ts'
 import { diskEnv } from './fixtures.ts'
+import { COMPACTION_INSTRUCTIONS } from '../src/agent/compaction.ts'
 
 const SNAPSHOT = new URL('./prompt.snapshot.md', import.meta.url)
 
@@ -56,6 +57,7 @@ function render(system: SystemMessage) {
   for (const [name, text] of Object.entries(system.sections)) out.push(`## Section: ${name}`, '', '````text', text, '````', '')
   for (const t of system.toolsAdded ?? [])
     out.push(`## Tool: ${t.name}`, '', '````text', t.description ?? '', '````', '', '````json', JSON.stringify(t.parameters ?? {}, null, 2), '````', '')
+  out.push('## Context compaction instructions', '', '````text', COMPACTION_INSTRUCTIONS, '````', '')
   return out.join('\n')
 }
 

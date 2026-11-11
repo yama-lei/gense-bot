@@ -64,6 +64,7 @@ function useSuggestions(treeId: string | undefined) {
         plugins.map((p) => p.id),
         host.skills ?? [],
         localSkillNames(files),
+        !!treeId,
       ),
       mentions,
     }

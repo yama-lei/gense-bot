@@ -32,6 +32,7 @@ import { attachmentsText,commandText,mentionsText,parseNote,type CommandNote,typ
 import { BRANCH_COLUMNS,type BranchRow,DEFAULT_TITLE,entryText,MENTIONED_CHAT_CHARS,PREVIEW_CHARS,PREVIEW_ENTRIES,titleOf,type TreeRow } from './shared.ts'
 
 import type { UserSpace } from './space.ts'
+import { historyEntries } from './history.ts'
 export async function branches(this: UserSpace, treeId: string, ctx: Context = BACKGROUND_CONTEXT): Promise<BranchesState> {
     const tree = await this.row(treeId)
     const rows = await this.db.all<BranchRow>(`SELECT ${BRANCH_COLUMNS} FROM branches WHERE treeId = ? ORDER BY createdAt, rowid`, treeId)
@@ -114,7 +115,7 @@ export async function fork(this: UserSpace, treeId: string, branchId: string, at
   }
 
 export async function userEntry(this: UserSpace, conv: Conversation, entryId: number, ctx: Context): Promise<{ entry: EntryRecord; before: EntryId | null; }> {
-    const { entries } = await conv.context(ctx)
+    const entries = await historyEntries(conv, ctx)
     const i = entries.findIndex((e) => e.id === entryId)
     if (i < 0 || entries[i]!.kind !== UserEntry.kind) throw new Error('这条消息不存在')
     return { entry: entries[i]!, before: i > 0 ? entries[i - 1]!.id : null }

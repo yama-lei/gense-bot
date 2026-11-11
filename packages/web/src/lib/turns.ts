@@ -1,7 +1,7 @@
 // Projects a pi-durable conversation view onto the UI's turns: a user entry opens a turn and the assistant and tool
 // entries after it fill it. `pi.live` adds the streaming answer, `pi.inbox` the inputs still waiting. An Event (R46) or a
 // request the app made for the user (R40) opens a turn too, shown as a card instead of the user's message.
-import { BRIEF_KIND, EVENT_KIND, RUN_ERROR_KIND, parseNote, type BriefData, type EventData, type Mention, type RunErrorData } from '@gense/protocol'
+import { BRIEF_KIND, COMPACTION_KIND, EVENT_KIND, RUN_ERROR_KIND, compactionSummaryText, parseNote, type BriefData, type CompactionFailure, type CompactionReason, type CompactionStatus, type EventData, type Mention, type RunErrorData } from '@gense/protocol'
 import { baseName } from './format'
 import type { Attachment, CommandRef, ToolCall, Turn, WebSource } from './types'
 
@@ -128,6 +128,10 @@ export function toTurns(view: View): Turn[] {
       // Web tools list the pages they used; the turn shows them once each.
       const found = (m.details as { sources?: WebSource[] } | undefined)?.sources
       if (t && Array.isArray(found)) for (const src of found) if (src?.url && !t.sources.some((x) => x.url === src.url)) t.sources.push(src)
+    } else if (e.kind === COMPACTION_KIND && turns.length) {
+      // pi writes the summary after the entries it replaces; the turn that was last then shows the divider.
+      const t = turns.at(-1)!
+      ;(t.compactions ??= []).push({ id: e.id, reason: ((e.data as { reason?: CompactionReason } | undefined)?.reason ?? 'manual'), summary: compactionSummaryText(textOf(m?.content)) })
     } else if (e.kind === RUN_ERROR_KIND) {
       const t = current(e.id)
       const { reason, detail } = (e.data ?? {}) as Partial<RunErrorData>
@@ -165,4 +169,10 @@ export function toTurns(view: View): Turn[] {
       withInput(open(`queued-${item.id}`, input.text, Date.now()), input).status = 'queued'
     }
   return turns
+}
+
+/** Compactions running on the shown branch and the last one that failed, from `pi.live` (roadmap-6 C3). */
+export function compactionState(view: View | undefined): { running: CompactionStatus[]; failure?: CompactionFailure } {
+  const live = view?.docs['pi.live'] as { compactions?: CompactionStatus[]; compactionFailure?: CompactionFailure } | undefined
+  return { running: live?.compactions ?? [], ...(live?.compactionFailure && { failure: live.compactionFailure }) }
 }

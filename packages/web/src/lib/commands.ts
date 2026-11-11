@@ -36,6 +36,15 @@ export const builtinCommands: Command[] = [
   },
 ]
 
+/** Runs in the browser: the message's text, if any, becomes extra instructions for the summary (roadmap-6 C3). */
+export const compactCommand: Command = {
+  id: 'compact',
+  label: '压缩上下文',
+  hint: '把较早的对话总结成摘要，腾出上下文；可附上要保留的重点',
+  prompt: '',
+  client: true,
+}
+
 export const skillCommand = (s: Pick<SkillInfo, 'name' | 'description'>): Command => ({
   id: `skill:${s.name}`,
   label: s.name,
@@ -48,10 +57,14 @@ export function localSkillNames(files: FileEntry[] = []): string[] {
   return files.flatMap((f) => (f.readOnly ? [] : (/^\/data\/sessions\/[^/]+\/skills\/([^/]+)\/SKILL\.md$/.exec(f.path)?.[1] ?? [])))
 }
 
-/** Commands offered in a composer: built-ins whose plugin is on, the enabled skills, then the chat's own skills (which win on a name clash). */
-export function availableCommands(enabledPlugins: string[], skills: SkillInfo[], local: string[] = []): Command[] {
+/**
+ * Commands offered in a composer: built-ins whose plugin is on (compaction only in an existing chat), the enabled
+ * skills, then the chat's own skills (which win on a name clash).
+ */
+export function availableCommands(enabledPlugins: string[], skills: SkillInfo[], local: string[] = [], inChat = false): Command[] {
   return [
     ...builtinCommands.filter((c) => !c.plugin || enabledPlugins.includes(c.plugin)),
+    ...(inChat ? [compactCommand] : []),
     ...skills.filter((s) => s.enabled && (!s.plugin || enabledPlugins.includes(s.plugin)) && !local.includes(s.name)).map(skillCommand),
     ...local.map((name) => skillCommand({ name, description: '本会话的 Skill' })),
   ]

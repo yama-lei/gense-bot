@@ -49,6 +49,7 @@ import { TOOL_SEARCH, eventsExtension,assistantExtension,files,migrations,PLUGIN
 import * as subagents from './subagents.ts'
 import * as trees from './trees.ts'
 import * as webhooks from './webhooks.ts'
+import { compact, compactionPolicy, compactionRegistry } from './compaction.ts'
 export type { SpaceOptions } from './shared.ts'
 export class UserSpace {
 
@@ -158,16 +159,28 @@ export class UserSpace {
     const skills = await SkillStore.open(db, async () => workspace.env(DATA_DIR), ctx, options.skillTempDir)
     // Conversations follow the host's selection, read at every resolution: a plugin switched on or off applies from the
     // next turn of every conversation (D8). Every branch of a tree gets the same selection, so forks share its prefix (D3).
-    const settings = {
-      ...options.harness?.settings,
-      get extensions() {
-        const active = plugins.active()
-        return [gense, files, prefsExtension, toolSearch, events.extension, ...active.map((id) => byName.get(id)!), ...(active.includes('sandbox') ? [] : [noSandbox])]
-      },
+    const settings = () => {
+      const supplied = typeof options.harness?.settings === 'function' ? options.harness.settings() : options.harness?.settings
+      const { modelOverrides = {}, ...policy } = supplied?.compaction ?? {}
+      const active = plugins.active()
+      return {
+        ...supplied,
+        compaction: {
+          ...policy,
+          modelOverrides: {
+            ...modelOverrides,
+            ...Object.fromEntries(accounts.models.getModels().map(model => [
+              `${model.provider}/${model.id}`,
+              { ...compactionPolicy(model.contextWindow), ...policy, ...modelOverrides[`${model.provider}/${model.id}`] },
+            ])),
+          },
+        },
+        extensions: [gense, files, prefsExtension, toolSearch, events.extension, ...active.map((id) => byName.get(id)!), ...(active.includes('sandbox') ? [] : [noSandbox])],
+      }
     }
     const harness = await Harness.open(
       storage,
-      { ...options.harness, settings, models: accounts.models, registry, env: ({ cwd }) => workspace.env(cwd ?? DATA_DIR) },
+      { ...options.harness, settings, models: accounts.models, registry: compactionRegistry(registry), env: ({ cwd }) => workspace.env(cwd ?? DATA_DIR) },
       ctx,
     )
     space = new UserSpace(db, harness, workspace, plugins, skills, accounts, options, preferences, mcp, channels, triggers, outbox)
@@ -259,6 +272,7 @@ export class UserSpace {
   deleteWebhook: OmitThisParameter<typeof webhooks.deleteWebhook> = webhooks.deleteWebhook.bind(this)
   handleWebhook: OmitThisParameter<typeof webhooks.handleWebhook> = webhooks.handleWebhook.bind(this)
   abort: OmitThisParameter<typeof trees.abort> = trees.abort.bind(this)
+  compact = compact.bind(this)
   watch: OmitThisParameter<typeof trees.watch> = trees.watch.bind(this)
   close: OmitThisParameter<typeof trees.close> = trees.close.bind(this)
 }

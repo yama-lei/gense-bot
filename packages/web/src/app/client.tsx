@@ -1,13 +1,13 @@
 // The app's data: the server's state over one WebSocket (lib/socket.ts), what this browser keeps for itself, and the
 // actions pages call. Failures of actions nobody awaits become toasts.
-import type { BranchMeta, BranchesState, Effort, FileEntry, FilePreview, ModelInfo, ToolCallResult, UploadedFile } from '@gense/protocol'
+import type { BranchMeta, BranchesState, CompactionOutcome, Effort, FileEntry, FilePreview, ModelInfo, ToolCallResult, UploadedFile } from '@gense/protocol'
 import { createContext, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { errorText, fileBase64, saveBlob, toBlob } from '../lib/format'
 import { localStore, useLocal } from '../lib/local'
 import { HostSocket, type SocketState } from '../lib/socket'
 import { toolIndex } from '../lib/tools'
-import { toTurns } from '../lib/turns'
+import { compactionState, toTurns } from '../lib/turns'
 import type { Attachment, Outgoing, Turn } from '../lib/types'
 
 export const MAX_UPLOAD = 20 * 1024 * 1024
@@ -101,6 +101,15 @@ export class Client {
   summarize = (treeId: string) => {
     const branchId = this.socket.state.shown[treeId]
     if (branchId) void this.request({ t: 'branch.summarize', treeId, branchId, requestId: crypto.randomUUID() }).catch(report)
+  }
+
+  /** Compacts the shown branch's context now (roadmap-6 C3); progress and the summary arrive in its view. */
+  compact = (treeId: string, instructions?: string) => {
+    const branchId = this.socket.state.shown[treeId]
+    // Failure shows above the composer, from the view; a short chat has nothing to compact, which only this reply says.
+    void this.request<{ outcome: CompactionOutcome }>({ t: 'compact', treeId, ...(branchId && { branchId }), ...(instructions && { instructions }), wait: true }).then(({ outcome }) => {
+      if (outcome.status === 'nothing') toast('对话还不长，暂时不需要压缩')
+    }, report)
   }
 
   stop = (treeId: string) => {
@@ -212,6 +221,7 @@ export function useChat(treeId: string) {
   const view = host.views[treeId]
   const branches = host.branches[treeId]
   const turns = useMemo(() => (view ? withVersions(toTurns(view), branches) : []), [view, branches])
+  const compaction = useMemo(() => compactionState(view), [view])
   const branchId = host.shown[treeId]
   return {
     tree: host.trees?.find((t) => t.id === treeId),
@@ -221,6 +231,7 @@ export function useChat(treeId: string) {
     branch: branches?.branches.find((b) => b.id === branchId),
     running: turns.some((t) => t.status === 'running' || t.status === 'queued'),
     entryCount: view?.entries.length ?? 0,
+    compaction,
   }
 }
 

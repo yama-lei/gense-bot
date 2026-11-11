@@ -117,6 +117,9 @@ E  调研（I6）                          已在后台进行，只出文档
 - 在 `UserSpace` 的 harness 设置里打开 pi-durable 的压缩策略（`reserveTokens`、`keepRecentTokens`、`backgroundTokens`），按模型的 `contextWindow` 设置；先确认现在的默认值是不是已经开启。
 - 摘要提示词通过 `CompactionInput.instructions` 传入。
 - `compaction_start` / `compaction_end` 事件和摘要条目经协议发到前端；`/compact` 在网页命令和飞书 Bot 命令里各加一个。
+- 实现（2026-11-11）：
+  - 网页的会话视图换成完整历史（`agent/history.ts`），压缩前的消息照常显示，`pi.compaction` 条目画成可展开的分隔线；进行中和失败状态读 `pi.live`，`compaction_*` 消息留给其他客户端。
+  - 历史比 `keepRecentTokens` 短时 pi 不做任何事就结束任务。所以 `compact` 请求带 `wait: true` 时，等任务结束再回 `outcome`（`placed` / `nothing` / `failed` / `aborted`）；网页在 `nothing` 时提示“对话还不长”，飞书也不再说“已完成”。
 
 ### D. 多用户
 

@@ -45,7 +45,7 @@ import { SkillStore } from '../plugins/skills.ts'
 import * as branches from './branches.ts'
 import * as events from './events.ts'
 import * as schedules from './schedules.ts'
-import { eventsExtension,files,gense,migrations,PLUGINS,type SpaceOptions,type WebhookRow } from './shared.ts'
+import { TOOL_SEARCH, eventsExtension,assistantExtension,files,migrations,PLUGINS,type SpaceOptions,type WebhookRow } from './shared.ts'
 import * as subagents from './subagents.ts'
 import * as trees from './trees.ts'
 import * as webhooks from './webhooks.ts'
@@ -127,7 +127,9 @@ export class UserSpace {
     const plugins = await PluginStore.open(db, { ...options.plugins, secretKey: options.secretKey, available: Object.keys(PLUGINS).filter((id) => id !== 'sandbox' || options.sandbox) })
     const preferences = await PreferenceStore.open(db)
     const prefsExtension = defineExtension({ name: 'preferences', sections: [section('preferences', () => preferences.prompt())] })
-    const toolSearch = createToolSearchExtension()
+    const gense = assistantExtension(options.now ?? Date.now, () => preferences.get().timeZone)
+    const base = createToolSearchExtension()
+    const toolSearch = { ...base, tools: base.tools?.map((t) => (t.name === 'tool_search' ? { ...t, description: TOOL_SEARCH } : t)) }
     const registry = createRegistry()
     const byName = new Map<string, Extension>()
     let space: UserSpace | undefined

@@ -5,6 +5,7 @@ import type { AuthInteraction, AuthType } from '@earendil-works/pi-ai'
 import type { ClientRequest, LoginPrompt, ServerMessage } from '@gense/protocol'
 import type { UserSpace } from '../agent/space.ts'
 import { fromBase64 } from '../agent/workspace.ts'
+import { discoverCatalog } from '../plugins/discover.ts'
 
 export interface ConnectionOptions {
   space: UserSpace
@@ -158,6 +159,8 @@ export class Connection {
         return space.mcp.add(r)
       case 'mcp.update':
         return space.mcp.update(r.pluginId, r)
+      case 'discover':
+        return discoverCatalog
       case 'mcp.remove':
         return space.mcp.remove(r.pluginId)
       case 'mcp.reconnect':

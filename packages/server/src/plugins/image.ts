@@ -55,10 +55,14 @@ export function imageExtension(config: () => Record<string, PluginValue>) {
     tools: [
       defineTool({
         name: 'image_generate',
-        description: '按描述生成一张图片，显示给用户，并保存到工作区的 images/ 下。描述要具体：主体、风格、构图、色调。',
+        description: [
+          'Generate an image from a description, show it to the user, and save it under `images/` in the workspace.',
+          '- Describe it concretely: subject, style, composition, colours, mood. Put any text that must appear in the image in quotes.',
+          '- Not for charts or diagrams that must be exact; use `ui_render` for those.',
+        ].join('\n'),
         parameters: Type.Object({
-          prompt: Type.String({ description: '图片描述' }),
-          size: Type.Optional(Type.Union(SIZES.map((s) => Type.Literal(s)), { description: '尺寸，默认按用户设置' })),
+          prompt: Type.String({ description: 'The description of the image' }),
+          size: Type.Optional(Type.Union(SIZES.map((s) => Type.Literal(s)), { description: "Width x height; defaults to the user's setting" })),
         }),
         async execute({ prompt, size }, api, context) {
           const env = api.env

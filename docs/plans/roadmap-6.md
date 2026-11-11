@@ -41,10 +41,14 @@ E  调研（I6）                          已在后台进行，只出文档
 | A1 | 内置 Skill 是真的目录 | 内置 Skill 和安装的 Skill 是同一种东西：仓库里 `packages/server/skills/<name>/SKILL.md`（加上可选的 `scripts/`、`references/`），全部符合 Agent Skills 命名规范；`skills.ts` 里写死的 `builtinSkills` 消失 |
 | A2 | 示例删除 | 现有的示例 Skill 不再出现 |
 | A3 | 精选 Skill | 内置调研选出的 Skill（名单见“内置 Skill 候选”），每个都带原许可证文件和来源；在沙箱里能实际跑通一个示例任务 |
-| A4 | UI Skill | 新增内置 Skill `generative-ui`：`SKILL.md` 讲什么时候用界面、怎么写；`references/components.md` 是现在 `generated.ts` 的组件说明；`references/practices.md` 是从 open-intelligent-ui 整理的好做法（布局、密度、什么时候不用界面） |
-| A5 | 系统提示词变短 | 开启 ui 插件时，系统提示词里关于界面的部分不超过 1k token（现在是整份组件说明，`generated.ts` 有 84KB）；只保留“何时用 `ui_render`”和“第一次用前先读 `generative-ui` Skill” |
+| A4 | UI Skill | 新增内置 Skill `generative-ui`：`SKILL.md` 讲什么时候用界面、怎么写；`references/language.md` 是语法和组件签名，`references/practices.md` 是好做法和完整示例，两者都由 `npm run genui -w @gense/web` 从网页端的组件库生成；`metadata.plugin: ui` 表示它随 ui 插件提供，不能单独关闭，也不进通用的 Skill 列表 |
+| A5 | 系统提示词变短 | 开启 ui 插件时，系统提示词里关于界面的部分不超过 1k token（改前是整份组件说明，约 3.6 万字符、9–10k token）；只保留“何时用 `ui_render`”和“第一次用前先读 `generative-ui` Skill” |
 | A6 | 不读也能纠错 | 模型没读 Skill 就调用 `ui_render` 且程序无效 → 错误信息里给出具体问题和要读的 reference 文件路径 |
 | A7 | 质量不退步 | 用一组固定提示（对比、地点、步骤、数据、计算器各一个）在真实模型上跑一遍，人工对比改前改后的截图；记录到 PR 描述 |
+| A8 | 提示词可审阅 | 第一轮发给模型的完整内容（系统提示词各节、全部工具的说明和参数）生成一份快照 `packages/server/test/prompt.snapshot.md`，测试比对；改提示词必须同时更新快照，评审看它的 diff |
+| A9 | 提示词统一 | 系统提示词和工具说明（包括 pi 自带的 read、write、edit、bash）统一用英文，同一种写法：先说做什么，再说什么时候用、什么时候改用别的工具、关键限制；不和实际行为矛盾（例如 bash 默认超时） |
+| A10 | 回答的基本规矩 | 系统提示词告诉模型今天的日期和用户时区（网页端自动同步浏览器时区），以及回答的规矩：用用户的语言、先给结论、篇幅随问题、不编造事实和链接、清楚的请求直接做 |
+| A11 | Skill 列表变短 | 列表里每个 Skill 的描述最多 250 个字符，超出截断；完整描述在 SKILL.md 里 |
 
 ### B. 插件页
 
@@ -88,14 +92,25 @@ E  调研（I6）                          已在后台进行，只出文档
 
 - `packages/server/skills/` 放内置 Skill 的目录，启动时扫描，`source: 'builtin'`，和安装的 Skill 走同一条加载路径；第三方 Skill 原样复制并保留 `LICENSE` 和来源说明（`SOURCE.md`：仓库、提交、许可证）。
 - `npm run genui` 改为生成 `packages/server/skills/generative-ui/references/components.md`，不再生成 `generated.ts`；`check` 继续校验它没有过期。
-- 沙箱 `full` 镜像补上内置 Skill 需要的依赖（qpdf、pdfplumber、reportlab、markitdown，见下表）。不装 LibreOffice：约 300MB，换来的只是公式重算和转 PDF 预览；`slim` 镜像不能运行的 Skill 在列表里注明。
+- 沙箱 `full` 镜像补上内置 Skill 需要的依赖（qpdf、pdfplumber、reportlab、markitdown，见下表）。另装 LibreOffice（writer、calc、impress 的无界面版，约 300MB）：`xlsx` Skill 的核心规则“零公式错误”靠它重算，`docx` 用它转 PDF 预览、转换 `.doc`、接受修订；`docx` 还要全局可用的 npm 包 `docx`（`NODE_PATH`）和 `defusedxml`。
 - `display.ts` 里的 `UI_PROMPT` 换成两三句话；`ui_render` 的工具描述写清楚“先读 Skill”。
+
+### A8–A11. 提示词
+
+- 模型看到的文字只有两种来源：各模块的 `section(...)` 和工具定义。保留就近放置（工具说明写在工具旁边），用快照保证能整体审阅。
+- 快照用 faux 模型、固定时间、全部插件打开、有沙箱，从 provider 收到的 system 消息里取出各节和 `toolsAdded`；`UPDATE_SNAPSHOT=1 npm test` 重写。
+- 英文的理由：pi 自带工具和大部分第三方 Skill 本来就是英文，混用两种语言的指令更难写得一致；回答语言由“用用户的语言”这条规矩决定。报错信息不在这次范围内，保持中文。
+- 工具选择的指引写在工具说明里（“不适合……，改用……”），不在系统提示词里重复。
+- 时区存进偏好（`Preferences.timeZone`），日期只精确到天，系统提示词每天才变一次，不影响缓存。
+- 验收 A7 的真实模型对比在改完后重跑一遍。
+- 教训（A7 重跑）：通用回答规矩里写“对比用表格、步骤用列表”会和 ui 一节抢活，页面从 5/5 掉到 1/10；通用规矩只管文字本身，什么时候改用页面只在 ui 一节说。pi 自带的 tool_search 说明会诱导模型去“找工具”，换成只在需要 MCP 工具时才搜的说法。
 
 ### B. 插件页
 
 - 页面拆成 `PluginsLayout`（页签、切换、搜索、添加）、`CatalogGrid`、`PluginCard`、`PluginDetail`；现有 `SettingsForm` 搬进详情。
 - 发现目录放在 `packages/protocol/src/discover.ts`（类型）和 `packages/server/src/plugins/discover.ts`（数据）：`{ kind: 'mcp' | 'skill' | 'builtin', id, name, description, icon, by, install }`，`install` 是 MCP 地址模板（含要用户填写的字段）或 Git 地址。以后换成 MCP Registry 时只换数据来源。
 - 图标：预置条目带 SVG；用户自己加的 MCP 用名称首字母生成。
+- 实现（2026-11-11）：客户端用 `discover` 请求取目录，和已安装的按插件 id、Skill 名、MCP 地址模板（`fromTemplate`）对上，所以从预置添加的条目在“已安装”里保留图标。图标 SVG 以 `<img>` 显示、不作为标记执行；其中的品牌色是内容图片，不受 N40 的 token 约束。地址里的 `key=`/`token=` 在界面上打码。
 
 ### C. 上下文压缩
 
@@ -126,21 +141,21 @@ data/
 
 ## 内置 Skill 候选
 
-详见 [调研报告](../research/builtin-skills.md)。打包时锁定上游提交，附原许可证。
+详见 [调研报告](../research/builtin-skills.md)。`packages/server/skills/import.py` 按锁定的上游提交拉取并整改，附原许可证；保留上游名字，方便以后更新。
 
 | Skill | 来源 | 许可证 | 沙箱 `full` 镜像还缺 |
 | --- | --- | --- | --- |
 | `generative-ui` | 自写（A4） | — | — |
 | `humanizer-zh` | op7418/Humanizer-zh | MIT | — |
-| `xlsx` | anthropics/skills | Apache-2.0 | —（不装 LibreOffice，去掉公式重算一节） |
-| `docx` | anthropics/skills | Apache-2.0 | —（不装 LibreOffice，去掉转 PDF 预览和修订接受） |
-| `pdf` | anthropics/skills | Apache-2.0 | qpdf、pdfplumber、reportlab（加 CJK 字体注册说明） |
+| `pdf` | anthropics/skills | Apache-2.0 | qpdf、pdfplumber、reportlab、pypdfium2、pdf2image、tesseract（加 CJK 字体注册说明） |
 | `markitdown` | K-Dense-AI/scientific-agent-skills | MIT | markitdown |
-| `translate` | 改写自 JimLiu/baoyu-translate | MIT | 去掉 bun 分块脚本 |
-| `report-summary` | 改写自 xstongxue/best-skills `md-report-summary` | Apache-2.0（仓库级，发布前向作者确认） | — |
+| `xlsx` | anthropics/skills | Apache-2.0 | LibreOffice calc、openpyxl、pandas |
+| `docx` | anthropics/skills | Apache-2.0 | LibreOffice writer、npm `docx`、defusedxml、pandoc |
+| `baoyu-translate` | JimLiu/baoyu-skills | MIT | —（分块脚本用 `npx -y bun` 运行；没有偏好文件时直接用默认值） |
+| `md-report-summary` | xstongxue/best-skills | Apache-2.0（仓库级，发布前向作者确认） | — |
 | `paper-lookup`、`literature-review` | K-Dense-AI/scientific-agent-skills | MIT | — |
 
-暂不内置：`pptx`（依赖最重，先由 artifact 工具承担）、`paper-write`（含“降 AIGC 率”，需要产品决定）。不能内置：`humanize-chinese`（非商业许可）、`office-file-process`（专有许可）。旅行规划、学习辅导、会议纪要没有够好的开源 Skill，以后自己写。
+`xlsx`、`docx` 来自 anthropics/skills，原样导入。暂不内置：`pptx`（依赖最重，先由 artifact 工具承担）、`paper-write`（含“降 AIGC 率”，需要产品决定）。不能内置：`humanize-chinese`（非商业许可）、`office-file-process`（专有许可）。旅行规划、学习辅导、会议纪要没有够好的开源 Skill，以后自己写。
 
 统一整改：去掉 Claude Code 专有的 front matter（`allowed-tools`、`argument-hint` 等）；正文里的 `AskUserQuestion`、`WebSearch` 换成我们的工具；`description` 补中文触发词（“去 AI 味”“翻译”“周报”）。
 

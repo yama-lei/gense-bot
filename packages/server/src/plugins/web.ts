@@ -103,8 +103,13 @@ export function webExtension(config: () => Record<string, PluginValue>) {
     tools: [
       defineTool({
         name: 'web_search',
-        description: '搜索公开网页，返回标题、链接和摘要。需要最新信息或事实核对时使用。',
-        parameters: Type.Object({ query: Type.String({ description: '搜索词' }) }),
+        description: [
+          'Search the public web. Returns titles, links and short snippets.',
+          '- Use it for recent events, facts that may have changed since your training, and anything you are not sure of.',
+          '- Snippets are short and can mislead: read a page with `web_fetch` before you rely on its details.',
+          '- For a question that needs several sources cross-checked, use `deep_search` instead.',
+        ].join('\n'),
+        parameters: Type.Object({ query: Type.String({ description: 'A few keywords, in the language most good sources use' }) }),
         replay: 'safe',
         async execute({ query }, _api, context) {
           const hits = await webSearch(key(), query, count(), context.abortSignal)
@@ -113,8 +118,8 @@ export function webExtension(config: () => Record<string, PluginValue>) {
       }),
       defineTool({
         name: 'web_fetch',
-        description: '读取一个网页的正文。',
-        parameters: Type.Object({ url: Type.String({ description: '网页地址' }) }),
+        description: 'Read the main text of a web page: a URL the user gave or one a search returned. It does not run scripts or log in, so pages behind a login or built entirely by JavaScript may come back empty.',
+        parameters: Type.Object({ url: Type.String({ description: 'The full URL, including https://' }) }),
         replay: 'safe',
         async execute({ url }, _api, context) {
           const page = await webFetch(key(), url, context.abortSignal)
@@ -126,9 +131,9 @@ export function webExtension(config: () => Record<string, PluginValue>) {
       }),
       defineTool({
         name: 'deep_search',
-        description: '深度搜索：同时用多个搜索词检索，并读取最相关的几个网页的正文。用于需要多方核对的复杂问题；读完后自己整理结论并注明来源。',
+        description: 'Search with several queries at once and read the main text of the most relevant pages. Slower and much longer than `web_search`; use it for complex questions that need several sources cross-checked. Afterwards, write your own conclusion and cite the pages it rests on.',
         parameters: Type.Object({
-          queries: Type.Array(Type.String(), { minItems: 1, maxItems: 5, description: '从不同角度拟的搜索词，1 到 5 个' }),
+          queries: Type.Array(Type.String(), { minItems: 1, maxItems: 5, description: '1 to 5 queries, each from a different angle' }),
         }),
         replay: 'safe',
         async execute({ queries }, api, context) {
@@ -159,6 +164,6 @@ export function webExtension(config: () => Record<string, PluginValue>) {
         },
       }),
     ],
-    sections: [section('web', () => '回答用到网页内容时，在相关句子后用 [标题](链接) 注明来源。')],
+    sections: [section('web', () => 'When your answer uses web pages, cite them right after the sentence that uses them, as [title](url). Cite only pages you read or a search returned; never make up a link.')],
   })
 }

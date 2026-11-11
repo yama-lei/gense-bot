@@ -311,7 +311,8 @@ export function sections(view: View | undefined) {
 export async function skillsScenario(client: Client) {
   const skills = await client.until(() => client.skills.length > 0 && client.skills, 10_000, 'skill list')
   assert.ok(skills.every((s) => s.source === 'builtin' && s.enabled))
-  const name = skills[0]!.name
+  // A Skill of its own: the plugin's Skills (generative-ui) cannot be switched off and are listed in the plugin's prompt.
+  const name = skills.find((s) => !s.plugin)!.name
 
   const tree = await client.request<TreeMeta>({ t: 'tree.create' })
   const dir = `/data/sessions/${tree.id}`
@@ -324,7 +325,9 @@ export async function skillsScenario(client: Client) {
   const prompt = () => sections(client.views.get(tree.id)).get('skills') ?? ''
 
   await ask('你好', 1)
-  assert.match(prompt(), new RegExp(`- ${name}：.*（/data/skills/${name}/SKILL.md）`))
+  assert.match(prompt(), new RegExp(`- ${name}: .*\\(/data/skills/${name}/SKILL.md\\)`))
+  assert.doesNotMatch(prompt(), /- generative-ui:/)
+  await assert.rejects(client.request({ t: 'skill.set', name: 'generative-ui', enabled: false }), /随插件提供/)
   const panel = await client.request<FileEntry[]>({ t: 'files.list', treeId: tree.id })
   assert.ok(panel.some((f) => f.path === `/data/skills/${name}/SKILL.md` && f.readOnly))
 
@@ -340,8 +343,8 @@ export async function skillsScenario(client: Client) {
   const skillMd = `---\nname: ${name}\ndescription: 本会话的版本\n---\n\n正文`
   await ask(`[工具 write] ${JSON.stringify({ path: `skills/${name}/SKILL.md`, content: skillMd })}`, 3)
   await ask('看看', 4)
-  assert.match(prompt(), new RegExp(`- ${name}：本会话的版本（${dir}/skills/${name}/SKILL.md）`))
-  assert.equal(prompt().match(new RegExp(`- ${name}：`, 'g'))?.length, 1)
+  assert.match(prompt(), new RegExp(`- ${name}: 本会话的版本 \\(${dir}/skills/${name}/SKILL.md\\)`))
+  assert.equal(prompt().match(new RegExp(`- ${name}:`, 'g'))?.length, 1)
 
   // `/` and `@`: a plugin that is on and one that is off, a workspace file, and another conversation.
   await client.request({ t: 'plugin.set', pluginId: 'ui', enabled: true })

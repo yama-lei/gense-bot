@@ -1,619 +1,519 @@
-// Plugins (built-in tools and MCP servers) and Skills (Agent Skills folders): what the assistant can use.
-import type { FilePreview, McpStatus, PluginInfo, SkillInfo, SkillSource } from '@gense/protocol'
-import { BookOpen, FileText, KeyRound, Pencil, Plug, Plus, Puzzle, RefreshCw, Trash2, Upload, X } from 'lucide-react'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { MAX_UPLOAD, report, useClient, useHost } from '../../app/client'
+// Plugins (built-in tools and MCP servers) and Skills (Agent Skills folders), as installed and as offered in the
+// Discover catalog (roadmap-6 B1–B6). This file is the layout and the actions; cards, detail and forms are beside it.
+import type { DiscoverItem, PluginInfo } from '@gense/protocol'
+import { BookOpen, Compass, GitBranch, Plug, Plus, Puzzle, Search, Upload, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { toast } from 'sonner'
+import { report, useClient, useHost } from '../../app/client'
 import { Page } from '../../app/Shell'
 import { cn } from '../../lib/cn'
 import { errorText } from '../../lib/format'
 import { navigate } from '../../lib/router'
-import { Badge } from '../../ui/badge'
 import { Button } from '../../ui/button'
 import { ConfirmDialog, Dialog, DialogBody, DialogContent, DialogFooter } from '../../ui/dialog'
-import { Empty, Notice, Skeleton, Spinner } from '../../ui/feedback'
-import { Field, Input } from '../../ui/input'
-import { Switch } from '../../ui/switch'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../ui/tabs'
-import { Markdown } from '../chat/Markdown'
-import { SettingsForm } from './SettingsForm'
+import { Empty, Notice, Skeleton } from '../../ui/feedback'
+import { Input } from '../../ui/input'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../../ui/menu'
+import { Tabs, TabsList, TabsTrigger } from '../../ui/tabs'
+import { InstallForm, PresetForm } from './AddForms'
+import { CatalogGrid, CatalogSection, type CardActions } from './CatalogGrid'
+import { discoverEntry, isAdded, matches, pluginEntry, skillEntry, type Entry } from './catalog'
+import { EntryIcon } from './PluginCard'
+import { McpForm, PluginDetail, SkillDetail } from './PluginDetail'
 
-const mcpStatus: Record<McpStatus, { label: string; variant: 'neutral' | 'accent' | 'success' | 'warning' | 'destructive' }> = {
-  connecting: { label: '连接中', variant: 'accent' },
-  ready: { label: '已连接', variant: 'success' },
-  auth: { label: '需要登录', variant: 'warning' },
-  error: { label: '连接失败', variant: 'destructive' },
-  off: { label: '未启用', variant: 'neutral' },
+type Tab = 'plugins' | 'skills'
+type View = 'installed' | 'discover'
+type Opened = { plugin: string } | { skill: string } | { preset: DiscoverItem }
+type Adding = 'mcp' | 'git' | 'zip' | { preset: DiscoverItem }
+
+/** A detail dialog is full screen on a phone (B2) and a centered dialog from `sm` up. */
+const detailClass = 'h-dvh max-h-dvh rounded-none sm:h-auto sm:max-h-[min(88dvh,760px)] sm:rounded-2xl'
+
+/** The Discover catalog, fetched once per visit; `retry` after an error. */
+function useCatalog() {
+  const client = useClient()
+  const [state, setState] = useState<{ items: DiscoverItem[] | null; error: string | null }>({ items: null, error: null })
+  const load = useCallback(() => {
+    setState({ items: null, error: null })
+    client.request<DiscoverItem[]>({ t: 'discover' }).then(
+      (items) => setState({ items, error: null }),
+      (e: unknown) => setState({ items: null, error: errorText(e) }),
+    )
+  }, [client])
+  useEffect(load, [load])
+  return { ...state, retry: load }
 }
 
-const card = 'divide-y overflow-hidden rounded-2xl border bg-card'
+export default function PluginsPage({ tab }: { tab: Tab }) {
+  const client = useClient()
+  const { plugins, skills, canInstallSkills } = useHost()
+  const catalog = useCatalog()
+  const [view, setView] = useState<View>('installed')
+  const [query, setQuery] = useState('')
+  const [opened, setOpened] = useState<Opened | null>(null)
+  const [adding, setAdding] = useState<Adding | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [removing, setRemoving] = useState<Entry | null>(null)
 
-function SectionHead({ title, description, action }: { title: string; description: ReactNode; action?: ReactNode }) {
-  return (
-    <div className="mb-3 flex items-end justify-between gap-3">
-      <div className="min-w-0">
-        <h2 className="text-base font-semibold">{title}</h2>
-        <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
-      </div>
-      {action}
-    </div>
+  const items = catalog.items ?? []
+  const installed = useMemo(
+    () =>
+      tab === 'plugins'
+        ? (plugins ?? []).map((p) => pluginEntry(p, items)).sort((a, b) => Number(b.kind === 'mcp') - Number(a.kind === 'mcp'))
+        : skills.map((s) => skillEntry(s, items)),
+    [tab, plugins, skills, items],
   )
-}
+  const discover = useMemo(
+    () => items.filter((d) => (tab === 'plugins' ? d.kind !== 'skill' : d.kind === 'skill')).map((d) => discoverEntry(d, plugins ?? [], skills)),
+    [tab, items, plugins, skills],
+  )
 
-export default function PluginsPage({ tab }: { tab: 'plugins' | 'skills' }) {
+  const openPlugin = (p: PluginInfo) => setOpened({ plugin: p.id })
+
+  /** `+` on a card (B4). OAuth presets open their sign-in window in this click, so the browser allows it. */
+  const add = (e: Entry) => {
+    const install = e.preset?.install
+    const run = (work: () => Promise<unknown>) => {
+      setBusy(e.key)
+      work()
+        .catch(report)
+        .finally(() => setBusy(null))
+    }
+    if (e.kind === 'builtin' && e.plugin) {
+      if (e.plugin.issue) return openPlugin(e.plugin)
+      return run(() => client.request({ t: 'plugin.set', pluginId: e.plugin!.id, enabled: true }))
+    }
+    if (!install) return
+    if ('git' in install)
+      return run(() =>
+        client.request({ t: 'skill.install', source: install }).then(() => {
+          toast.success(`已安装 ${e.name}`)
+        }),
+      )
+    if (install.fields?.length) return setAdding({ preset: e.preset! })
+    const win = install.oauth ? window.open('', '_blank') : null
+    run(() =>
+      addMcp(e.preset!, install.mcp, win).catch((err: unknown) => {
+        win?.close()
+        throw err
+      }),
+    )
+  }
+
+  /** Adds a preset's server; when it asks for sign-in, sends `win` to the sign-in page. Opens its detail either way. */
+  const addMcp = async (preset: DiscoverItem, url: string, win: Window | null) => {
+    const plugin = await client.request<PluginInfo>({ t: 'mcp.add', name: preset.name, url })
+    setAdding(null)
+    setOpened({ plugin: plugin.id })
+    if (plugin.mcp?.status !== 'auth') return void win?.close()
+    const { url: signIn } = await client.request<{ url: string }>({ t: 'mcp.auth', pluginId: plugin.id })
+    if (win) win.location.href = signIn
+    else toast('需要登录', { description: '在详情里点“登录授权”完成连接。' })
+  }
+
+  const open = (e: Entry) => {
+    if (e.plugin && (isAdded(e) || e.kind === 'builtin')) return openPlugin(e.plugin)
+    if (e.skill) return setOpened({ skill: e.skill.name })
+    if (e.preset) setOpened({ preset: e.preset })
+  }
+
+  const menu = (e: Entry): ReactNode => {
+    const p = e.plugin
+    const s = e.skill
+    const enabled = p ? p.enabled : !!s?.enabled
+    const canSwitch = p ? p.available && (enabled || !p.issue || p.kind === 'mcp') : !!s && !s.plugin
+    const removable = p?.kind === 'mcp' || (!!s && s.source !== 'builtin')
+    return (
+      <>
+        <DropdownMenuItem onSelect={() => open(e)}>查看详情</DropdownMenuItem>
+        {canSwitch && (
+          <DropdownMenuItem
+            onSelect={() =>
+              void (p
+                ? client.request({ t: 'plugin.set', pluginId: p.id, enabled: !enabled })
+                : client.request({ t: 'skill.set', name: s!.name, enabled: !enabled })
+              ).catch(report)
+            }
+          >
+            {enabled ? '停用' : '启用'}
+          </DropdownMenuItem>
+        )}
+        {removable && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem destructive onSelect={() => setRemoving(e)}>
+              {p ? '移除' : '卸载'}
+            </DropdownMenuItem>
+          </>
+        )}
+      </>
+    )
+  }
+
+  const actions: CardActions = { open, add, adding: busy, menu }
+  const searching = query.trim() !== ''
+
   return (
-    <Page title="插件与 Skill" description="插件给助手工具，Skill 教它怎么完成一类任务。">
-      <Tabs value={tab} onValueChange={(v) => navigate(v === 'skills' ? { name: 'plugins', tab: 'skills' } : { name: 'plugins' }, { replace: true })}>
-        <TabsList className="mb-6">
-          <TabsTrigger value="plugins">
-            <Puzzle className="size-4" /> 插件
-          </TabsTrigger>
-          <TabsTrigger value="skills">
-            <BookOpen className="size-4" /> Skills
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="plugins">
-          <PluginsTab />
-        </TabsContent>
-        <TabsContent value="skills">
-          <SkillsTab />
-        </TabsContent>
-      </Tabs>
+    <Page title="插件与 Skill" description="插件给助手工具，Skill 教它怎么完成一类任务。" actions={<AddMenu canInstallSkills={canInstallSkills} onPick={setAdding} />}>
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <Tabs value={tab} onValueChange={(v) => navigate(v === 'skills' ? { name: 'plugins', tab: 'skills' } : { name: 'plugins' }, { replace: true })}>
+          <TabsList>
+            <TabsTrigger value="plugins">
+              <Puzzle className="size-4" /> 插件
+            </TabsTrigger>
+            <TabsTrigger value="skills">
+              <BookOpen className="size-4" /> Skills
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <ViewSwitch value={view} onChange={setView} disabled={searching} />
+      </div>
+      <div className="relative mb-6">
+        <Search aria-hidden className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => e.key === 'Escape' && setQuery('')}
+          placeholder={tab === 'plugins' ? '搜索插件和 MCP 服务器' : '搜索 Skill'}
+          aria-label="搜索"
+          className="h-11 rounded-xl pr-10 pl-10"
+        />
+        {searching && (
+          <Button variant="ghost" size="icon-sm" aria-label="清除搜索" className="absolute top-1/2 right-1.5 -translate-y-1/2" onClick={() => setQuery('')}>
+            <X />
+          </Button>
+        )}
+      </div>
+
+      {tab === 'skills' && !canInstallSkills && (
+        <Notice tone="warning" className="mb-5">
+          这台服务器不能解压或拉取 Skill（缺少 unzip 或 git）。
+        </Notice>
+      )}
+
+      {searching ? (
+        <SearchResults query={query.trim()} installed={installed} discover={discover} catalogError={catalog.error} actions={actions} />
+      ) : view === 'installed' ? (
+        tab === 'plugins' ? (
+          <InstalledPlugins entries={plugins ? installed : null} actions={actions} onAdd={() => setAdding('mcp')} onDiscover={() => setView('discover')} />
+        ) : (
+          <InstalledSkills entries={installed} actions={actions} canInstall={canInstallSkills} onAdd={() => setAdding('git')} onDiscover={() => setView('discover')} />
+        )
+      ) : (
+        <Discover tab={tab} entries={catalog.items && (tab === 'skills' || plugins) ? discover : null} error={catalog.error} retry={catalog.retry} actions={actions} />
+      )}
+
+      <Dialog open={!!opened} onOpenChange={(v) => !v && setOpened(null)}>
+        {opened && <OpenedDetail opened={opened} catalog={items} onClose={() => setOpened(null)} onAdd={add} adding={busy} />}
+      </Dialog>
+
+      <Dialog open={!!adding} onOpenChange={(v) => !v && setAdding(null)}>
+        {adding === 'mcp' ? (
+          <DialogContent title="添加 MCP 服务器" description="服务器地址和请求头保存在服务器上；请求头的值不会再显示。">
+            <McpForm
+              onDone={(added) => {
+                setAdding(null)
+                if (added) setOpened({ plugin: added.id })
+              }}
+            />
+          </DialogContent>
+        ) : adding === 'git' || adding === 'zip' ? (
+          <DialogContent title="安装 Skill" description="会安装来源里找到的每一个 Skill；同名的会被替换。">
+            <InstallForm initial={adding} onDone={() => setAdding(null)} />
+          </DialogContent>
+        ) : adding ? (
+          <DialogContent title={`添加${adding.preset.name}`} description={adding.preset.description}>
+            <PresetForm item={adding.preset} onCancel={() => setAdding(null)} onSubmit={(url) => addMcp(adding.preset, url, null)} />
+          </DialogContent>
+        ) : null}
+      </Dialog>
+
+      <ConfirmDialog
+        open={!!removing}
+        onOpenChange={(v) => !v && setRemoving(null)}
+        title={removing ? `${removing.plugin ? '移除' : '卸载'}「${removing.name}」？` : ''}
+        confirm={removing?.plugin ? '移除' : '卸载'}
+        onConfirm={() => {
+          const e = removing
+          if (!e) return
+          void (e.plugin ? client.request({ t: 'mcp.remove', pluginId: e.plugin.id }) : client.request({ t: 'skill.remove', name: e.skill!.name })).catch(report)
+        }}
+      >
+        {removing?.plugin ? '它的工具不再可用，保存的请求头和登录也会删除。已有对话里的调用记录保留。' : '它的文件会从服务器删除，可以再从原来的来源安装。'}
+      </ConfirmDialog>
     </Page>
   )
 }
 
-// ── Plugins ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+function AddMenu({ canInstallSkills, onPick }: { canInstallSkills: boolean; onPick: (a: Adding) => void }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="primary">
+          <Plus /> 添加
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onSelect={() => onPick('mcp')}>
+          <Plug /> 添加 MCP 服务器
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem disabled={!canInstallSkills} onSelect={() => onPick('git')}>
+          <GitBranch /> 从 Git 安装 Skill
+        </DropdownMenuItem>
+        <DropdownMenuItem disabled={!canInstallSkills} onSelect={() => onPick('zip')}>
+          <Upload /> 上传 Skill（zip）
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
 
-function PluginsTab() {
-  const { plugins } = useHost()
-  const [openId, setOpenId] = useState<string | null>(null)
-  const [adding, setAdding] = useState(false)
-  if (!plugins)
-    return (
-      <div className="flex flex-col gap-2">
-        <Skeleton className="h-16 rounded-2xl" />
-        <Skeleton className="h-16 rounded-2xl" />
-        <Skeleton className="h-16 rounded-2xl" />
-      </div>
-    )
-  const builtin = plugins.filter((p) => p.kind === 'builtin')
-  const mcp = plugins.filter((p) => p.kind === 'mcp')
-  const open = plugins.find((p) => p.id === openId)
+/** “已安装 / 发现”: two radio buttons, arrow keys move between them. */
+function ViewSwitch({ value, onChange, disabled }: { value: View; onChange: (v: View) => void; disabled: boolean }) {
+  const options: { value: View; label: string }[] = [
+    { value: 'installed', label: '已安装' },
+    { value: 'discover', label: '发现' },
+  ]
+  return (
+    <div role="radiogroup" aria-label="显示" className={cn('inline-flex rounded-full border p-0.5', disabled && 'opacity-50')}>
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          role="radio"
+          aria-checked={value === o.value}
+          tabIndex={value === o.value ? 0 : -1}
+          disabled={disabled}
+          onClick={() => onChange(o.value)}
+          onKeyDown={(e) => {
+            if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+            const next = value === 'installed' ? 'discover' : 'installed'
+            onChange(next)
+            ;(e.currentTarget.parentElement?.querySelector(`[data-view="${next}"]`) as HTMLElement | null)?.focus()
+          }}
+          data-view={o.value}
+          className={cn(
+            'inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-sm transition-colors',
+            value === o.value ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
+          )}
+        >
+          {o.value === 'discover' && <Compass className="size-3.5" />}
+          {o.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function GridSkeleton({ count = 4 }: { count?: number }) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2" aria-busy>
+      {Array.from({ length: count }, (_, i) => (
+        <Skeleton key={i} className="h-[92px] rounded-2xl" />
+      ))}
+    </div>
+  )
+}
+
+function InstalledPlugins({ entries, actions, onAdd, onDiscover }: { entries: Entry[] | null; actions: CardActions; onAdd: () => void; onDiscover: () => void }) {
+  if (!entries) return <GridSkeleton count={6} />
+  const mcp = entries.filter((e) => e.kind === 'mcp')
+  const builtin = entries.filter((e) => e.kind === 'builtin')
   return (
     <>
-      <section className="mb-10">
-        <SectionHead
-          title="MCP 服务器"
-          description="连接任何支持 Streamable HTTP 的 MCP 服务器；它的工具和界面（MCP Apps）会出现在对话里。"
-          action={
-            <Button variant="primary" onClick={() => setAdding(true)}>
-              <Plus /> 添加
-            </Button>
-          }
-        />
+      <CatalogSection title="MCP 服务器" count={mcp.length}>
         {mcp.length === 0 ? (
-          <Empty icon={<Plug />} title="还没有 MCP 服务器">
-            填一个服务器地址就能接入，例如团队内部工具或第三方服务提供的 MCP 端点。
+          <Empty
+            icon={<Plug />}
+            title="还没有 MCP 服务器"
+            action={
+              <div className="mt-2 flex flex-wrap justify-center gap-2">
+                <Button onClick={onDiscover}>
+                  <Compass /> 去发现
+                </Button>
+                <Button variant="ghost" onClick={onAdd}>
+                  <Plus /> 填写地址添加
+                </Button>
+              </div>
+            }
+          >
+            连接支持 Streamable HTTP 的 MCP 服务器，它的工具和界面（MCP Apps）会出现在对话里。
           </Empty>
         ) : (
-          <ul className={card}>
-            {mcp.map((p) => (
-              <PluginRow key={p.id} plugin={p} onOpen={() => setOpenId(p.id)} />
-            ))}
-          </ul>
+          <CatalogGrid entries={mcp} actions={actions} />
         )}
-      </section>
-      <section>
-        <SectionHead title="内置插件" description="关闭后，助手不能调用它的工具。" />
-        <ul className={card}>
-          {builtin.map((p) => (
-            <PluginRow key={p.id} plugin={p} onOpen={() => setOpenId(p.id)} />
-          ))}
-        </ul>
-      </section>
-
-      <Dialog open={!!open} onOpenChange={(v) => !v && setOpenId(null)}>
-        {open && (
-          <DialogContent title={open.name} description={open.description} className="sm:max-w-xl">
-            <PluginDetail key={open.id} plugin={open} onRemoved={() => setOpenId(null)} />
-          </DialogContent>
-        )}
-      </Dialog>
-      <Dialog open={adding} onOpenChange={setAdding}>
-        <DialogContent title="添加 MCP 服务器" description="服务器地址和请求头保存在服务器上；请求头的值不会再显示。">
-          {adding && (
-            <McpForm
-              onDone={(added) => {
-                setAdding(false)
-                if (added) setOpenId(added.id)
-              }}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
+      </CatalogSection>
+      <CatalogSection title="内置插件" count={builtin.length} description="关闭后，助手不能调用它的工具。">
+        <CatalogGrid entries={builtin} actions={actions} />
+      </CatalogSection>
     </>
   )
 }
 
-function PluginRow({ plugin: p, onOpen }: { plugin: PluginInfo; onOpen: () => void }) {
-  const client = useClient()
-  const status = p.mcp && p.enabled ? mcpStatus[p.mcp.status] : null
-  const on = p.tools.filter((t) => t.enabled && !t.viewOnly).length
+function InstalledSkills({ entries, actions, canInstall, onAdd, onDiscover }: { entries: Entry[]; actions: CardActions; canInstall: boolean; onAdd: () => void; onDiscover: () => void }) {
   return (
-    <li className="flex items-center gap-3 px-4 py-3">
-      <button type="button" onClick={onOpen} className="-my-1 min-w-0 flex-1 rounded-lg py-1 text-left outline-offset-4">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="font-medium">{p.name}</span>
-          {status && <Badge variant={status.variant}>{status.label}</Badge>}
-          {p.sideEffect && <Badge variant="warning">会改动外部</Badge>}
-          {!p.available && <Badge>此服务器不可用</Badge>}
-        </div>
-        <p className="line-clamp-2 text-sm text-muted-foreground">{p.description || p.mcp?.url}</p>
-        {p.available && p.issue ? (
-          <p className="mt-0.5 text-xs text-warning">{p.issue}</p>
-        ) : (
-          p.enabled && p.tools.length > 0 && <p className="mt-0.5 text-xs text-muted-foreground">{on} 个工具可用</p>
-        )}
-      </button>
-      {/* A plugin that is not configured can still be turned off, but not on. */}
-      <Switch
-        checked={p.enabled}
-        disabled={!p.available || (!p.enabled && !!p.issue && p.kind === 'builtin')}
-        aria-label={`启用 ${p.name}`}
-        onCheckedChange={(enabled) => void client.request({ t: 'plugin.set', pluginId: p.id, enabled }).catch(report)}
-      />
-    </li>
-  )
-}
-
-function PluginDetail({ plugin: p, onRemoved }: { plugin: PluginInfo; onRemoved: () => void }) {
-  const client = useClient()
-  const [editing, setEditing] = useState(false)
-  const [removing, setRemoving] = useState(false)
-  const [busy, setBusy] = useState('')
-
-  const act = (name: string, run: () => Promise<unknown>) => {
-    setBusy(name)
-    run()
-      .catch(report)
-      .finally(() => setBusy(''))
-  }
-  // Opened before the request so the browser ties the window to this click.
-  const signIn = () => {
-    const win = window.open('', '_blank')
-    act('auth', () =>
-      client.request<{ url: string }>({ t: 'mcp.auth', pluginId: p.id }).then(
-        ({ url }) => (win ? (win.location.href = url) : location.assign(url)),
-        (e: unknown) => {
-          win?.close()
-          throw e
-        },
-      ),
-    )
-  }
-
-  if (editing && p.mcp) return <McpForm plugin={p} onDone={() => setEditing(false)} />
-  const tools = p.tools.filter((t) => !t.viewOnly)
-  return (
-    <DialogBody className="flex flex-col gap-6">
-      {p.mcp && (
-        <section className="flex flex-col gap-3">
-          <div className="rounded-xl bg-muted px-3.5 py-3 text-sm">
-            <div className="flex items-center gap-2">
-              <Badge variant={mcpStatus[p.mcp.status].variant}>{mcpStatus[p.mcp.status].label}</Badge>
-              {p.mcp.server && (
-                <span className="truncate text-muted-foreground">
-                  {p.mcp.server.name} {p.mcp.server.version}
-                </span>
-              )}
-              {p.mcp.oauth && <Badge variant="outline">OAuth</Badge>}
-            </div>
-            <code className="mt-1.5 block font-mono text-xs break-all text-muted-foreground">{p.mcp.url}</code>
-            {p.mcp.headersSet.length > 0 && <p className="mt-1 text-xs text-muted-foreground">请求头：{p.mcp.headersSet.join('、')}</p>}
-          </div>
-          {p.mcp.error && <Notice tone={p.mcp.status === 'auth' ? 'warning' : 'error'}>{p.mcp.error}</Notice>}
-          <div className="flex flex-wrap gap-2">
-            {p.mcp.status === 'auth' && (
-              <Button variant="primary" disabled={!!busy} onClick={signIn}>
-                <KeyRound /> 登录授权
-              </Button>
-            )}
-            <Button disabled={!!busy || !p.enabled} onClick={() => act('reconnect', () => client.request({ t: 'mcp.reconnect', pluginId: p.id }))}>
-              {busy === 'reconnect' ? <Spinner /> : <RefreshCw />} 重新连接
-            </Button>
-            <Button onClick={() => setEditing(true)}>
-              <Pencil /> 编辑
-            </Button>
-            <Button variant="ghost-destructive" className="ml-auto" onClick={() => setRemoving(true)}>
-              <Trash2 /> 移除
-            </Button>
-          </div>
-        </section>
-      )}
-
-      {!p.mcp && p.issue && <Notice tone="warning">{p.issue}</Notice>}
-
-      {p.settings.length > 0 && (
-        <section>
-          <h3 className="mb-3 text-sm font-semibold">设置</h3>
-          <SettingsForm settings={p.settings} config={p.config} onSave={(change) => client.request({ t: 'plugin.set', pluginId: p.id, ...change })} />
-        </section>
-      )}
-
-      <section>
-        <h3 className="mb-1 text-sm font-semibold">工具</h3>
-        {tools.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{p.mcp ? '连接成功后，这里列出服务器提供的工具。' : '这个插件现在没有提供工具。'}</p>
-        ) : (
-          <ul className="divide-y">
-            {tools.map((t) => (
-              <li key={t.name} className="flex items-start gap-3 py-2.5">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-x-2">
-                    <span className="text-sm font-medium">{t.title ?? t.name}</span>
-                    {t.title && <code className="font-mono text-xs text-muted-foreground">{t.name}</code>}
-                    {t.resourceUri && <Badge variant="outline">带界面</Badge>}
-                  </div>
-                  {t.description && <p className="line-clamp-3 text-xs text-muted-foreground">{t.description}</p>}
-                </div>
-                <Switch
-                  checked={t.enabled}
-                  disabled={!p.enabled}
-                  aria-label={`启用工具 ${t.title ?? t.name}`}
-                  className="mt-0.5"
-                  onCheckedChange={(enabled) => void client.request({ t: 'plugin.tool.set', pluginId: p.id, tool: t.name, enabled }).catch(report)}
-                />
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <ConfirmDialog
-        open={removing}
-        onOpenChange={setRemoving}
-        title={`移除「${p.name}」？`}
-        confirm="移除"
-        onConfirm={() => void client.request({ t: 'mcp.remove', pluginId: p.id }).then(onRemoved, report)}
-      >
-        它的工具不再可用，保存的请求头和登录也会删除。已有对话里的调用记录保留。
-      </ConfirmDialog>
-    </DialogBody>
-  )
-}
-
-type HeaderRow = { name: string; value: string }
-
-/** Adds an MCP server, or edits one: a header already set shows only its name and can be removed. */
-function McpForm({ plugin, onDone }: { plugin?: PluginInfo; onDone: (added?: PluginInfo) => void }) {
-  const client = useClient()
-  const [name, setName] = useState(plugin?.name ?? '')
-  const [url, setUrl] = useState(plugin?.mcp?.url ?? '')
-  const [kept, setKept] = useState(plugin?.mcp?.headersSet ?? [])
-  const [rows, setRows] = useState<HeaderRow[]>([])
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const validUrl = /^https?:\/\/[^\s]+$/.test(url.trim())
-
-  const submit = () => {
-    const added = Object.fromEntries(rows.filter((r) => r.name.trim() && r.value.trim()).map((r) => [r.name.trim(), r.value.trim()]))
-    setBusy(true)
-    setError(null)
-    const fail = (e: unknown) => {
-      setBusy(false)
-      setError(errorText(e))
-    }
-    if (!plugin) return void client.request<PluginInfo>({ t: 'mcp.add', name: name.trim(), url: url.trim(), ...(Object.keys(added).length && { headers: added }) }).then(onDone, fail)
-    const removed = Object.fromEntries((plugin.mcp?.headersSet ?? []).filter((h) => !kept.includes(h) && !(h in added)).map((h) => [h, null]))
-    const headers = { ...removed, ...added }
-    void client
-      .request({ t: 'mcp.update', pluginId: plugin.id, name: name.trim(), url: url.trim(), ...(Object.keys(headers).length && { headers }) })
-      .then(() => onDone(), fail)
-  }
-
-  return (
-    <form
-      className="flex min-h-0 flex-1 flex-col"
-      onSubmit={(e) => {
-        e.preventDefault()
-        submit()
-      }}
+    <CatalogSection
+      title="Skills"
+      count={entries.length}
+      description={
+        <>
+          带 <code className="font-mono text-[13px]">SKILL.md</code> 的文件夹（Agent Skills 格式）。任务符合时助手自动使用，也可以在输入框用 / 指定。
+        </>
+      }
     >
-      <DialogBody className="flex flex-col gap-4">
-        <Field label="名称">
-          <Input value={name} autoFocus maxLength={60} placeholder="例如：Linear" onChange={(e) => setName(e.target.value)} />
-        </Field>
-        <Field label="服务器地址" help="Streamable HTTP 端点。需要 OAuth 的服务器在添加后登录。" error={url.trim() && !validUrl ? '需要以 http:// 或 https:// 开头' : null}>
-          <Input type="url" value={url} placeholder="https://example.com/mcp" aria-invalid={!!url.trim() && !validUrl} onChange={(e) => setUrl(e.target.value)} />
-        </Field>
-        <div className="flex flex-col gap-2 text-sm">
-          <span className="font-medium">请求头（可选）</span>
-          {kept.map((h) => (
-            <div key={h} className="flex items-center gap-2">
-              <code className="min-w-0 flex-1 truncate rounded-lg bg-muted px-3 py-2 font-mono text-xs">{h}：已设置</code>
-              <Button type="button" variant="ghost" size="icon-sm" aria-label={`移除请求头 ${h}`} onClick={() => setKept(kept.filter((x) => x !== h))}>
-                <X />
+      {entries.length === 0 ? (
+        <Empty
+          icon={<BookOpen />}
+          title="还没有 Skill"
+          action={
+            <div className="mt-2 flex flex-wrap justify-center gap-2">
+              <Button onClick={onDiscover}>
+                <Compass /> 去发现
+              </Button>
+              <Button variant="ghost" disabled={!canInstall} onClick={onAdd}>
+                <GitBranch /> 从 Git 安装
               </Button>
             </div>
-          ))}
-          {rows.map((r, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <Input aria-label="请求头名称" placeholder="Authorization" value={r.name} className="flex-1" onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
-              <Input
-                aria-label="请求头的值"
-                type="password"
-                autoComplete="off"
-                placeholder="Bearer …"
-                value={r.value}
-                className="flex-[1.4]"
-                onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, value: e.target.value } : x)))}
-              />
-              <Button type="button" variant="ghost" size="icon-sm" aria-label="移除这一行" onClick={() => setRows(rows.filter((_, j) => j !== i))}>
-                <X />
-              </Button>
-            </div>
-          ))}
-          <Button type="button" variant="ghost" size="sm" className="self-start" onClick={() => setRows([...rows, { name: '', value: '' }])}>
-            <Plus /> 添加请求头
-          </Button>
-        </div>
-        {error && <Notice tone="error">{error}</Notice>}
-      </DialogBody>
-      <DialogFooter>
-        <Button type="button" onClick={() => onDone()}>
-          取消
-        </Button>
-        <Button type="submit" variant="primary" disabled={busy || !name.trim() || !validUrl}>
-          {busy ? '连接中…' : plugin ? '保存并重连' : '添加'}
-        </Button>
-      </DialogFooter>
-    </form>
-  )
-}
-
-// ── Skills ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
-
-const skillSource: Record<SkillInfo['source'], string> = { builtin: '内置', upload: '上传', git: 'Git' }
-
-function SkillsTab() {
-  const client = useClient()
-  const { skills, canInstallSkills } = useHost()
-  const [openName, setOpenName] = useState<string | null>(null)
-  const [installing, setInstalling] = useState(false)
-  const open = skills.find((s) => s.name === openName)
-  return (
-    <>
-      <SectionHead
-        title="Skills"
-        description={
-          <>
-            Skill 是一个带 <code className="font-mono text-[13px]">SKILL.md</code> 的文件夹（Agent Skills 格式）。任务符合时助手自动使用，也可以在输入框用 / 指定。
-          </>
-        }
-        action={
-          <Button variant="primary" disabled={!canInstallSkills} onClick={() => setInstalling(true)}>
-            <Plus /> 安装
-          </Button>
-        }
-      />
-      {!canInstallSkills && (
-        <Notice tone="warning" className="mb-3">
-          这台服务器不能解压或拉取 Skill（缺少 unzip 或 git）。
-        </Notice>
-      )}
-      {skills.length === 0 ? (
-        <Empty icon={<BookOpen />} title="还没有 Skill">
-          从 zip 或 Git 仓库安装，兼容为 Claude 等助手编写的 Agent Skills。
+          }
+        >
+          兼容为 Claude 等助手编写的 Agent Skills。
         </Empty>
       ) : (
-        <ul className={card}>
-          {skills.map((s) => (
-            <li key={s.name} className="flex items-center gap-3 px-4 py-3">
-              <button type="button" onClick={() => setOpenName(s.name)} className="-my-1 min-w-0 flex-1 rounded-lg py-1 text-left outline-offset-4">
-                <div className="flex flex-wrap items-center gap-x-2">
-                  <span className="font-medium">{s.name}</span>
-                  <Badge variant="outline">{skillSource[s.source]}</Badge>
-                </div>
-                <p className="line-clamp-2 text-sm text-muted-foreground">{s.description}</p>
-              </button>
-              <Switch checked={s.enabled} aria-label={`启用 ${s.name}`} onCheckedChange={(enabled) => void client.request({ t: 'skill.set', name: s.name, enabled }).catch(report)} />
-            </li>
-          ))}
-        </ul>
+        <CatalogGrid entries={entries} actions={actions} />
       )}
       <p className="mt-3 text-xs text-muted-foreground">
         只给某个对话用的 Skill：让助手在工作区写 <code className="font-mono">skills/&lt;名称&gt;/SKILL.md</code>，下一轮起在那个对话里生效。
       </p>
-
-      <Dialog open={!!open} onOpenChange={(v) => !v && setOpenName(null)}>
-        {open && (
-          <DialogContent title={open.name} description={open.description} className="sm:max-w-2xl">
-            <SkillDetail key={open.name} skill={open} onRemoved={() => setOpenName(null)} />
-          </DialogContent>
-        )}
-      </Dialog>
-      <Dialog open={installing} onOpenChange={setInstalling}>
-        <DialogContent title="安装 Skill" description="会安装来源里找到的每一个 Skill；同名的会被替换。">
-          {installing && <InstallForm onDone={() => setInstalling(false)} />}
-        </DialogContent>
-      </Dialog>
-    </>
+    </CatalogSection>
   )
 }
 
-function SkillDetail({ skill, onRemoved }: { skill: SkillInfo; onRemoved: () => void }) {
-  const client = useClient()
-  const [path, setPath] = useState(skill.files[0] ?? 'SKILL.md')
-  const [file, setFile] = useState<FilePreview | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [removing, setRemoving] = useState(false)
+function CatalogError({ error, retry }: { error: string; retry: () => void }) {
+  return (
+    <Notice
+      tone="error"
+      title="没能加载发现目录"
+      action={
+        <Button size="sm" onClick={retry}>
+          重试
+        </Button>
+      }
+    >
+      {error}
+    </Notice>
+  )
+}
 
-  useEffect(() => {
-    let live = true
-    setFile(null)
-    setError(null)
-    client.request<FilePreview>({ t: 'skill.read', name: skill.name, path }).then(
-      (f) => live && setFile(f),
-      (e: unknown) => live && setError(errorText(e)),
+function Discover({ tab, entries, error, retry, actions }: { tab: Tab; entries: Entry[] | null; error: string | null; retry: () => void; actions: CardActions }) {
+  if (error) return <CatalogError error={error} retry={retry} />
+  if (!entries) return <GridSkeleton />
+  if (tab === 'skills')
+    return (
+      <CatalogSection title="精选 Skill" description="从 Git 仓库一键安装。Skill 里的说明和脚本会被助手读取和执行。">
+        {entries.length ? <CatalogGrid entries={entries} actions={actions} /> : <Empty icon={<BookOpen />} title="暂时没有推荐的 Skill" />}
+      </CatalogSection>
     )
-    return () => {
-      live = false
-    }
-  }, [client, skill.name, path])
-
-  // SKILL.md opens with YAML front matter, which the dialog's header already shows.
-  const markdown = /\.md$/i.test(path) && file && !file.binary ? file.text.replace(/^---\n[\s\S]*?\n---\n?/, '') : null
+  const mcp = entries.filter((e) => e.kind === 'mcp')
+  const builtin = entries.filter((e) => e.kind === 'builtin')
   return (
     <>
-      <DialogBody className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <Badge variant="outline">{skillSource[skill.source]}</Badge>
-          {skill.origin && <span className="truncate">{skill.origin}</span>}
-          {skill.license && <span>许可：{skill.license}</span>}
-        </div>
-        {skill.files.length > 1 && (
-          <div className="flex flex-wrap gap-1.5">
-            {skill.files.map((f) => (
-              <button
-                key={f}
-                type="button"
-                aria-pressed={f === path}
-                onClick={() => setPath(f)}
-                className={cn('inline-flex h-7 items-center gap-1 rounded-lg border px-2 font-mono text-xs', f === path ? 'border-transparent bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-hover')}
-              >
-                <FileText className="size-3" /> {f}
-              </button>
-            ))}
-          </div>
-        )}
-        <div className="min-h-40 rounded-xl border bg-background p-4">
-          {error ? (
-            <Notice tone="error">{error}</Notice>
-          ) : !file ? (
-            <Spinner />
-          ) : file.binary ? (
-            <p className="text-sm text-muted-foreground">二进制文件，不能预览。</p>
-          ) : markdown !== null ? (
-            <Markdown text={markdown} className="text-sm" />
-          ) : (
-            <pre className="font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">{file.text}</pre>
-          )}
-          {file?.truncated && <p className="mt-3 text-xs text-muted-foreground">只显示了文件的开头。</p>}
-        </div>
-      </DialogBody>
-      {skill.source !== 'builtin' && (
-        <DialogFooter>
-          <Button variant="ghost-destructive" onClick={() => setRemoving(true)}>
-            <Trash2 /> 卸载
-          </Button>
-        </DialogFooter>
-      )}
-      <ConfirmDialog
-        open={removing}
-        onOpenChange={setRemoving}
-        title={`卸载「${skill.name}」？`}
-        confirm="卸载"
-        onConfirm={() => void client.request({ t: 'skill.remove', name: skill.name }).then(onRemoved, report)}
-      >
-        它的文件会从服务器删除，可以再从原来的来源安装。
-      </ConfirmDialog>
+      <CatalogSection title="推荐 MCP 服务器" count={mcp.length}>
+        {mcp.length ? <CatalogGrid entries={mcp} actions={actions} /> : <Empty icon={<Plug />} title="暂时没有推荐的服务器" />}
+      </CatalogSection>
+      <CatalogSection title="内置插件" count={builtin.length}>
+        <CatalogGrid entries={builtin} actions={actions} />
+      </CatalogSection>
     </>
   )
 }
 
-function InstallForm({ onDone }: { onDone: () => void }) {
-  const client = useClient()
-  const input = useRef<HTMLInputElement>(null)
-  const [from, setFrom] = useState<'git' | 'zip'>('git')
-  const [git, setGit] = useState('')
-  const [ref, setRef] = useState('')
-  const [path, setPath] = useState('')
-  const [zip, setZip] = useState<File | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [added, setAdded] = useState<SkillInfo[] | null>(null)
-  const valid = from === 'git' ? /^(https?:\/\/|git@)\S+$/.test(git.trim()) : !!zip && zip.size <= MAX_UPLOAD
-
-  const install = async () => {
-    setBusy(true)
-    setError(null)
-    try {
-      const source: SkillSource =
-        from === 'git' ? { git: git.trim(), ...(ref.trim() && { ref: ref.trim() }), ...(path.trim() && { path: path.trim() }) } : { upload: (await client.upload(zip!)).id }
-      setAdded(await client.request<SkillInfo[]>({ t: 'skill.install', source }))
-    } catch (e) {
-      setError(errorText(e))
-    }
-    setBusy(false)
-  }
-
-  if (added)
+/** B5: one query over both lists; an entry installed from Discover shows once, under 已安装. */
+function SearchResults({ query, installed, discover, catalogError, actions }: { query: string; installed: Entry[]; discover: Entry[]; catalogError: string | null; actions: CardActions }) {
+  const mine = installed.filter((e) => matches(e, query))
+  const seen = new Set(mine.flatMap((e) => [e.plugin?.id, e.skill?.name].filter(Boolean)))
+  const found = discover.filter((e) => !(e.plugin && seen.has(e.plugin.id)) && !(e.skill && seen.has(e.skill.name)) && matches(e, query))
+  if (!mine.length && !found.length)
     return (
       <>
-        <DialogBody>
-          <Notice title={added.length ? `已安装 ${added.length} 个 Skill` : '来源里没有找到 Skill'}>
-            {added.length ? added.map((s) => s.name).join('、') : '需要至少一个带 SKILL.md 的文件夹。'}
-          </Notice>
-        </DialogBody>
-        <DialogFooter>
-          <Button variant="primary" onClick={onDone}>
-            完成
-          </Button>
-        </DialogFooter>
+        {catalogError && <Notice tone="warning" className="mb-4">发现目录没有加载，只搜索了已安装的。</Notice>}
+        <Empty icon={<Search />} title={`没有找到“${query}”`}>
+          换个关键词，或者用右上角的“添加”填写地址接入。
+        </Empty>
       </>
     )
-
   return (
-    <form
-      className="flex min-h-0 flex-1 flex-col"
-      onSubmit={(e) => {
-        e.preventDefault()
-        void install()
-      }}
-    >
-      <DialogBody className="flex flex-col gap-4">
-        <Tabs value={from} onValueChange={(v) => setFrom(v as 'git' | 'zip')}>
-          <TabsList>
-            <TabsTrigger value="git">Git 仓库</TabsTrigger>
-            <TabsTrigger value="zip">上传 zip</TabsTrigger>
-          </TabsList>
-          <TabsContent value="git" className="mt-4 flex flex-col gap-4">
-            <Field label="仓库地址">
-              <Input value={git} autoFocus placeholder="https://github.com/anthropics/skills" onChange={(e) => setGit(e.target.value)} />
-            </Field>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="分支或标签（可选）">
-                <Input value={ref} placeholder="main" onChange={(e) => setRef(e.target.value)} />
-              </Field>
-              <Field label="子目录（可选）">
-                <Input value={path} placeholder="skills/pdf" onChange={(e) => setPath(e.target.value)} />
-              </Field>
-            </div>
-          </TabsContent>
-          <TabsContent value="zip" className="mt-4">
-            <input ref={input} type="file" accept=".zip,.skill,application/zip" hidden onChange={(e) => setZip(e.target.files?.[0] ?? null)} />
-            <button
-              type="button"
-              onClick={() => input.current?.click()}
-              className="flex w-full flex-col items-center gap-1.5 rounded-xl border border-dashed px-4 py-8 text-sm text-muted-foreground hover:bg-hover"
-            >
-              <Upload className="size-5" />
-              {zip ? <span className="text-foreground">{zip.name}</span> : '选择一个 zip 文件（不超过 20 MB）'}
-            </button>
-            {zip && zip.size > MAX_UPLOAD && <p className="mt-2 text-xs text-destructive">文件超过 20 MB。</p>}
-          </TabsContent>
-        </Tabs>
-        <p className="text-xs text-muted-foreground">Skill 里的说明和脚本会被助手读取和执行，只安装你信任的来源。</p>
-        {error && <Notice tone="error">{error}</Notice>}
-      </DialogBody>
-      <DialogFooter>
-        <Button type="button" onClick={onDone}>
-          取消
-        </Button>
-        <Button type="submit" variant="primary" disabled={busy || !valid}>
-          {busy ? '安装中…' : '安装'}
-        </Button>
-      </DialogFooter>
-    </form>
+    <>
+      {mine.length > 0 && (
+        <CatalogSection title="已安装" count={mine.length}>
+          <CatalogGrid entries={mine} actions={actions} />
+        </CatalogSection>
+      )}
+      {found.length > 0 && (
+        <CatalogSection title="发现" count={found.length}>
+          <CatalogGrid entries={found} actions={actions} />
+        </CatalogSection>
+      )}
+    </>
+  )
+}
+
+/** The dialog for what a card opened: an installed plugin or Skill, or a preset not added yet. */
+function OpenedDetail({ opened, catalog, onClose, onAdd, adding }: { opened: Opened; catalog: DiscoverItem[]; onClose: () => void; onAdd: (e: Entry) => void; adding: string | null }) {
+  const { plugins, skills } = useHost()
+  if ('preset' in opened) {
+    const e = discoverEntry(opened.preset, plugins ?? [], skills)
+    return (
+      <DialogContent title={<Titled entry={e} />} className={detailClass}>
+        <DialogBody className="flex flex-col gap-3 text-sm">
+          <p>{e.description}</p>
+          <p className="text-muted-foreground">提供方：{e.by}</p>
+          {e.preset?.homepage && (
+            <a href={e.preset.homepage} target="_blank" rel="noreferrer" className="self-start text-accent underline-offset-4 hover:underline">
+              查看说明
+            </a>
+          )}
+        </DialogBody>
+        <DialogFooter>
+          <Button
+            variant="primary"
+            disabled={adding === e.key}
+            onClick={() => {
+              onClose()
+              onAdd(e)
+            }}
+          >
+            <Plus /> 添加
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    )
+  }
+  if ('plugin' in opened) {
+    const p = plugins?.find((x) => x.id === opened.plugin)
+    if (!p) return null
+    const e = pluginEntry(p, catalog)
+    return (
+      <DialogContent title={<Titled entry={e} />} description={p.description ? <span className="line-clamp-3">{p.description}</span> : undefined} className={cn(detailClass, 'sm:max-w-xl')}>
+        <PluginDetail key={p.id} plugin={p} onRemoved={onClose} />
+      </DialogContent>
+    )
+  }
+  const s = skills.find((x) => x.name === opened.skill)
+  if (!s) return null
+  return (
+    <DialogContent title={<Titled entry={skillEntry(s, catalog)} />} description={<span className="line-clamp-3" title={s.description}>{s.description}</span>} className={cn(detailClass, 'sm:max-w-2xl')}>
+      <SkillDetail key={s.name} skill={s} onRemoved={onClose} />
+    </DialogContent>
+  )
+}
+
+function Titled({ entry }: { entry: Entry }) {
+  return (
+    <span className="flex items-center gap-2.5">
+      <EntryIcon entry={entry} className="size-7 rounded-lg text-sm" />
+      <span className="min-w-0 truncate">{entry.name}</span>
+    </span>
   )
 }

@@ -156,7 +156,13 @@ export function createDocumentReadTool(): ToolRegistration {
   const read = createReadTool() as unknown as ToolRegistration
   return {
     ...read,
-    description: `${read.description} PDF, Word (.docx), Excel (.xlsx) and PowerPoint (.pptx) files are read as extracted text, with "## " headings per page, slide or sheet; page through them with offset/limit the same way.`,
+    description: [
+      'Read a file from the workspace, an attachment or a Skill.',
+      '- Text files return at most 2000 lines or 50KB per call; continue with offset/limit until you have what you need.',
+      '- Images (jpg, png, gif, webp) are shown to you, so you can look at a photo or check a chart you generated.',
+      '- PDF, Word (.docx), Excel (.xlsx) and PowerPoint (.pptx) files come back as extracted text with a "## " heading per page, slide or sheet; page through them the same way.',
+      '- Read a file before you write, edit or delete it.',
+    ].join('\n'),
     async execute(args, api, ctx) {
       const { path } = args as { path: string }
       const legacy = LEGACY[extension(path)]

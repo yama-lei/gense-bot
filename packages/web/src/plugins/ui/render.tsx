@@ -1,5 +1,7 @@
 import { Renderer, type ActionEvent } from '@openuidev/react-lang'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { webUrl } from '../../lib/format'
+import { useTheme } from '../../lib/theme'
 import type { ViewProps } from '../types'
 import { runLibraryAction } from './genui/actions'
 import { library } from './genui/library'
@@ -7,20 +9,6 @@ import { setLookupHost } from './genui/lookup'
 import type { UiInput, UiState } from './views'
 
 const SAVE_DELAY = 400
-const dark = () => typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches
-
-/** The library reads its theme from data-theme; ours follows the system. */
-function useTheme() {
-  const [theme, setTheme] = useState(() => (dark() ? 'dark' : 'light'))
-  useEffect(() => {
-    const query = matchMedia('(prefers-color-scheme: dark)')
-    const update = () => setTheme(query.matches ? 'dark' : 'light')
-    query.addEventListener('change', update)
-    return () => query.removeEventListener('change', update)
-  }, [])
-  return theme
-}
-
 const show = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v))
 
 /** What the user filled in, as lines under the message: form fields, page variables and the action's context. */
@@ -38,15 +26,6 @@ export function attachments(event: Pick<ActionEvent, 'formState' | 'params'>) {
   }
   if (event.params?.context !== undefined) lines.push(show(event.params.context))
   return lines
-}
-
-function webUrl(value: unknown) {
-  try {
-    const url = new URL(String(value))
-    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : undefined
-  } catch {
-    return undefined
-  }
 }
 
 export default function Render({ program, toolResult, viewState, host }: ViewProps<UiInput, unknown, UiState> & { program: string }) {

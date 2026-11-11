@@ -3,9 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <meta name="theme-color" content="#faf9f5" />
     <title>GenseBot</title>
+    <script>
+      // Before the first paint, so the page never flashes the other theme (src/lib/theme.ts keeps it in step).
+      ;(function () {
+        var pref = 'system'
+        try {
+          pref = JSON.parse(localStorage.getItem('gense.theme') || '"system"')
+        } catch (e) {}
+        var dark = pref === 'dark' || (pref !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+        document.querySelector('meta[name=theme-color]').content = dark ? '#262624' : '#faf9f5'
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

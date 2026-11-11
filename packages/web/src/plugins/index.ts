@@ -1,23 +1,11 @@
-// Plugin registry for the browser: which plugin a tool belongs to, and views by resourceUri.
+// The built-in plugins' views, by the resourceUri their tools declare. Which tool belongs to which plugin comes from
+// the server (lib/tools.ts); a resourceUri without an entry here is an MCP Apps page and renders in a sandboxed frame.
 import { ArtifactView } from './artifact/views'
 import { EmailDraftView } from './email/views'
 import { ImageView } from './image/views'
 import type { View } from './types'
 import { UiView } from './ui/views'
 
-/** Tools the browser knows about; `resourceUri` is the view a call renders with. */
-export const tools: Record<string, { plugin: string; resourceUri?: string }> = {
-  artifact_create: { plugin: 'artifact', resourceUri: 'ui://artifact/view' },
-  artifact_save: { plugin: 'artifact' },
-  email_draft: { plugin: 'email', resourceUri: 'ui://email/draft' },
-  image_generate: { plugin: 'image', resourceUri: 'ui://image/view' },
-  ui_render: { plugin: 'ui', resourceUri: 'ui://ui/render' },
-  // Lookups the page makes through tool.call; the model never sees them.
-  ui_photos: { plugin: 'ui' },
-  ui_route: { plugin: 'ui' },
-}
-
-/** Built-in React views. MCP Apps resources (`text/html;profile=mcp-app`) will render in a sandboxed iframe later. */
 export const views: Record<string, View> = {
   'ui://artifact/view': ArtifactView,
   'ui://email/draft': EmailDraftView,
@@ -25,5 +13,5 @@ export const views: Record<string, View> = {
   'ui://image/view': ImageView,
 }
 
-/** Views that render from the input alone, while the call runs (a placeholder until the result). */
+/** Views that draw from the input alone while the call still runs. */
 export const liveViews = new Set(['ui://image/view', 'ui://ui/render'])

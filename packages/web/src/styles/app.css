@@ -1,0 +1,404 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+/* One set of tokens (roadmap-5 N40). Light values on :root, dark under [data-theme='dark']; the theme script in
+   index.html sets data-theme before the first paint. Components only use the Tailwind names mapped below. */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+:root {
+  color-scheme: light;
+  --background: #faf9f5;
+  --foreground: #1f1e1d;
+  --sidebar: #f3f2ec;
+  --card: #ffffff;
+  --popover: #ffffff;
+  --muted: #f0eee6;
+  --muted-foreground: #6f6d66;
+  --hover: #ebe9e0;
+  --border: #e3e0d6;
+  --input: #d9d6cb;
+  --ring: #c96442;
+  --primary: #1f1e1d;
+  --primary-foreground: #faf9f5;
+  --accent: #c96442;
+  --accent-foreground: #ffffff;
+  --accent-soft: #f6e7df;
+  --bubble: #efede4;
+  --destructive: #b4372d;
+  --destructive-soft: #fbe9e6;
+  --success: #3f7d4e;
+  --success-soft: #e6f1e7;
+  --warning: #8a6a1f;
+  --warning-soft: #f7efd9;
+  --code: #f3f1ea;
+  --overlay: rgb(20 20 19 / 40%);
+  --shadow-color: rgb(20 20 19 / 8%);
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+  --background: #262624;
+  --foreground: #ecebe6;
+  --sidebar: #1f1e1d;
+  --card: #30302e;
+  --popover: #30302e;
+  --muted: #353432;
+  --muted-foreground: #a3a19a;
+  --hover: #3a3936;
+  --border: #42413c;
+  --input: #55534d;
+  --ring: #e08a6b;
+  --primary: #ecebe6;
+  --primary-foreground: #1f1e1d;
+  --accent: #d97757;
+  --accent-foreground: #1f1e1d;
+  --accent-soft: #46302a;
+  --bubble: #393836;
+  --destructive: #f19a8f;
+  --destructive-soft: #432a27;
+  --success: #8fcf9c;
+  --success-soft: #2c3d30;
+  --warning: #e7c87a;
+  --warning-soft: #3d3524;
+  --code: #1f1e1d;
+  --overlay: rgb(0 0 0 / 55%);
+  --shadow-color: rgb(0 0 0 / 35%);
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-sidebar: var(--sidebar);
+  --color-card: var(--card);
+  --color-popover: var(--popover);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-hover: var(--hover);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-soft: var(--accent-soft);
+  --color-bubble: var(--bubble);
+  --color-destructive: var(--destructive);
+  --color-destructive-soft: var(--destructive-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-code: var(--code);
+  --color-overlay: var(--overlay);
+  --font-sans: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+  --font-serif: 'Tiempos Text', 'Source Serif 4', Georgia, 'Noto Serif SC', 'Songti SC', serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 22px;
+  --shadow-pop: 0 8px 30px var(--shadow-color), 0 0 0 1px var(--border);
+  --shadow-float: 0 2px 10px var(--shadow-color);
+  --animate-blink: blink 1s steps(2, start) infinite;
+  --animate-shimmer: shimmer 1.6s linear infinite;
+  @keyframes blink {
+    to {
+      visibility: hidden;
+    }
+  }
+  @keyframes shimmer {
+    from {
+      background-position: 200% 0;
+    }
+    to {
+      background-position: -200% 0;
+    }
+  }
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--foreground) 18%, transparent) transparent;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    overscroll-behavior: none;
+  }
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']),
+  [role='menuitem'],
+  [role='option'],
+  [role='switch'],
+  [role='tab'] {
+    cursor: pointer;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--accent) 28%, transparent);
+  }
+}
+
+@utility shimmer-text {
+  background: linear-gradient(90deg, var(--muted-foreground) 35%, var(--foreground) 50%, var(--muted-foreground) 65%);
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation: var(--animate-shimmer);
+}
+
+/* What plugin views and generated pages read (plugins/ui/genui/components/theme.css). */
+:root {
+  --sans: var(--font-sans);
+  --mono: var(--font-mono);
+}
+
+/* Assistant prose. Sizes and rhythm follow the chat column, not a document page. */
+.prose {
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+}
+.prose > :first-child {
+  margin-top: 0;
+}
+.prose > :last-child {
+  margin-bottom: 0;
+}
+.prose p,
+.prose ul,
+.prose ol,
+.prose blockquote,
+.prose table,
+.prose pre,
+.prose .codeblock,
+.prose .table-scroll {
+  margin: 0.75em 0;
+}
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4 {
+  font-weight: 650;
+  line-height: 1.35;
+  margin: 1.4em 0 0.5em;
+}
+.prose h1 {
+  font-size: 1.4em;
+}
+.prose h2 {
+  font-size: 1.22em;
+}
+.prose h3 {
+  font-size: 1.08em;
+}
+.prose h4 {
+  font-size: 1em;
+}
+.prose ul,
+.prose ol {
+  padding-left: 1.5em;
+}
+.prose ul {
+  list-style: disc;
+}
+.prose ol {
+  list-style: decimal;
+}
+.prose li {
+  margin: 0.25em 0;
+}
+.prose li > p {
+  margin: 0.25em 0;
+}
+.prose li::marker {
+  color: var(--muted-foreground);
+}
+.prose ul.contains-task-list {
+  list-style: none;
+  padding-left: 0.25em;
+}
+.prose a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  text-underline-offset: 3px;
+}
+.prose a:hover {
+  text-decoration-color: currentColor;
+}
+.prose blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 1em;
+  color: var(--muted-foreground);
+}
+.prose hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 1.5em 0;
+}
+.prose :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--muted);
+  border-radius: 5px;
+  padding: 0.15em 0.35em;
+}
+.prose .table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.prose table {
+  width: 100%;
+  margin: 0;
+  border-collapse: collapse;
+  font-size: 0.93em;
+}
+.prose th,
+.prose td {
+  padding: 0.5em 0.85em;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.prose th {
+  font-weight: 600;
+  background: var(--muted);
+  white-space: nowrap;
+}
+.prose tr:last-child td {
+  border-bottom: 0;
+}
+.prose img {
+  max-width: 100%;
+  border-radius: var(--radius-lg);
+}
+.prose .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.25em 0;
+}
+
+/* Code colours (highlight.js class names), from the same tokens in both themes. */
+.hljs-comment,
+.hljs-quote {
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-section,
+.hljs-doctag,
+.hljs-name {
+  color: var(--series-5);
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-addition,
+.hljs-attribute,
+.hljs-meta .hljs-string {
+  color: var(--series-3);
+}
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-link {
+  color: var(--series-2);
+}
+.hljs-title,
+.hljs-built_in,
+.hljs-type,
+.hljs-attr,
+.hljs-selector-id,
+.hljs-selector-class {
+  color: var(--series-1);
+}
+.hljs-deletion {
+  color: var(--destructive);
+}
+.hljs-meta {
+  color: var(--series-4);
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* The caret of an answer that is still being written. */
+.prose.streaming > :last-child:is(p, h1, h2, h3, h4)::after,
+.prose.streaming > :is(ul, ol):last-child > li:last-child::after {
+  content: '';
+  display: inline-block;
+  width: 0.5em;
+  height: 1em;
+  margin-left: 0.15em;
+  border-radius: 2px;
+  vertical-align: -0.15em;
+  background: var(--accent);
+  animation: var(--animate-blink);
+}
+
+/* Generated pages (ui_render): the OpenUI library brings its own styles (plugins/ui/genui). */
+.genui {
+  position: relative;
+}
+.genui-note {
+  padding: 10px 12px;
+  border-radius: var(--radius-lg);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 13.5px;
+}
+.genui-toast {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 13px;
+}

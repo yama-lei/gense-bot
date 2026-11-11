@@ -1,12 +1,12 @@
 /* Design tokens for the component library. Font, text, status and chart colors
-   follow the app's tokens (styles.css), which switch with the system theme; the
+   follow the app tokens (styles/app.css), which switch with data-theme; the
    view sets data-theme on its root to match, and the dark block retunes the rest. */
 :root,
 [data-theme] {
   color-scheme: light;
   --iui-font: var(--sans);
   --iui-mono: var(--mono);
-  --iui-canvas: var(--bg);
+  --iui-canvas: var(--background);
   /* Greys are ink at an alpha, so they stack on any surface (cards, tints, sunk
      areas) and flip with the theme: track 4-6%, hover 5%, pressed or selected 8%,
      borders 8-10%. */
@@ -15,11 +15,11 @@
   --iui-surface: color-mix(in srgb, var(--iui-ink) 4%, transparent);
   --iui-surface-hover: color-mix(in srgb, var(--iui-ink) 8%, transparent);
   --iui-surface-strong: color-mix(in srgb, var(--iui-ink) 8%, transparent);
-  --iui-ink: var(--text);
+  --iui-ink: var(--foreground);
   --iui-ink-hover: color-mix(in oklch, var(--iui-ink) 82%, var(--iui-canvas));
-  --iui-on-ink: var(--bg);
-  --iui-muted: var(--muted);
-  --iui-faint: var(--muted);
+  --iui-on-ink: var(--background);
+  --iui-muted: var(--muted-foreground);
+  --iui-faint: var(--muted-foreground);
   --iui-border: color-mix(in srgb, var(--iui-ink) 8%, transparent);
   --iui-border-strong: color-mix(in srgb, var(--iui-ink) 10%, transparent);
   --iui-range-track: color-mix(in srgb, var(--iui-ink) 6%, transparent);
@@ -34,12 +34,12 @@
   --iui-shadow-sm: 0 1px 3px rgb(0 0 0 / 5%);
   --iui-info: var(--iui-ink);
   --iui-info-soft: color-mix(in srgb, var(--iui-ink) 6%, transparent);
-  --iui-success: var(--ok);
-  --iui-success-soft: var(--ok-bg);
-  --iui-warning: var(--warn);
-  --iui-warning-soft: var(--warn-bg);
-  --iui-danger: var(--err);
-  --iui-danger-soft: var(--err-bg);
+  --iui-success: var(--success);
+  --iui-success-soft: var(--success-soft);
+  --iui-warning: var(--warning);
+  --iui-warning-soft: var(--warning-soft);
+  --iui-danger: var(--destructive);
+  --iui-danger-soft: var(--destructive-soft);
   --iui-purple: #7040c1;
   --iui-purple-soft: #f4f0ff;
   --iui-pink: #b7377c;

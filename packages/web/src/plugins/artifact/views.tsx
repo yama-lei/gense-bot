@@ -1,18 +1,22 @@
+import { Check, ChevronRight, Copy, FileCode2, FileText, Save } from 'lucide-react'
 import { useState } from 'react'
-import { IconCheck, IconCopy, IconDoc } from '../../components/Icons'
-import { Markdown } from '../../components/Markdown'
-import type { ViewProps } from '../types'
+import { Markdown } from '../../features/chat/Markdown'
+import { copyText } from '../../lib/format'
+import { useFlash } from '../../lib/hooks'
+import { Button } from '../../ui/button'
+import { Notice } from '../../ui/feedback'
 import type { ArtifactInput } from '../contracts'
+import type { ViewProps } from '../types'
 
 /** Where the artifact was saved in the chat's workspace. */
 type Saved = { path: string }
 
-export function ArtifactView({ toolInput, displayMode, viewState, host }: ViewProps<ArtifactInput, ArtifactInput, { saved?: Saved }>) {
-  const a = toolInput
+export function ArtifactView({ toolInput: a, displayMode, viewState, host }: ViewProps<ArtifactInput, ArtifactInput, { saved?: Saved }>) {
   const saved = viewState?.saved
   const [saving, setSaving] = useState(false)
-  const [copied, setCopied] = useState(false)
+  const [copied, flash] = useFlash()
   const [error, setError] = useState<string | null>(null)
+  const Icon = a.type === 'code' ? FileCode2 : FileText
 
   const save = async () => {
     setSaving(true)
@@ -25,46 +29,44 @@ export function ArtifactView({ toolInput, displayMode, viewState, host }: ViewPr
 
   if (displayMode === 'inline') {
     return (
-      <button className="artifact-card" onClick={() => host.requestDisplayMode('panel')}>
-        <span className="artifact-icon">
-          <IconDoc />
+      <button
+        type="button"
+        className="flex w-full max-w-md items-center gap-3 rounded-xl border bg-card p-3 text-left transition-colors hover:bg-hover"
+        onClick={() => host.requestDisplayMode('panel')}
+      >
+        <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
+          <Icon className="size-5" />
         </span>
-        <span className="artifact-meta">
-          <strong className="ellipsis">{a.title}</strong>
-          <span className="muted small">{a.type === 'code' ? `代码 · ${a.language ?? ''}` : '文档'} · {saved ? '已保存' : '未保存'}</span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-medium">{a.title || '未命名'}</span>
+          <span className="block truncate text-xs text-muted-foreground">
+            {a.type === 'code' ? `代码${a.language ? ` · ${a.language}` : ''}` : '文档'} · {saved ? '已保存' : '未保存'}
+          </span>
         </span>
-        <span className="muted small">打开</span>
+        <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
       </button>
     )
   }
 
   return (
-    <div className="artifact-full">
-      <div className="artifact-actions">
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center gap-2">
         {saved ? (
-          <span className="pill-btn" title={saved.path}>
-            <IconCheck width={15} height={15} /> 已保存到 {saved.path.replace(/^\/data\/sessions\/[^/]+\//, '')}
+          <span className="inline-flex min-w-0 items-center gap-1.5 text-sm text-success" title={saved.path}>
+            <Check className="size-4 shrink-0" />
+            <span className="truncate">已保存到 {saved.path.replace(/^\/data\/sessions\/[^/]+\//, '')}</span>
           </span>
         ) : (
-          <button className="pill-btn" disabled={saving} onClick={save}>
-            {saving ? '保存中…' : '保存到工作区'}
-          </button>
+          <Button size="sm" disabled={saving} onClick={() => void save()}>
+            <Save /> {saving ? '保存中…' : '保存到工作区'}
+          </Button>
         )}
-        <button
-          className="pill-btn"
-          onClick={() => {
-            navigator.clipboard?.writeText(a.content)
-            setCopied(true)
-            setTimeout(() => setCopied(false), 1500)
-          }}
-        >
-          <IconCopy width={15} height={15} /> {copied ? '已复制' : '复制'}
-        </button>
+        <Button size="sm" onClick={() => void copyText(a.content).then((ok) => ok && flash())}>
+          {copied ? <Check /> : <Copy />} {copied ? '已复制' : '复制'}
+        </Button>
       </div>
-      {error && <p className="notice artifact-error">{error}</p>}
-      <div className="artifact-body">
-        <Markdown text={a.type === 'code' ? '```' + (a.language ?? '') + '\n' + a.content + '\n```' : a.content} />
-      </div>
+      {error && <Notice tone="error">{error}</Notice>}
+      <Markdown text={a.type === 'code' ? '```' + (a.language ?? '') + '\n' + a.content + '\n```' : a.content} />
     </div>
   )
 }

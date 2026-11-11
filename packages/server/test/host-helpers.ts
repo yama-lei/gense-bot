@@ -220,7 +220,7 @@ export const pluginEnv = (upstream: string) => ({
 export async function pluginScenario(client: Client, upstream: { keys: string[] }) {
   const plugin = (id: string) => client.plugins.find((p) => p.id === id)
   const web = await client.until(() => plugin('web'), 10_000, 'plugin list')
-  assert.deepEqual([web.enabled, web.available, web.issue, web.config.serverKeys], [false, true, null, ['deepseekKey']])
+  assert.deepEqual([web.enabled, web.available, web.issue, web.config.serverKeys], [true, true, null, ['deepseekKey']], 'a built-in plugin starts enabled')
 
   const tree = await client.request<TreeMeta>({ t: 'tree.create' })
   await client.request({ t: 'watch', treeId: tree.id })
@@ -232,6 +232,8 @@ export async function pluginScenario(client: Client, upstream: { keys: string[] 
     return results().at(-1)!
   }
 
+  await client.request({ t: 'plugin.set', pluginId: 'web', enabled: false })
+  await client.until(() => plugin('web')?.enabled === false, 5_000, 'web disabled')
   const off = await ask('[工具 web_search] {"query":"pi"}', 1)
   assert.equal(off.model![0]!.isError, true, 'a disabled plugin has no tools')
 
@@ -261,6 +263,7 @@ export async function pluginScenario(client: Client, upstream: { keys: string[] 
 
   // Artifacts: the model shows one, the view saves it into the workspace; saving the same content again reuses the file.
   const artifact = { title: '提纲', type: 'markdown', content: '# 提纲' }
+  await client.request({ t: 'plugin.set', pluginId: 'artifact', enabled: false })
   await assert.rejects(client.request({ t: 'tool.call', pluginId: 'artifact', treeId: tree.id, name: 'artifact_save', args: artifact }), /已关闭/)
   await client.request({ t: 'plugin.set', pluginId: 'artifact', enabled: true })
   const shown = await ask(`[工具 artifact_create] ${JSON.stringify(artifact)}`, 5)

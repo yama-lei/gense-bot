@@ -114,7 +114,7 @@ export class PluginStore {
   notify() { for (const l of this.#listeners) l() }
 
   #entry(id: string): Entry {
-    return this.#entries.get(id) ?? { enabled: !!this.#catalog.find((p) => p.id === id)?.defaultEnabled, values: {}, secrets: {} }
+    return this.#entries.get(id) ?? { enabled: this.#catalog.find((p) => p.id === id)?.defaultEnabled !== false, values: {}, secrets: {} }
   }
 
   /** Settings with secrets, as the plugin's tools use them, plus host-only keys the catalog does not declare. Host side only. */

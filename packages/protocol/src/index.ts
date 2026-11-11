@@ -210,6 +210,11 @@ export type ClientRequest =
       mentions?: Mention[]
     }
   | { t: 'abort'; id: number; treeId: string; branchId?: string }
+  /**
+   * Starts manual context compaction on this branch (or the active one); resolves to `{ taskId, branchId }` once
+   * admitted, or with `wait` when it settles, adding `outcome` (CompactionOutcome).
+   */
+  | { t: 'compact'; id: number; treeId: string; branchId?: string; instructions?: string; wait?: boolean }
   /** A new branch continuing `at` (an entry of `branchId`'s transcript); resolves to its BranchMeta (R36). */
   | { t: 'branch.fork'; id: number; treeId: string; branchId: string; at: number }
   /** Asks the user entry `entryId` again in a new branch beside it; resolves to its BranchMeta (R37). */
@@ -294,7 +299,42 @@ export type ServerMessage =
   | { t: 'view'; treeId: string; branchId: string; value: unknown }
   /** Chord operations of one commit, encoded with a per-watch encoder; decode with a decoder reset at each `view`. */
   | { t: 'ops'; treeId: string; ops: WireOp[] }
+  /** Durable compaction state on watch/reconnect and after status changes; failure clears after a summary succeeds. */
+  | { t: 'compaction.state'; treeId: string; branchId: string; running: CompactionStatus[]; failure?: CompactionFailure }
+  /** One task's lifecycle; an end with `error` is a failure. End alone does not mean a summary was placed. */
+  | { t: 'compaction_start'; treeId: string; branchId: string; taskId: number; reason: CompactionReason; blocking: boolean }
+  | { t: 'compaction_end'; treeId: string; branchId: string; taskId: number; reason: CompactionReason; error?: string }
+  /** A placed summary, replayed on watch. `entryId` is its position in the full-history view; deduplicate by it. */
+  | ({ t: 'compaction_summary'; treeId: string; branchId: string } & CompactionSummary)
   | { t: 'reply'; id: number; value?: unknown; error?: string }
+
+export type CompactionReason = 'manual' | 'threshold' | 'overflow'
+export interface CompactionStatus {
+  taskId: number
+  reason: CompactionReason
+  blocking: boolean
+  attempt: number
+  retry?: { at: number; error: string }
+}
+export interface CompactionFailure {
+  taskId: number
+  reason: CompactionReason
+  error: string
+}
+/** How a compaction ended: a summary was placed, the history was too short to need one, or it failed or stopped. */
+export type CompactionOutcome = { status: 'placed' } | { status: 'nothing' } | { status: 'failed'; error: string } | { status: 'aborted' }
+export interface CompactionSummary {
+  entryId: number
+  /** The first original entry the model keeps verbatim. Older entries remain in the web transcript. */
+  firstKeptEntryId: number
+  reason: CompactionReason
+  summary: string
+}
+/** pi's summary entries are present in `view.entries` alongside the complete original history. */
+export const COMPACTION_KIND = 'pi.compaction'
+/** The summary text of a `pi.compaction` entry, without the wrapper pi puts around it for the model. */
+export const compactionSummaryText = (wrapped: string) =>
+  wrapped.replace(/^The conversation history before this point was compacted into the following summary:\n\n<summary>\n/, '').replace(/\n<\/summary>$/, '')
 
 /** Kind of the entry a host writes when a run ends without an answer; the model never sees it. */
 export const RUN_ERROR_KIND = 'app.run-error'

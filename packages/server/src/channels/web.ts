@@ -1,8 +1,9 @@
 // One browser socket: answers ClientRequests and streams watched views (roadmap-3 D9). Hosts only move strings.
 import { encoder } from '@earendil-works/chord/delta'
-import type { ConversationWatch } from '@earendil-works/pi-durable'
+import type { ConversationWatch, ConversationView } from '@earendil-works/pi-durable'
 import type { AuthInteraction, AuthType } from '@earendil-works/pi-ai'
-import type { ClientRequest, LoginPrompt, ServerMessage } from '@gense/protocol'
+import { COMPACTION_KIND, compactionSummaryText, type ClientRequest, type LoginPrompt, type ServerMessage, type CompactionStatus, type CompactionFailure, type CompactionReason } from '@gense/protocol'
+import { compactionOutcome } from '../agent/compaction.ts'
 import type { UserSpace } from '../agent/space.ts'
 import { fromBase64 } from '../agent/workspace.ts'
 
@@ -69,8 +70,9 @@ export class Connection {
       return
     }
     const reply = this.#reply(request)
-    // A login waits on the user's answers, which arrive as later requests: it must not hold up the host's queue.
-    if (request.t !== 'auth.login') await reply
+    // A login waits on the user's answers, which arrive as later requests, and a compaction asked to wait can take
+    // minutes: neither may hold up the host's queue.
+    if (request.t !== 'auth.login' && !(request.t === 'compact' && request.wait)) await reply
   }
 
   async #reply(request: ClientRequest) {
@@ -106,6 +108,10 @@ export class Connection {
         })
       case 'abort':
         return space.abort(r.treeId, r.branchId)
+      case 'compact': {
+        const admitted = await space.compact(r.treeId, r.branchId, r.instructions)
+        return r.wait ? { ...admitted, outcome: await compactionOutcome(space, admitted.taskId) } : admitted
+      }
       case 'branch.fork':
         return space.fork(r.treeId, r.branchId, r.at)
       case 'regenerate':
@@ -248,7 +254,32 @@ export class Connection {
     this.#send({ t: 'branches', treeId, ...(await space.branches(treeId)) })
     const enc = encoder()
     this.#send({ t: 'view', treeId, branchId: shown, value: watch.value })
-    watch.start(async (_value, ops) => this.#send({ t: 'ops', treeId, ops: enc.encode(ops) }))
+    let previous: { running: CompactionStatus[]; failure?: CompactionFailure } | undefined
+    const summaries = new Set<number>()
+    const compactions = (value: ConversationView) => {
+      const live = value.docs['pi.live'] as unknown as { compactions?: CompactionStatus[]; compactionFailure?: CompactionFailure } | undefined
+      const next = { running: live?.compactions ?? [], ...(live?.compactionFailure && { failure: live.compactionFailure }) }
+      if (JSON.stringify(next) !== JSON.stringify(previous)) {
+        for (const status of next.running) if (previous && !previous.running.some(s => s.taskId === status.taskId))
+          this.#send({ t: 'compaction_start', treeId, branchId: shown, taskId: status.taskId, reason: status.reason, blocking: status.blocking })
+        for (const status of previous?.running ?? []) if (!next.running.some(s => s.taskId === status.taskId))
+          this.#send({ t: 'compaction_end', treeId, branchId: shown, taskId: status.taskId, reason: status.reason, ...(next.failure?.taskId === status.taskId && { error: next.failure.error }) })
+        this.#send({ t: 'compaction.state', treeId, branchId: shown, ...next })
+        previous = next
+      }
+      for (const entry of value.entries) {
+        if (entry.kind !== COMPACTION_KIND || summaries.has(entry.id) || entry.head === undefined) continue
+        summaries.add(entry.id)
+        const text = (entry.model ?? []).flatMap(m => typeof m.content === 'string' ? [m.content] : m.content.flatMap(c => c.type === 'text' ? [c.text] : [])).join('\n')
+        const summary = compactionSummaryText(text)
+        this.#send({ t: 'compaction_summary', treeId, branchId: shown, entryId: entry.id, firstKeptEntryId: entry.head, reason: (entry.data as { reason: CompactionReason }).reason, summary })
+      }
+    }
+    compactions(watch.value)
+    watch.start(async (value, ops) => {
+      this.#send({ t: 'ops', treeId, ops: enc.encode(ops) })
+      compactions(value)
+    })
     void watch.closed.then(() => {
       if (this.#watches.get(treeId) === watch) this.#watches.delete(treeId)
     })

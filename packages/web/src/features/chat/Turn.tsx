@@ -37,6 +37,7 @@ import { Notice, Spinner } from '../../ui/feedback'
 import { Textarea } from '../../ui/input'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, Popover, PopoverContent, PopoverTrigger } from '../../ui/menu'
 import { Tooltip } from '../../ui/tooltip'
+import { CompactionDivider } from './Compaction'
 import { Markdown } from './Markdown'
 import { hasView, ViewSlot } from './ViewSlot'
 
@@ -192,6 +193,7 @@ export function TurnView({ turn, ctx }: { turn: Turn; ctx: TurnContext }) {
           )}
         </div>
       )}
+      {turn.compactions?.map((c) => <CompactionDivider key={c.id} compaction={c} />)}
     </section>
   )
 }

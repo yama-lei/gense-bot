@@ -25,6 +25,7 @@ import { treeDir,Workspace } from './workspace.ts'
 import { BRANCH_COLUMNS,type BranchRow,COLUMNS,DEFAULT_TITLE,SCHEDULE_COLUMNS,type ScheduleRow,toMeta,type TreeRow } from './shared.ts'
 
 import type { UserSpace } from './space.ts'
+import { historyWatch } from './history.ts'
 export function now(this: UserSpace): number {
     return (this.options.now ?? Date.now)()
   }
@@ -166,7 +167,7 @@ export async function abort(this: UserSpace, treeId: string, branchId?: string, 
 export async function watch(this: UserSpace, treeId: string, branchId?: string, ctx: Context = BACKGROUND_CONTEXT): Promise<{ branchId: string; watch: ConversationWatch; }> {
     const { tree, branch } = await this.branchRow(treeId, branchId)
     if (tree.activeBranchId !== branch.id) await this.db.run('UPDATE trees SET activeBranchId = ? WHERE id = ?', branch.id, treeId)
-    return { branchId: branch.id, watch: await (await this.open(branch, ctx)).watch(ctx) }
+    return { branchId: branch.id, watch: await historyWatch(await this.open(branch, ctx), ctx) }
   }
 
 export async function close(this: UserSpace, ctx: Context = BACKGROUND_CONTEXT): Promise<void> {

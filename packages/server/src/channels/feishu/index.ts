@@ -1,4 +1,5 @@
 import { feishuHttp } from './http.ts'
+import { compactionOutcome } from '../../agent/compaction.ts'
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context'
 import type { ChannelInfo, PluginValue } from '@gense/protocol'
 import { Client, Domain, EventDispatcher, WSClient, type Logger } from '@larksuiteoapi/node-sdk'
@@ -59,6 +60,7 @@ export class FeishuChannel implements Channel {
   #incoming: Promise<unknown> = Promise.resolve()
   #cards = new Map<string, CardState>()
   #closed = false
+  readonly #compactions = new Set<string>()
   constructor(space: UserSpace, config: Record<string, PluginValue>, state: (patch: Partial<Pick<ChannelInfo, 'status' | 'error' | 'bot'>>) => void, options: FeishuOptions) {
     this.#space = space; this.#config = config; this.#state = state; this.#options = options
   }
@@ -90,7 +92,7 @@ export class FeishuChannel implements Channel {
         } })
         void this.#ws.start({ eventDispatcher: dispatcher }).catch(error => { clearTimeout(timer); reject(error) })
       })
-      for (const row of await this.#space.db.all<StoredTrigger>("SELECT * FROM triggers WHERE source = 'feishu' AND decision = 'command' AND result IS NULL ORDER BY created_at")) await this.#command(JSON.parse(row.payload), row)
+      for (const row of await this.#space.db.all<StoredTrigger>("SELECT * FROM triggers WHERE source = 'feishu' AND decision = 'command' AND (result IS NULL OR json_extract(result, '$.final') = 0) ORDER BY created_at")) await this.#command(JSON.parse(row.payload), row)
     } catch { this.#ws?.close({ force: true }); throw new Error('无法连接飞书，请检查凭据、应用权限和网络') }
   }
   async #receive(event: Event) {
@@ -99,7 +101,7 @@ export class FeishuChannel implements Channel {
     if (!actorId || !m.message_id || !m.chat_id) return
     const id = event.event_id ?? m.message_id
     const existing = await this.#space.triggers.get(id)
-    if (existing) { if (existing.decision === 'command' && !existing.result) await this.#command(JSON.parse(existing.payload), existing); return }
+    if (existing) { if (existing.decision === 'command' && (!existing.result || !JSON.parse(existing.result).final)) await this.#command(JSON.parse(existing.payload), existing); return }
     const group = m.chat_type === 'group'
     const mentioned = m.mentions?.some(mention => mention.id?.open_id === this.#botId) ?? false
     let text = plain(m.content ?? '{}')
@@ -127,7 +129,7 @@ export class FeishuChannel implements Channel {
       }
       trigger.context = crop(context.join('\n'), 12_000)
     }
-    if (/^\/(new|stop|model|help)(?:\s|$)/.test(text)) {
+    if (/^\/(new|stop|model|help|compact)(?:\s|$)/.test(text)) {
       const admitted = await this.#space.triggers.admit(trigger, true, { command: text }, 'command')
       await this.#command(trigger, admitted.row)
       return
@@ -169,11 +171,28 @@ export class FeishuChannel implements Channel {
     return treeId
   }
   async #command(trigger: InboundTrigger, row: StoredTrigger) {
-    if (row.result) return
+    if (row.result) {
+      const result = JSON.parse(row.result)
+      if (!result.final && result.taskId && result.treeId) this.#monitorCompaction(trigger, row, result.treeId, result.taskId)
+      return
+    }
     const [command, ...args] = trigger.text.split(/\s+/)
     let text = '', treeId = await this.#space.triggers.thread('feishu', trigger.thread.key)
     if (command === '/new') { treeId = await this.#newTree(trigger, row); text = '已开启新对话。' }
     else if (command === '/stop') { if (treeId) await this.#space.abort(treeId, (await this.#space.mainBranch(treeId)).id); text = '已停止。' }
+    else if (command === '/compact') {
+      if (!treeId) text = '还没有可压缩的对话。'
+      else {
+        try {
+          const { taskId } = await this.#space.compact(treeId, (await this.#space.mainBranch(treeId)).id, args.join(' ') || undefined)
+          // A summary can take minutes. Acknowledge the platform now and durably retain the task for recovery.
+          await this.#space.triggers.complete(row.id, { final: false, command: true, treeId, taskId }, [{ id: row.id + ':compact-start', channelId: 'feishu', triggerId: row.id, treeId, kind: 'message', payload: { ...trigger.destination, text: '正在压缩上下文…', treeId } }])
+          void this.#space.outbox.drain()
+          this.#monitorCompaction(trigger, row, treeId, taskId)
+          return
+        } catch (error) { text = `上下文压缩失败：${error instanceof Error ? error.message : String(error)}` }
+      }
+    }
     else if (command === '/model') {
       const models = await this.#space.accounts.list()
       if (args.length) {
@@ -186,8 +205,19 @@ export class FeishuChannel implements Channel {
         text = `当前：${model ? model.provider + '/' + model.modelId : fallback ? fallback.provider + '/' + fallback.id : '未配置'}\n可用模型：\n${models.map(m => `${m.provider}/${m.id}`).join('\n')}\n用 /model <模型> 切换。`
       }
     } else if (command === 'pair' || /^[A-F0-9]{8}$/i.test(command ?? '') || /^\/?pair$/i.test(command ?? '')) text = '已配对。现在可以直接发消息；/help 查看命令。'
-    else text = '/new 开启新对话\n/stop 中止回答\n/model 查看模型\n/model <模型> 切换模型\n/help 查看帮助\n群聊中请 @Bot；同一话题共用对话。'
+    else text = '/new 开启新对话\n/stop 中止回答\n/compact [补充要求] 压缩上下文\n/model 查看模型\n/model <模型> 切换模型\n/help 查看帮助\n群聊中请 @Bot；同一话题共用对话。'
     await this.#completeCommand(trigger, row, text, treeId)
+  }
+  #monitorCompaction(trigger: InboundTrigger, row: StoredTrigger, treeId: string, taskId: Awaited<ReturnType<UserSpace['compact']>>['taskId']) {
+    if (this.#compactions.has(row.id)) return
+    this.#compactions.add(row.id)
+    const job = async () => {
+      const outcome = await compactionOutcome(this.#space, taskId, ctx)
+      if (this.#closed || this.#space.closed) return
+      const text = { placed: '上下文压缩已完成。', nothing: '对话还不长，无需压缩。', failed: `上下文压缩失败：${outcome.status === 'failed' ? outcome.error : ''}`, aborted: '上下文压缩已中止。' }[outcome.status]
+      await this.#completeCommand(trigger, row, text, treeId)
+    }
+    void job().catch(() => {}).finally(() => { this.#compactions.delete(row.id) })
   }
   async #completeCommand(trigger: InboundTrigger, row: StoredTrigger, text: string, treeId?: string) {
     await this.#space.triggers.complete(row.id, { final: true, command: true, treeId }, [{ id: row.id + ':final', channelId: 'feishu', triggerId: row.id, treeId, kind: 'message', payload: { ...trigger.destination, text, ...(treeId && { treeId }) } }])

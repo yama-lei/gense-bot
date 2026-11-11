@@ -15,6 +15,8 @@ import { Input } from '../../ui/input'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../../ui/menu'
 import { Tooltip } from '../../ui/tooltip'
 import { BranchMap, branchName } from './BranchMap'
+import { compactCommand } from '../../lib/commands'
+import { CompactionLine } from './Compaction'
 import { Composer } from './Composer'
 import { footnote } from './HomePage'
 import { TurnView, type TurnContext } from './Turn'
@@ -72,7 +74,7 @@ export function ChatPage({ treeId }: { treeId: string }) {
   const { models } = useHost()
   const tools = useTools()
   const phone = useMediaQuery(phoneQuery)
-  const { tree, loaded, turns, branches, branch, running, entryCount } = useChat(treeId)
+  const { tree, loaded, turns, branches, branch, running, entryCount, compaction } = useChat(treeId)
   const [panel, setPanel] = useState<Panel | null>(null)
   const files = useFiles(treeId, panel?.kind === 'files', entryCount)
   const { scroller, content, away, toBottom, onScroll } = useFollow(loaded)
@@ -80,7 +82,9 @@ export function ChatPage({ treeId }: { treeId: string }) {
   const send = useCallback(
     (message: Outgoing) => {
       toBottom()
-      client.send(treeId, message).catch(report)
+      // `/压缩上下文` runs here; what was typed with it says what the summary should keep.
+      if (message.command?.id === compactCommand.id) client.compact(treeId, message.text)
+      else client.send(treeId, message).catch(report)
     },
     [client, treeId, toBottom],
   )
@@ -189,6 +193,7 @@ export function ChatPage({ treeId }: { treeId: string }) {
         </div>
 
         <div className="mx-auto w-full max-w-3xl shrink-0 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:px-6">
+          <CompactionLine running={compaction.running} failure={compaction.failure} onRetry={() => client.compact(treeId)} />
           <Composer treeId={treeId} placeholder={onSide ? '在这个分叉里继续…' : '回复…'} onSend={send} busy={running} onStop={() => client.stop(treeId)} autoFocus={!phone} />
           {footnote}
         </div>

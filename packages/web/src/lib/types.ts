@@ -1,5 +1,5 @@
 // What the UI draws: a conversation's turns, projected from the server's view (lib/turns.ts).
-import type { EventData, Mention, ToolCallResult } from '@gense/protocol'
+import type { CompactionReason, EventData, Mention, ToolCallResult } from '@gense/protocol'
 
 export type TurnStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'interrupted'
 export type ToolStatus = 'running' | 'succeeded' | 'failed'
@@ -70,6 +70,15 @@ export interface Turn {
   event?: EventData
   /** Set when the app asked on the user's behalf (R40); the label it shows. */
   brief?: string
+  /** Context compactions placed after this turn's content (roadmap-6 C4). */
+  compactions?: Compaction[]
+}
+
+/** A summary that replaced older context for the model; the transcript above it stays as it was. */
+export interface Compaction {
+  id: number
+  reason: CompactionReason
+  summary: string
 }
 
 /** A message as the composer sends it. */

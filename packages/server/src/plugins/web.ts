@@ -43,6 +43,7 @@ function cleanUrl(url: string) {
 export interface DeepSeek {
   key: string
   base?: string
+  onUse?: (service: 'search' | 'fetch') => Promise<void>
 }
 
 async function deepseek<T>(api: DeepSeek, path: string, body: unknown, signal?: AbortSignal): Promise<T> {
@@ -68,6 +69,7 @@ async function deepseek<T>(api: DeepSeek, path: string, body: unknown, signal?: 
 export async function webSearch(key: DeepSeek, query: string, count: number, signal?: AbortSignal): Promise<SearchHit[]> {
   type Result = { title: string; url: string; summary?: string; snippet?: string; site_name?: string | null; date?: string | null }
   const { results } = await deepseek<{ results: Result[] }>(key, 'search', { query, count }, signal)
+  if (results.length) await key.onUse?.('search')
   const seen = new Set<string>()
   const hits: SearchHit[] = []
   for (const r of results) {
@@ -81,6 +83,7 @@ export async function webSearch(key: DeepSeek, query: string, count: number, sig
 
 export async function webFetch(key: DeepSeek, url: string, signal?: AbortSignal): Promise<{ title: string; content: string }> {
   const r = await deepseek<{ title?: string; content?: string }>(key, 'fetch', { url }, signal)
+  if (r.content?.trim()) await key.onUse?.('fetch')
   return { title: r.title || hostOf(url), content: r.content ?? '' }
 }
 
@@ -90,11 +93,11 @@ const hitsText = (hits: SearchHit[]) =>
 const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}\n…（已截断）` : text)
 
 /** The web plugin's extension; `config` reads the user's resolved settings at each call. */
-export function webExtension(config: () => Record<string, PluginValue>) {
+export function webExtension(config: () => Record<string, PluginValue>, onUse?: DeepSeek['onUse']) {
   const key = (): DeepSeek => {
     const { deepseekKey, deepseekUrl } = config()
     if (typeof deepseekKey !== 'string' || !deepseekKey) throw new Error('网页插件没有配置 DeepSeek API Key')
-    return { key: deepseekKey, ...(typeof deepseekUrl === 'string' && { base: deepseekUrl }) }
+    return { key: deepseekKey, ...(typeof deepseekUrl === 'string' && { base: deepseekUrl }), ...(onUse && { onUse }) }
   }
   const count = () => Number(config().searchCount ?? 8) || 8
 

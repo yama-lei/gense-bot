@@ -119,6 +119,11 @@ async function openServer(config: HostConfig, unlock: () => Promise<void>) {
         if (!user) return json(401, { error: '未登录' })
         return speech.handle(user.id, request)
       }
+      if (path === '/api/usage' && request.method === 'GET') {
+        if (!user) return json(401, { error: '未登录' })
+        try { return json(200, await app.usage(url.searchParams.get('from') ?? undefined, url.searchParams.get('to') ?? undefined, user.id)) }
+        catch (error) { return json(400, { error: error instanceof Error ? error.message : String(error) }) }
+      }
       // Webhook secrets authenticate external callers. A browser session may only target its own space.
       if (hook) {
         if (user && user.id !== hook[1]) return json(403, { error: '无权访问' })

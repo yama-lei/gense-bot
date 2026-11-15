@@ -1,9 +1,9 @@
 // Host-wide provider configuration and usage. Only public metadata leaves this module.
 import { applySqliteMigrations, type SqliteDatabase } from '@earendil-works/chord/sqlite'
 import { createAssistantMessageEventStream, type AssistantMessage, type MutableModels } from '@earendil-works/pi-ai'
-import { DEEPSEEK_BASE_URL, type ModelSource, type SharedProviderInfo, type SharedProviderInput, type UsageSummary } from '@gense/protocol'
+import { DEEPSEEK_BASE_URL, type ModelSource, type SharedProviderInfo, type SharedProviderInput, type UsageSummary, type UsageReport } from '@gense/protocol'
 import { relayModels, type ModelSetup } from '../agent/models.ts'
-import { deepseekModels, DEEPSEEK_MODELS } from '../agent/deepseek.ts'
+import { count, deepseekModels, DEEPSEEK_MODELS, nativeUsage } from '../agent/deepseek.ts'
 import { Sealer } from '../plugins/store.ts'
 import type { DeepSeekService } from '../agent/deepseek-services.ts'
 import { initializeServiceUsage, recordServiceUsage } from './service-usage.ts'
@@ -12,7 +12,13 @@ const migrations = [{ version: 1, statements: [
   'CREATE TABLE shared_providers (id TEXT PRIMARY KEY, name TEXT NOT NULL, baseUrl TEXT NOT NULL, modelIds TEXT NOT NULL, sealed TEXT NOT NULL)',
   'CREATE TABLE usage (id INTEGER PRIMARY KEY, userId TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, source TEXT NOT NULL, input INTEGER NOT NULL, output INTEGER NOT NULL, cacheRead INTEGER NOT NULL, cacheWrite INTEGER NOT NULL, totalTokens INTEGER NOT NULL, createdAt INTEGER NOT NULL)',
   'CREATE INDEX usage_user_day ON usage(userId, createdAt)',
-] }, { version: 2, statements: ["ALTER TABLE shared_providers ADD COLUMN kind TEXT NOT NULL DEFAULT 'openai'"] }]
+] }, { version: 2, statements: ["ALTER TABLE shared_providers ADD COLUMN kind TEXT NOT NULL DEFAULT 'openai'"] }, {
+  version: 3, statements: [
+    'ALTER TABLE usage ADD COLUMN searches INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE usage ADD COLUMN fetches INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE usage ADD COLUMN modelCalls INTEGER NOT NULL DEFAULT 1',
+  ],
+}]
 type ProviderRow = { id: string; kind: 'openai' | 'deepseek'; name: string; baseUrl: string; modelIds: string; sealed: string }
 const publicProvider = (r: ProviderRow): SharedProviderInfo => ({ id: r.id, kind: r.kind, name: r.name, baseUrl: r.baseUrl, modelIds: JSON.parse(r.modelIds), hasKey: !!r.sealed })
 
@@ -39,6 +45,11 @@ export class AppStore {
     return row ? { provider: row.id, baseUrl: row.baseUrl, key: await this.#sealer.open(row.sealed) } : undefined
   }
   recordService(userId: string, service: import('@gense/protocol').ServiceKind, units: number) { return recordServiceUsage(this.#db, userId, service, units) }
+  /** Standalone web calls contribute tool counts, not LLM calls or duplicate service rows. */
+  async recordWeb(userId: string, service: 'search' | 'fetch') {
+    const shared = await this.#db.get<{ id: string }>("SELECT id FROM shared_providers WHERE kind = 'deepseek' AND sealed != '' ORDER BY id LIMIT 1")
+    await this.#db.run('INSERT INTO usage (userId, provider, model, source, input, output, cacheRead, cacheWrite, totalTokens, createdAt, searches, fetches, modelCalls) VALUES (?, ?, ?, ?, 0, 0, 0, 0, 0, ?, ?, ?, 0)', userId, shared?.id ?? 'deepseek-tools', 'web-tools', shared ? 'shared' : 'byok', Date.now(), service === 'search' ? 1 : 0, service === 'fetch' ? 1 : 0)
+  }
   subscribe(fn: () => Promise<void>) { this.#listeners.add(fn); return () => { this.#listeners.delete(fn) } }
   async providers() { return (await this.#db.all<ProviderRow>('SELECT * FROM shared_providers ORDER BY id')).map(publicProvider) }
   async #reload() {
@@ -82,7 +93,8 @@ export class AppStore {
   async record(userId: string, message: AssistantMessage, source: ModelSource) {
     if (message.stopReason === 'pending' || message.stopReason === 'deferred') return
     const u = message.usage
-    await this.#db.run('INSERT INTO usage (userId, provider, model, source, input, output, cacheRead, cacheWrite, totalTokens, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', userId, message.provider, message.model, source, u.input, u.output, u.cacheRead, u.cacheWrite, u.totalTokens, Date.now())
+    const tools = nativeUsage(message)
+    await this.#db.run('INSERT INTO usage (userId, provider, model, source, input, output, cacheRead, cacheWrite, totalTokens, createdAt, searches, fetches) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', userId, message.provider, message.model, source, u.input, u.output, u.cacheRead, u.cacheWrite, u.totalTokens, Date.now(), count(tools?.tool_search) + count(tools?.tool_image_search), count(tools?.tool_fetch))
   }
   /** Intercept streams, including compaction and error responses. complete* delegates to these methods. */
   meter(userId: string, models: MutableModels, source: (provider: string) => ModelSource) {
@@ -114,13 +126,20 @@ export class AppStore {
     }
   }
   async flush() { await this.#mutating; await Promise.all([...this.#pending]) }
-  async usage(from?: string, to?: string): Promise<UsageSummary[]> {
+  async usage(from?: string, to?: string, userId?: string): Promise<UsageReport> {
     const day = (v: string | undefined) => {
       if (v === undefined) return undefined
       if (!/^\d{4}-\d{2}-\d{2}$/.test(v) || new Date(v).toISOString().slice(0, 10) !== v) throw new Error('日期无效')
       return Date.parse(v)
     }
-    const start = day(from) ?? 0, end = (day(to) ?? Date.now()) + 86400_000
-    return this.#db.all<UsageSummary>(`SELECT u.userId, a.email, strftime('%Y-%m-%d', u.createdAt / 1000, 'unixepoch') AS day, u.provider, u.model, u.source, COUNT(*) AS calls, SUM(u.input) AS input, SUM(u.output) AS output, SUM(u.cacheRead) AS cacheRead, SUM(u.cacheWrite) AS cacheWrite, SUM(u.totalTokens) AS totalTokens FROM usage u JOIN users a ON a.id = u.userId WHERE u.createdAt >= ? AND u.createdAt < ? GROUP BY u.userId, day, u.provider, u.model, u.source ORDER BY day DESC, a.email`, start, end)
+    const today = new Date().toISOString().slice(0, 10)
+    const start = day(from) ?? 0, end = (day(to) ?? Date.parse(today)) + 86400_000
+    if (end <= start) throw new Error('日期范围无效')
+    const own = userId ? [userId] : []
+    const [models, services] = await Promise.all([
+      this.#db.all<UsageSummary>(`SELECT u.userId, a.email, strftime('%Y-%m-%d', u.createdAt / 1000, 'unixepoch') AS day, u.provider, u.model, u.source, SUM(u.modelCalls) AS calls, SUM(u.input) AS input, SUM(u.output) AS output, SUM(u.cacheRead) AS cacheRead, SUM(u.cacheWrite) AS cacheWrite, SUM(u.totalTokens) AS totalTokens, SUM(u.searches) AS searches, SUM(u.fetches) AS fetches FROM usage u JOIN users a ON a.id = u.userId WHERE u.createdAt >= ? AND u.createdAt < ? ${userId ? 'AND u.userId = ?' : ''} GROUP BY u.userId, day, u.provider, u.model, u.source ORDER BY day DESC, a.email`, start, end, ...own),
+      this.#db.all<UsageReport['services'][number]>(`SELECT u.userId, a.email, u.day, u.service, u.calls, u.units FROM service_usage u JOIN users a ON a.id = u.userId WHERE u.day >= ? AND u.day <= ? ${userId ? 'AND u.userId = ?' : ''} ORDER BY u.day DESC, a.email, u.service`, from ?? '1970-01-01', to ?? today, ...own),
+    ])
+    return { models, services }
   }
 }

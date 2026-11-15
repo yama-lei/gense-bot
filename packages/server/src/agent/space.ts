@@ -54,6 +54,7 @@ import * as trees from './trees.ts'
 import * as webhooks from './webhooks.ts'
 import { compact, compactionPolicy, compactionRegistry } from './compaction.ts'
 import { deepseekRegistry, initializeDeepseek } from './deepseek.ts'
+import { webExtension } from '../plugins/web.ts'
 export type { SpaceOptions } from './shared.ts'
 export class UserSpace {
 
@@ -154,14 +155,14 @@ export class UserSpace {
     const memory = memoryExtension(getSpace)
     const explicitMemory = memoryExtension(getSpace, 'explicit')
     const project = projectExtension(getSpace)
-    for (const e of [gense, files, prefsExtension, toolSearch, events.extension, memory, explicitMemory, project, noSandbox, ...Object.entries(PLUGINS).map(([id, make]) => make(() => plugins.resolved(id)))]) {
+    for (const e of [gense, files, prefsExtension, toolSearch, events.extension, memory, explicitMemory, project, noSandbox, ...Object.entries(PLUGINS).map(([id, make]) => id === 'web' ? webExtension(() => plugins.resolved(id), service => options.webUsage?.(service) ?? Promise.resolve()) : make(() => plugins.resolved(id)))]) {
       registry.install(e)
       byName.set(e.name, e)
     }
     const refreshPlugins = () => {
       const hidden = new Set(plugins.removedTools())
       for (const { id, extension: make } of plugins.definitions()) {
-        const extension = make(() => plugins.resolved(id))
+        const extension = id === 'web' ? webExtension(() => plugins.resolved(id), service => options.webUsage?.(service) ?? Promise.resolve()) : make(() => plugins.resolved(id))
         const filtered = { ...extension, tools: extension.tools?.filter(t => !hidden.has(t.name)) }
         registry.install(filtered)
         byName.set(id, filtered)

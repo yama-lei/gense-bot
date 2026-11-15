@@ -2,7 +2,7 @@
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context'
 import { openNodeSqliteDatabase } from '@earendil-works/chord/sqlite/node'
 import { fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai/providers/faux'
-import type { SharedProviderInfo, TreeMeta, UploadedFile, UserInfo, UsageSummary, WebhookInfo, ScheduleInfo } from '@gense/protocol'
+import type { SharedProviderInfo, TreeMeta, UploadedFile, UserInfo, UsageReport, WebhookInfo, ScheduleInfo } from '@gense/protocol'
 import { strToU8, zipSync } from 'fflate'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
@@ -260,13 +260,13 @@ test('D3/D4/D5: shared-provider changes refresh every picker; real calls use sea
   bspace.accounts.models.setProvider({ ...faux.provider, auth: credentialAuth })
   assert.equal((await bspace.accounts.models.getAuth(faux.getModel()))?.auth.apiKey, 'personal-key')
   const personal = await bspace.accounts.models.completeSimple(faux.getModel(), { messages: [{ role: 'user', content: 'personal', timestamp: Date.now() }] })
-  const totals = await (await api(host, '/api/admin/usage', a.cookie)).json() as UsageSummary[]
+  const totals = ((await (await api(host, '/api/admin/usage', a.cookie)).json()) as UsageReport).models
   const shared = totals.find(row => row.provider === provider.id)!, byok = totals.find(row => row.source === 'byok')!
   assert.equal(shared.userId, b.user.id); assert.equal(shared.email, b.user.email); assert.equal(shared.calls, 2)
   assert.deepEqual([shared.input, shared.output, shared.cacheRead, shared.totalTokens], [20, 14, 6, 40])
   assert.equal(byok.userId, b.user.id); assert.equal(byok.calls, 1); assert.equal(byok.totalTokens, personal.usage.totalTokens); assert.ok(byok.totalTokens > 0)
   assert.equal((await api(host, '/api/admin/usage?from=invalid', a.cookie)).status, 400)
-  assert.deepEqual(await (await api(host, '/api/admin/usage?from=2099-01-01&to=2099-01-02', a.cookie)).json(), [])
+  assert.deepEqual(await (await api(host, '/api/admin/usage?from=2099-01-01&to=2099-01-02', a.cookie)).json(), { models: [], services: [] })
   assert.equal((await api(host, '/api/admin/providers/' + provider.id, a.cookie, 'PUT', { kind: 'openai', name: 'Updated', baseUrl: remote.url, modelIds: ['new-model'] })).status, 200)
   await bc.until(() => bc.models.some(m => m.provider === provider.id && m.id === 'new-model') && !bc.models.some(m => m.id === 'team-model'))
   assert.ok(!ac.raw.join('').includes('team-private-key')); assert.ok(!bc.raw.join('').includes('team-private-key'))

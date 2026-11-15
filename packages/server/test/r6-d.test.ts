@@ -235,7 +235,7 @@ test('D3/D4/D5: shared-provider changes refresh every picker; real calls use sea
   t.after(() => { ac.close(); bc.close() })
   await bc.until(() => bc.raw.some(m => JSON.parse(m).t === 'models'))
   assert.deepEqual(bc.models, [], 'PROVIDER_* no longer supplies model credentials')
-  const created = await api(host, '/api/admin/providers', a.cookie, 'POST', { name: 'Team', baseUrl: remote.url, apiKey: 'team-private-key', modelIds: ['team-model'] })
+  const created = await api(host, '/api/admin/providers', a.cookie, 'POST', { kind: 'openai', name: 'Team', baseUrl: remote.url, apiKey: 'team-private-key', modelIds: ['team-model'] })
   assert.equal(created.status, 200, await created.clone().text())
   const provider = await created.json() as SharedProviderInfo
   assert.equal(provider.hasKey, true); assert.ok(!JSON.stringify(provider).includes('team-private-key'))
@@ -267,7 +267,7 @@ test('D3/D4/D5: shared-provider changes refresh every picker; real calls use sea
   assert.equal(byok.userId, b.user.id); assert.equal(byok.calls, 1); assert.equal(byok.totalTokens, personal.usage.totalTokens); assert.ok(byok.totalTokens > 0)
   assert.equal((await api(host, '/api/admin/usage?from=invalid', a.cookie)).status, 400)
   assert.deepEqual(await (await api(host, '/api/admin/usage?from=2099-01-01&to=2099-01-02', a.cookie)).json(), [])
-  assert.equal((await api(host, '/api/admin/providers/' + provider.id, a.cookie, 'PUT', { name: 'Updated', baseUrl: remote.url, modelIds: ['new-model'] })).status, 200)
+  assert.equal((await api(host, '/api/admin/providers/' + provider.id, a.cookie, 'PUT', { kind: 'openai', name: 'Updated', baseUrl: remote.url, modelIds: ['new-model'] })).status, 200)
   await bc.until(() => bc.models.some(m => m.provider === provider.id && m.id === 'new-model') && !bc.models.some(m => m.id === 'team-model'))
   assert.ok(!ac.raw.join('').includes('team-private-key')); assert.ok(!bc.raw.join('').includes('team-private-key'))
   const stored = await openNodeSqliteDatabase(join(root, 'app.sqlite'))

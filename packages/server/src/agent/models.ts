@@ -1,7 +1,7 @@
 // OpenAI-compatible shared model providers (ADR-0006); host metadata and sealed keys live in app.sqlite.
 import { createProvider, type Provider } from '@earendil-works/pi-ai'
 import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy'
-import type { ModelInfo } from '@gense/protocol'
+import type { ModelInfo, ProviderKind } from '@gense/protocol'
 
 /** The host's own providers, which every user can use; users add pi-ai's built-in ones with their credentials (D11). */
 export interface ModelSetup {
@@ -9,6 +9,7 @@ export interface ModelSetup {
   /** The host providers' models the user can pick, in display order. */
   options: ModelInfo[]
   defaultModel: ModelInfo | null
+  kinds?: Record<string, ProviderKind>
 }
 
 export interface RelayConfig {
@@ -44,7 +45,7 @@ export function relayModels(config: RelayConfig): ModelSetup {
     api: openAIResponsesApi(),
   })
   const options = config.modelIds.map((id) => ({ provider: providerId, ...(config.name && { providerName: config.name }), id, name: id, source: 'shared' as const }))
-  return { providers: [provider], options, defaultModel: options[0] ?? null }
+  return { providers: [provider], options, defaultModel: options[0] ?? null, kinds: { [providerId]: 'openai' } }
 }
 
 /** The relay from the host's environment: PROVIDER_BASE_URL, PROVIDER_AUTH_TOKEN, DEFAULT_PROVIDER_MODEL, PROVIDER_MODELS. */

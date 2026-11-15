@@ -5,6 +5,7 @@ import { applySqliteMigrations } from '@earendil-works/chord/sqlite'
 import type { AuthContext, AuthInteraction, AuthType, Credential, CredentialInfo, CredentialStore, MutableModels } from '@earendil-works/pi-ai'
 import { builtinModels } from '@earendil-works/pi-ai/providers/all'
 import type { ModelSetup } from './models.ts'
+import { deepseekModels } from './deepseek.ts'
 import { Sealer } from '../plugins/store.ts'
 import type { ModelInfo, ProviderState } from '@gense/protocol'
 
@@ -116,6 +117,7 @@ export class ModelAccounts {
     this.#host = typeof options.host === 'function' ? options.host() : options.host
     this.#hostIds = new Set(this.#host.providers.map((p) => p.id))
     this.models = builtinModels({ credentials: store, authContext: NO_AMBIENT_AUTH })
+    this.models.setProvider(deepseekModels({}).providers[0]!)
     for (const p of this.#host.providers) this.models.setProvider(p)
   }
 
@@ -134,6 +136,7 @@ export class ModelAccounts {
     for (const l of this.#listeners) l()
   }
   source(provider: string) { return this.#hostIds.has(provider) ? 'shared' as const : 'byok' as const }
+  kind(provider: string) { return this.#host.kinds?.[provider] ?? (!this.#hostIds.has(provider) && provider === 'deepseek' ? 'deepseek' : 'openai') }
 
   subscribe(listener: () => void) {
     this.#listeners.add(listener)

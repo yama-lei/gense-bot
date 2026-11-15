@@ -21,7 +21,8 @@ interface SystemMessage {
 }
 
 /** The first request's system message, with every built-in plugin on, a sandbox and a fixed clock. */
-async function firstSystemMessage(inProject = false): Promise<SystemMessage> {
+async function firstSystemMessage(scenario: 'normal' | 'project' | 'temporary' = 'normal'): Promise<SystemMessage> {
+  const inProject = scenario === 'project', temporary = scenario === 'temporary'
   const faux = fauxProvider({ models: [{ id: 'faux-1', name: 'Faux' }] })
   faux.setResponses([() => fauxAssistantMessage([fauxText('ok')])])
   let system: SystemMessage | undefined
@@ -55,9 +56,11 @@ async function firstSystemMessage(inProject = false): Promise<SystemMessage> {
       const upload = await space.workspace.upload('reference.md', new TextEncoder().encode('Reference material.'))
       await space.projects.addFiles(projectId, [upload.id])
     }
-    const tree = await space.createTree(inProject ? projectId : undefined)
-    if (inProject) {
+    const tree = await space.createTree(inProject ? projectId : undefined, ctx, temporary)
+    if (inProject || temporary) {
       await space.db.run('INSERT INTO memories (id, text, source, treeId, projectId, enabled, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', 'memory-global', 'Prefers metric units.', 'manual', null, null, 1, now, now)
+    }
+    if (inProject) {
       await space.db.run('INSERT INTO memories (id, text, source, treeId, projectId, enabled, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', 'memory-project', 'Researches climate models.', 'model', tree.id, projectId, 1, now, now + 1)
     }
     await space.send(tree.id, { text: 'hi', requestId: 'r' })
@@ -101,9 +104,9 @@ async function nativeToolList() {
   } finally { await space.close(); await remote.close() }
 }
 
-test('A8 (roadmap-6), A2/A8/A9/A10/C2 (roadmap-7): first-turn, project and native-tool prompts match the snapshot', async () => {
+test('A8 (roadmap-6), A2/A8/A9/A10/B5/C2 (roadmap-7): normal, project, temporary and native-tool prompts match the snapshot', async () => {
   const system = await firstSystemMessage()
-  const project = await firstSystemMessage(true)
+  const project = await firstSystemMessage('project'), temporary = await firstSystemMessage('temporary')
   const { memory: baseMemory, ...baseSections } = system.sections
   const { memory, project: projectText, ...projectSections } = project.sections
   assert.ok(baseMemory && memory && projectText)
@@ -113,9 +116,17 @@ test('A8 (roadmap-6), A2/A8/A9/A10/C2 (roadmap-7): first-turn, project and nativ
   assert.match(projectText, /reference\.md \(19 B\)/)
   const difference = ['# Project conversation prompt', '', 'A conversation in Research, with two memories and one project file. All other sections and tools are identical to the first-turn baseline above (checked by the test).', '']
   for (const [name, section] of [['memory', memory], ['project', projectText]]) difference.push(`## Section: ${name}`, '', '````text', section!, '````', '')
+  assert.deepEqual(temporary.sections, baseSections, 'temporary conversations omit memory even when a global memory exists')
+  assert.deepEqual(temporary.toolsAdded, system.toolsAdded?.filter(tool => tool.name !== 'memory'), 'temporary conversations omit the memory tool')
+  const temporaryScene = [
+    '# Temporary conversation prompt', '',
+    'A temporary conversation with a global memory stored. It has no memory section or memory tool. Every remaining section and tool is identical to the first-turn baseline above (checked by the test).', '',
+    '## Sections offered', '', ...Object.keys(temporary.sections).map(name => `- ${name}`), '',
+    '## Tools offered', '', ...(temporary.toolsAdded ?? []).map(tool => `- ${tool.name}`), '',
+  ]
   const fence = String.fromCharCode(96).repeat(4)
   const native = ['# DeepSeek native search tools', '', 'Actual Messages request with the web plugin enabled. The web section is omitted; other tools remain available.', '', fence + 'json', JSON.stringify(await nativeToolList(), null, 2), fence, '']
-  const text = render(system) + '\n' + difference.join('\n') + '\n' + native.join('\n')
+  const text = render(system) + '\n' + difference.join('\n') + '\n' + temporaryScene.join('\n') + '\n' + native.join('\n')
   if (process.env.UPDATE_SNAPSHOT) writeFileSync(SNAPSHOT, text)
   assert.equal(text, readFileSync(SNAPSHOT, 'utf8'), 'the prompt changed: review the diff and rerun with UPDATE_SNAPSHOT=1')
   // A10: the date is the user's, not the server's: 20:00 UTC on 11 Nov is already 12 Nov in Shanghai.

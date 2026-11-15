@@ -108,6 +108,8 @@ test('B1/B2/B4: share schema, UTF-8 byte and turn limits are enforced; only appr
   const title = await create(longTitle)
   assert.equal(title.title.length, SHARE_LIMITS.title)
   assert.equal((await (await fetch(host.url + '/api/share/' + title.token)).json() as SharedPage).title.length, SHARE_LIMITS.title)
+  await assert.rejects(client.request({ t: 'share.update', token: title.token, snapshot: tooMany }), /500 轮/)
+  assert.equal((await (await fetch(host.url + '/api/share/' + title.token)).json() as SharedPage).title, title.title, 'a rejected update preserves the existing snapshot')
   const boundary: ShareSnapshot = { title: 'Boundary', turns: [{ question: '', answer: [{ kind: 'text', text: '' }], createdAt: 0 }] }
   const overhead = Buffer.byteLength(JSON.stringify(boundary))
   boundary.turns[0]!.answer = [{ kind: 'text', text: 'a'.repeat(SHARE_LIMITS.bytes - overhead) }]
@@ -284,13 +286,14 @@ test('B5/B6: deletion and expiry make temporary content unreachable through cont
   }
 })
 
-test('B6: startup removes an expired unfinished temporary run and its workspace before recovery', { timeout: 60_000 }, async t => {
+test('B6: startup removes an expired unfinished temporary run before recovery and retains live trees', { timeout: 60_000 }, async t => {
   const root = await tempDir(), options = config(root)
   let host = await startServer(options)
   const clients: Client[] = []
   t.after(async () => { for (const client of clients) client.close(); await host.close() })
   const owner = await register(host, 'a@example.com'), client = await Client.connect(host.url, owner.cookie); clients.push(client)
   const tree = await client.request<TreeMeta>({ t: 'tree.create', temporary: true }), space = host.spaces.get(owner.user.id)!
+  const liveTemporary = await client.request<TreeMeta>({ t: 'tree.create', temporary: true }), permanent = await client.request<TreeMeta>({ t: 'tree.create' })
   await client.request({ t: 'watch', treeId: tree.id })
   await client.request({ t: 'send', treeId: tree.id, text: '[长回答] temporary-running-sentinel', requestId: 'running' })
   await client.until(() => client.branches.get(tree.id)?.branches.some(branch => branch.status === 'running'))
@@ -298,8 +301,10 @@ test('B6: startup removes an expired unfinished temporary run and its workspace 
   client.close(); await host.close()
   host = await startServer(options)
   const reopened = await Client.connect(host.url, owner.cookie); clients.push(reopened)
-  await reopened.until(() => reopened.prefs)
+  await reopened.until(() => reopened.trees.length === 2)
   assert.ok(!reopened.trees.some(item => item.id === tree.id))
+  assert.equal(reopened.trees.find(item => item.id === liveTemporary.id)!.temporary!.expiresAt, liveTemporary.temporary!.expiresAt)
+  assert.ok(reopened.trees.some(item => item.id === permanent.id && !item.temporary))
   await assert.rejects(reopened.request({ t: 'watch', treeId: tree.id }), /会话不存在/)
   await assert.rejects(access(join(root, 'users', owner.user.id, 'files', 'sessions', tree.id)))
   await host.spaces.get(owner.user.id)!.harness.waitForIdle(ctx)

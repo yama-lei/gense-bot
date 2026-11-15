@@ -1,6 +1,7 @@
 # Design：单机自部署的个人助手
 
 状态：补充至路线图 7 阶段 A、C，2026-11-14。多用户数据边界以 [ADR-0006](../adr/0006-multi-user.md) 为准，路线图 7 功能见 [roadmap-7](../plans/roadmap-7.md)。其余路线图 5 设计及验证保留，见 [roadmap-5](../plans/roadmap-5.md) 和 [backend notes](../plans/roadmap-5-backend-notes.md)。旧单用户布局不自动迁移，可用一次性 `npm run user:import-owner <email>` 导入。
+状态：补充至路线图 7 阶段 A / B，2026-11-14。多用户数据边界以 [ADR-0006](../adr/0006-multi-user.md) 为准，记忆、项目、公开分享与临时对话见 [roadmap-7](../plans/roadmap-7.md)。其余路线图 5 设计及验证保留，见 [roadmap-5](../plans/roadmap-5.md) 和 [backend notes](../plans/roadmap-5-backend-notes.md)。旧单用户布局不自动迁移，可用一次性 `npm run user:import-owner <email>` 导入。
 
 ## 结构与运行
 
@@ -8,7 +9,7 @@ Node 24 直接运行 TypeScript。`packages/protocol` 是浏览器与后端的�
 
 ```text
 packages/server/src/
-  platform/         配置、SQLite、登录、HTTP、备份、Docker sandbox、文件挂载
+  platform/         配置、SQLite、登录、HTTP、分享快照、备份、Docker sandbox、文件挂载
   agent/            UserSpace 组装；trees、branches/send、subagents、workspace、ledger、models、credentials、preferences、memory、projects
   events/           自动任务定义、Trigger 存储与恢复、outbox
   channels/         Channel 接口、渠道设置/准入/配对、web Connection、feishu
@@ -38,7 +39,7 @@ packages/server/src/
 
 ```text
 <DATA_DIR>/
-  app.sqlite                       账号、登录会话、共享模型、用量
+  app.sqlite                       账号、登录会话、共享模型、用量、公开分享快照
   users/<userId>/
     space.sqlite                   会话索引、Triggers、threads、outbox、设置、Skills、记忆、项目、pi-durable
     files/                         仅此用户的文件；该用户的 agent 看到 /data
@@ -84,6 +85,15 @@ GenerationTask 的事务包装在 `pi.assistant` 后紧接着保存 `app.native`
 `app.sqlite.usage` 保存模型 token、searches/fetches 和 modelCalls：原生工具使用最终 tool_search + tool_image_search / tool_fetch，而非展示次数。独立 web Search/Fetch 成功且非空时记在共享 DeepSeek 的 web-tools 行，modelCalls 为 0；只有插件 key 时落在 deepseek-tools/BYOK 行。`service_usage(userId, day, service, calls, units)` 只记录 OCR 页数、ASR 向上取整秒数、TTS 计费字符（汉字×2），不重复计算联网。管理员 `/api/admin/usage` 与个人 `/api/usage` 返回 UsageReport，按 UTC 日期筛选，个人接口的两组数据都限定当前用户。
 
 实现依据见 [DeepSeek 调研](../research/deepseek-app-api.md)。测试使用自拟 SSE 经真实 SDK、SQLite、HTTP/WebSocket 和飞书本地平台；尚未用真实 key 验证上游字段组合、签名接受、拒答时机、识别/合成质量、延迟或账单。
+## 公开分享与临时对话
+
+`platform/shares.ts` 在全局 `app.sqlite` 保存 `shares(token, userId, treeId, title, snapshot, turns, createdAt, updatedAt)`。网页端构造选定分支的只读快照，包含问答、允许公开的内置界面和内联图片，去掉思考、工具细节、工作区文件和 MCP Apps；服务端用 TypeBox 校验结构，限制 JSON 为 8 MB / 500 轮、标题 200 字符、图片为 PNG/JPEG/WebP/GIF base64 data URL，不解释正文或界面输入的语义。token 为 16 随机字节的 base64url；更新快照保持 token，后续对话不会自动进入已分享内容。
+
+分享创建、更新、撤销和删除对话在所属用户的队列中校验归属，变更向该用户所有连接推送 `ShareInfo[]`。删除对话时撤销它的全部链接。公开 `GET /api/share/:token` 直接读全局库，不解析 cookie、不要求登录，只返回快照和 updatedAt；不存在或已撤销为 404。响应为 JSON，带 noindex / no-store；`/s/:token` 返回网页入口，带 noindex / no-referrer。公开读取每个客户端 IP 每分钟最多 60 次。`GENSE_TRUST_PROXY` 默认关闭，使用 socket IP；在会追加客户端地址的反向代理后开启时取 X-Forwarded-For 最右侧的有效 IP，无效则回退到 socket IP。生产 Caddy Compose 开启，直连的开发 Compose 关闭。
+
+临时对话在用户 `space.sqlite` 的 `trees.expiresAt` 中记录创建时间加 24 小时。`trees` 推送仍包含 `temporary: { expiresAt }` 以便客户端打开，网页负责在导航等列表中隐藏，服务端搜索排除。它不能放进项目、分享、创建定时任务或 Webhook，也不能作为记忆写入的来源。`agent/temporary.ts` 在创建根对话和空分支时持久化禁用 memory 工具，普通分叉继承；memoryContext 不生成记忆节。
+
+网页离开时请求 tree.delete；服务器还在启动恢复前及每 10 分钟清理一次到期树。清理会中止运行、移除业务索引和工作区、撤销链接、推送列表并停止现有 watch。**删除语义的已知缺口：普通与临时 tree.delete 均未物理擦除 pi-durable 的底层 pi_* 对话和条目；它们仍可能保留在 space.sqlite 及其备份中。** 本轮采用现有删除语义，不直接修改活动 Harness 的内部表；业务内容接口在删除后不能再访问该树，用量计数保留。资料库与导出的回归探测在这些接口上线后会检查实际列表及 ZIP，不包含临时内容。
 
 ## 飞书 / Lark
 

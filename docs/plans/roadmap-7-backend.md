@@ -224,6 +224,14 @@
 - 实现取舍：通过 GenerationTask 的局部 registry/事务包装保证助手与 app.native 同事务落库；fetch 流包装单独读取 SDK 在事件观察前抛出的 error 用量。原生结果不伪装为客户端工具，也不修改 node_modules。OCR 仍在 send 内同步执行（最长 180 秒），t4h 已接受，是否异步化等待真实延迟数据。
 - 无 protocol/web 的本地改动；附件格式仍为 `path -> path.txt (text)` / `path -> path.txt (ocr, N pages)`，parseNote 的 attachments 保留原路径数组，parsedAttachments 提供解析元数据。没有新增协议问题。
 - **未实测**：没有真实 DeepSeek key。`/anthropic/v1/messages` 的线上 App 参数组合、搜索/读链接及签名接受、真实拒答/错误用量/标题时机、`/v1/tools/ocr` 的质量与延迟、`/v1/tools/asr` / `tts` 的识别/音色/流与费用、独立 `/v1/tools/search` / `fetch` 的线上返回和账单均未验证。Responses、Chat Completions、Files API、WS TTS 不在本轮实现范围，也未实测；自拟 SSE 与本地平台结果不代表线上 API 验收。
+### B-3 收尾（2026-11-14）
+
+- 按 t4h 最新要求直接快进到 `a79caa8`（A、B-1/B-2、C-1…C-5 及对应前端）。保留该集成分支的全部代码和汇报，未新增自己的集成合并提交。
+- 提示词快照增加临时对话场景：真实 SQLite 中已有全局记忆，实际模型请求仍无 memory 节和 memory 工具；测试逐项比较其余完整节和工具定义与基础场景一致，快照展示实际提供的名称列表。模型提示词原文未改。
+- B1–B6 回归补充：拒绝超限 share.update 后原公开快照保持不变；启动清理到期未完成运行时，保留未到期临时树及普通树。已有测试覆盖公开读取、更新/撤销/权限/限额/限流、临时对话隔离及删除后内容不可访问。
+- `docs/design/architecture.md` 补全 app.sqlite 的 shares 表、快照边界、公开路由和头、代理 IP 选择、临时树标记与禁用能力、启动/每 10 分钟清理、watch 释放，以及已确认的 pi_* 物理保留缺口。
+- 验证：提示词快照单测通过；`taskset -c 0 env -u https_proxy -u http_proxy -u all_proxy -u HTTPS_PROXY -u HTTP_PROXY -u ALL_PROXY npm run check:server` 在 `a79caa8` 基线上通过，104 项全部通过，无跳过，包含真实 Docker、本地飞书平台及 C-5 用量回归。最终日志 `/tmp/r7-b3-check.log`。
+- 未改 web 或 protocol，无新的协议问题。资料库和导出仍沿用 B-2 已说明的验证边界。阶段 B 完成，汇报后停下。
 
 ## 协议问题
 

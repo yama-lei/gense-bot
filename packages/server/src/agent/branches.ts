@@ -32,6 +32,7 @@ import { attachmentsText,commandText,mentionsText,parseNote,type CommandNote,typ
 import { BRANCH_COLUMNS,type BranchRow,DEFAULT_TITLE,entryText,MENTIONED_CHAT_CHARS,PREVIEW_CHARS,PREVIEW_ENTRIES,titleOf,type TreeRow } from './shared.ts'
 
 import type { UserSpace } from './space.ts'
+import { parsedAttachments } from './attachments.ts'
 import { historyEntries } from './history.ts'
 export async function branches(this: UserSpace, treeId: string, ctx: Context = BACKGROUND_CONTEXT): Promise<BranchesState> {
     const tree = await this.row(treeId)
@@ -176,11 +177,13 @@ export async function send(this: UserSpace,
       await this.db.run('UPDATE triggers SET payload = ? WHERE id = ?', JSON.stringify(payload), input.requestId)
     }
     const attached = input.attachments?.length ? await this.workspace.attach(treeId, input.attachments, ctx) : []
+    const reference = attached.length ? (input.model ? { provider: input.model.provider, modelId: input.model.id } : (await conv.agent(ctx)).model) : undefined
+    const selected = reference ? this.accounts.models.getModel(reference.provider, reference.modelId) : undefined
     const content: (TextContent | ImageContent)[] = [{ type: 'text', text }]
     if (input.command) content.push({ type: 'text', text: commandText(input.command) })
     if (input.mentions?.length) content.push({ type: 'text', text: mentionsText(await this.mentioned(treeId, input.mentions, ctx)) })
-    if (attached.length) content.push({ type: 'text', text: attachmentsText(attached.map((a) => a.path)) })
-    for (const a of attached) if (a.mimeType.startsWith('image/')) content.push({ type: 'image', data: toBase64(a.bytes), mimeType: a.mimeType })
+    if (attached.length) content.push({ type: 'text', text: attachmentsText(await parsedAttachments(this, treeId, attached, selected, ctx)) })
+    for (const a of attached) if (a.mimeType.startsWith('image/') && (!selected || selected.input.includes('image'))) content.push({ type: 'image', data: toBase64(a.bytes), mimeType: a.mimeType })
     const named = text || input.command?.label || attached.map((a) => a.path.slice(a.path.lastIndexOf('/') + 1)).join('、')
     const submissionId = await this.submit(tree, branch, conv, content, input, named, ctx)
     return { branchId: branch.id, submissionId }

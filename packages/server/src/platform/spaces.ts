@@ -65,7 +65,7 @@ export class Spaces {
       const development = config.models()
       const models = () => { const shared = this.#app.models(); const options = [...shared.options, ...development.options]; return { providers: [...shared.providers, ...development.providers], options, defaultModel: options[0] ?? null, kinds: { ...development.kinds, ...shared.kinds } } }
       try {
-        space = await UserSpace.open(db, { userId, shares: this.#shares, models, env, plugins: config.plugins, secretKey: config.secretKey, sandbox: !!sandbox, webhooks: true, skillTempDir: join(dir, 'skill-tmp'), mcp: { publicUrl: config.publicUrl, callbackPath: `/api/users/${userId}/mcp/callback` }, feishu: { ...config.feishu, publicUrl: config.publicUrl }, meterModels: (registry, source) => this.#app.meter(userId, registry, source) })
+        space = await UserSpace.open(db, { userId, shares: this.#shares, models, env, plugins: config.plugins, secretKey: config.secretKey, sandbox: !!sandbox, webhooks: true, skillTempDir: join(dir, 'skill-tmp'), mcp: { publicUrl: config.publicUrl, callbackPath: `/api/users/${userId}/mcp/callback` }, feishu: { ...config.feishu, publicUrl: config.publicUrl }, meterModels: (registry, source) => this.#app.meter(userId, registry, source), deepseekService: () => this.#app.deepseekService(), serviceUsage: (service, units) => this.#app.recordService(userId, service, units) })
         const backup = config.backups === false ? undefined : startBackups(db, join(config.dataDir, 'backups', 'users', userId), config.backups)
         this.#opened.set(userId, { space, sandbox, backup })
         await space.accounts.refreshHost()

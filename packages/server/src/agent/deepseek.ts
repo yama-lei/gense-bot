@@ -4,7 +4,7 @@ import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messag
 import { deepseekProvider } from '@earendil-works/pi-ai/providers/deepseek'
 import { transformMessages } from '@earendil-works/pi-ai/api/transform-messages'
 import { resolveTranscript } from '@earendil-works/pi-ai/utils/transcript'
-import { GenerationTask, type EntryRecord, type RegistryReader, type Tx } from '@earendil-works/pi-durable'
+import { GenerationTask, type Conversation, type EntryId, type EntryRecord, type RegistryReader, type Tx } from '@earendil-works/pi-durable'
 import { DEEPSEEK_APP_MODELS, DEEPSEEK_BASE_URL, NATIVE_KIND, parseNote, type NativeSource, type NativeTrace } from '@gense/protocol'
 import type { Context } from '@earendil-works/chord/context'
 import type { SqliteDatabase } from '@earendil-works/chord/sqlite'
@@ -93,9 +93,8 @@ export function deepseekMessagesApi(shared = false): ProviderStreams {
     const native: DeepSeekResponse = { trace: { steps: [], citations: [] }, blocks: [] }
     let failureUsage: Wire | undefined
     let started = false
-    let lastPush = 0
     const publish = () => {
-      if (request && Date.now() - lastPush >= 250) { lastPush = Date.now(); request.notify(structuredClone(native.trace)) }
+      request?.notify(structuredClone(native.trace))
     }
     const observe = (event: Wire) => {
       if (event.type === 'message_start') native.usage = event.message?.usage
@@ -237,14 +236,29 @@ export function deepseekModels(config: { providerId?: string; name?: string; bas
 export async function initializeDeepseek(db: SqliteDatabase) {
   await db.run('CREATE TABLE IF NOT EXISTS deepseek_titles (treeId TEXT PRIMARY KEY, manual INTEGER NOT NULL DEFAULT 0)')
 }
+/** A displayed answer and its invisible trace form one fork boundary. The public ID stays the answer's ID. */
+export async function deepseekForkBoundary(conv: Conversation, at: number, ctx: Context): Promise<{ at: number; through: EntryId }> {
+  const entry = (await conv.entries({ minEntryId: at as EntryId, maxEntryId: at as EntryId }, 1, undefined, ctx)).items[0]
+  if (entry?.kind === NATIVE_KIND) {
+    const previous = (await conv.entries({ maxEntryId: (at - 1) as EntryId }, 1, undefined, ctx)).items[0]
+    return { at: previous?.kind === 'pi.assistant' ? previous.id : at, through: at as EntryId }
+  }
+  const next = entry?.kind === 'pi.assistant' && (await conv.entries({ minEntryId: (at + 1) as EntryId, order: 'ascending' }, 1, undefined, ctx)).items[0]
+  return { at, through: next && next.kind === NATIVE_KIND ? next.id : at as EntryId }
+}
 export async function deepseekTitleEdited(space: UserSpace, treeId: string) {
   await space.db.run('INSERT INTO deepseek_titles VALUES (?, 1) ON CONFLICT(treeId) DO UPDATE SET manual = 1', treeId)
 }
 export class NativeState {
   readonly listeners = new Set<(treeId: string, branchId: string, trace: NativeTrace) => void>()
   readonly traces = new Map<string, NativeTrace>()
+  readonly #pushed = new Map<string, number>()
   publish(treeId: string, branchId: string, trace: NativeTrace) {
     this.traces.set(branchId, trace)
+    const now = Date.now()
+    for (const [id, at] of this.#pushed) if (now - at >= 250) this.#pushed.delete(id)
+    if (this.#pushed.has(branchId)) return
+    this.#pushed.set(branchId, now)
     for (const listener of this.listeners) listener(treeId, branchId, trace)
   }
 }
@@ -314,7 +328,9 @@ export function deepseekRegistry(registry: RegistryReader, getSpace: () => UserS
           const text = blocks.filter(b => b.type === 'text').map(b => b.text).join('\n')
           const search = space.plugins.list().some(p => p.id === 'web' && p.enabled) || blocks.some(b => b.type === 'text' && parseNote(b.text)?.mentions.some(m => m.kind === 'plugin' && m.id === 'web'))
           const first = users[0]?.content
-          const firstText = typeof first === 'string' ? first : first?.filter(b => b.type === 'text' && !parseNote(b.text)).map(b => b.type === 'text' ? b.text : '').join('') ?? ''
+          const firstBlocks = typeof first === 'string' ? [{ type: 'text' as const, text: first }] : first ?? []
+          const notes = firstBlocks.flatMap(b => b.type === 'text' && parseNote(b.text) ? [parseNote(b.text)!] : [])
+          const firstText = firstBlocks.flatMap(b => b.type === 'text' && !parseNote(b.text) ? [b.text] : []).join('') || notes.find(n => n.command)?.command?.label || notes.flatMap(n => n.attachments).map(path => path.split('/').at(-1)).join('、')
           const title = branch.role === 'main' && !edited?.manual && (tree.title === DEFAULT_TITLE || tree.title === titleOf(firstText)) && users.length === 1
           const request: NativeRequest = { search, read: search || /https?:\/\/\S+/i.test(text), safety: space.preferences.get().deepseekSafety !== false, title, notify: trace => nativeState(space).publish(tree.id, branch.id, trace) }
           let response: DeepSeekMessage | undefined
@@ -330,7 +346,7 @@ export function deepseekRegistry(registry: RegistryReader, getSpace: () => UserS
           complete = async () => {
             nativeState(space).traces.delete(branch.id)
             const nextTitle = response?.deepseek?.title?.trim()
-            if (title && nextTitle) {
+            if (title && nextTitle && response && !['error', 'aborted'].includes(response.stopReason) && !response.deepseek?.trace.refusal) {
               await space.db.run('UPDATE trees SET title = ? WHERE id = ? AND title IN (?, ?) AND NOT EXISTS (SELECT 1 FROM deepseek_titles WHERE treeId = ? AND manual = 1)', nextTitle.slice(0, 200), tree.id, DEFAULT_TITLE, titleOf(firstText), tree.id)
               await space.changed()
             }

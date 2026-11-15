@@ -709,3 +709,72 @@ The project's files are in /data/projects/project-research/ (read-only; copy one
 - reference.md (19 B)
 </project>
 ````
+
+# DeepSeek native search tools
+
+Actual Messages request with the web plugin enabled. The web section is omitted; other tools remain available.
+
+````json
+[
+  {
+    "name": "read",
+    "type": "client"
+  },
+  {
+    "name": "write",
+    "type": "client"
+  },
+  {
+    "name": "edit",
+    "type": "client"
+  },
+  {
+    "name": "delete",
+    "type": "client"
+  },
+  {
+    "name": "tool_search",
+    "type": "client"
+  },
+  {
+    "name": "report",
+    "type": "client"
+  },
+  {
+    "name": "agent_spawn",
+    "type": "client"
+  },
+  {
+    "name": "artifact_create",
+    "type": "client"
+  },
+  {
+    "name": "email_draft",
+    "type": "client"
+  },
+  {
+    "name": "ui_render",
+    "type": "client"
+  },
+  {
+    "name": "image_generate",
+    "type": "client"
+  },
+  {
+    "name": "bash",
+    "type": "client"
+  },
+  {
+    "name": "memory",
+    "type": "client"
+  },
+  {
+    "name": "deepseek_web_search",
+    "type": "deepseek_web_search"
+  },
+  {
+    "name": "deepseek_read_url",
+    "type": "deepseek_read_url"
+  }
+]
+````

@@ -10,6 +10,8 @@ import { pluginDefaultsFromEnv, UserSpace } from '../src/index.ts'
 import { diskEnv } from './fixtures.ts'
 import { COMPACTION_INSTRUCTIONS } from '../src/agent/compaction.ts'
 import { projectDir } from '@gense/protocol'
+import { deepseekModels } from '../src/agent/deepseek.ts'
+import { deepseekPlatform, fixture } from './deepseek-platform.ts'
 
 const SNAPSHOT = new URL('./prompt.snapshot.md', import.meta.url)
 
@@ -76,7 +78,30 @@ function render(system: SystemMessage) {
   return out.join('\n')
 }
 
-test('A8 (roadmap-6), A2/A8/A9/A10 (roadmap-7): first-turn and project prompts match the snapshot', async () => {
+async function nativeToolList() {
+  const remote = await deepseekPlatform(async (_body, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    res.end(await fixture('plain'))
+  })
+  const space = await UserSpace.open(await openNodeSqliteDatabase(':memory:'), {
+    models: deepseekModels({ baseUrl: remote.url, apiKey: 'k' }), env: await diskEnv(), sandbox: true, secretKey: 'k',
+    plugins: { defaults: pluginDefaultsFromEnv({ DEEPSEEK_API_KEY: 'k', PROVIDER_BASE_URL: 'http://image.invalid', PROVIDER_AUTH_TOKEN: 'k' }) },
+    now: () => Date.UTC(2026, 10, 11, 20),
+  })
+  try {
+    await space.preferences.set({ name: 'Ada', instructions: 'Keep answers short.', timeZone: 'Asia/Shanghai', suggestions: false })
+    const tree = await space.createTree()
+    await space.send(tree.id, { text: 'hi', requestId: 'native' })
+    await space.harness.waitForIdle(ctx)
+    const request = remote.requests[0]!
+    assert.ok(!JSON.stringify(request.system).includes('<web>'), 'native search removes the web plugin guidance')
+    assert.ok(!request.tools.some((tool: any) => ['web_search', 'web_fetch', 'deep_search'].includes(tool.name)))
+    assert.deepEqual(request.tools.filter((tool: any) => tool.type?.startsWith('deepseek_')).map((tool: any) => tool.type), ['deepseek_web_search', 'deepseek_read_url'])
+    return request.tools.map((tool: any) => ({ name: tool.name, type: tool.type ?? 'client' }))
+  } finally { await space.close(); await remote.close() }
+}
+
+test('A8 (roadmap-6), A2/A8/A9/A10/C2 (roadmap-7): first-turn, project and native-tool prompts match the snapshot', async () => {
   const system = await firstSystemMessage()
   const project = await firstSystemMessage(true)
   const { memory: baseMemory, ...baseSections } = system.sections
@@ -88,7 +113,9 @@ test('A8 (roadmap-6), A2/A8/A9/A10 (roadmap-7): first-turn and project prompts m
   assert.match(projectText, /reference\.md \(19 B\)/)
   const difference = ['# Project conversation prompt', '', 'A conversation in Research, with two memories and one project file. All other sections and tools are identical to the first-turn baseline above (checked by the test).', '']
   for (const [name, section] of [['memory', memory], ['project', projectText]]) difference.push(`## Section: ${name}`, '', '````text', section!, '````', '')
-  const text = render(system) + '\n' + difference.join('\n')
+  const fence = String.fromCharCode(96).repeat(4)
+  const native = ['# DeepSeek native search tools', '', 'Actual Messages request with the web plugin enabled. The web section is omitted; other tools remain available.', '', fence + 'json', JSON.stringify(await nativeToolList(), null, 2), fence, '']
+  const text = render(system) + '\n' + difference.join('\n') + '\n' + native.join('\n')
   if (process.env.UPDATE_SNAPSHOT) writeFileSync(SNAPSHOT, text)
   assert.equal(text, readFileSync(SNAPSHOT, 'utf8'), 'the prompt changed: review the diff and rerun with UPDATE_SNAPSHOT=1')
   // A10: the date is the user's, not the server's: 20:00 UTC on 11 Nov is already 12 Nov in Shanghai.

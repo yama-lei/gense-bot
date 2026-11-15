@@ -333,7 +333,7 @@ export class Connection {
       compactions(value)
     })
     void watch.closed.then(() => {
-      if (this.#watches.get(treeId) === watch) this.#watches.delete(treeId)
+      if (this.#watches.get(treeId) === watch) { this.#watches.delete(treeId); this.#shown.delete(treeId) }
     })
   }
 
@@ -350,5 +350,6 @@ export class Connection {
     for (const u of this.#unsubscribe.splice(0)) u()
     await Promise.all([...this.#watches.values()].map((w) => w.stop()))
     this.#watches.clear()
+    this.#shown.clear()
   }
 }

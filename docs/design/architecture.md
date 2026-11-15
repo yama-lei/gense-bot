@@ -1,6 +1,6 @@
 # Design：单机自部署的个人助手
 
-状态：补充至路线图 7 阶段 A，2026-11-14。多用户数据边界以 [ADR-0006](../adr/0006-multi-user.md) 为准，记忆与项目见 [roadmap-7](../plans/roadmap-7.md)。其余路线图 5 设计及验证保留，见 [roadmap-5](../plans/roadmap-5.md) 和 [backend notes](../plans/roadmap-5-backend-notes.md)。旧单用户布局不自动迁移，可用一次性 `npm run user:import-owner <email>` 导入。
+状态：补充至路线图 7 阶段 A、C，2026-11-14。多用户数据边界以 [ADR-0006](../adr/0006-multi-user.md) 为准，路线图 7 功能见 [roadmap-7](../plans/roadmap-7.md)。其余路线图 5 设计及验证保留，见 [roadmap-5](../plans/roadmap-5.md) 和 [backend notes](../plans/roadmap-5-backend-notes.md)。旧单用户布局不自动迁移，可用一次性 `npm run user:import-owner <email>` 导入。
 
 ## 结构与运行
 
@@ -66,6 +66,24 @@ packages/server/src/
 `agent/projects.ts` 管理同库的 `projects(id, name, color, instructions, createdAt, updatedAt)`；`trees.projectId` 保存整棵对话树的归属。项目资料从 uploads 移到 `users/<userId>/files/projects/<projectId>/`，模型中的路径为 `/data/projects/<projectId>/`；单文件最多 20 MB，一个项目总量最多 200 MB。删除项目时可删除所属对话及其工作区，或保留对话并移出项目；两种方式都删除项目文件和项目记忆。
 
 系统提示词靠后的 `memory` 和 `project` 节由 `agent/memory-prompt.ts` 的原文函数生成，每轮读取当前数据。记忆只包含启用的全局条目及当前项目条目，按更新时间优先并限制条目文本预算为 8000 字符；关闭参考记忆也会移除 `memory` 工具。项目节包含当前指令和资料清单，移入/移出、修改指令和分叉都在后续轮次生效，不在首条用户消息里保存项目指令。
+
+## DeepSeek App API
+
+共享提供方在 `app.sqlite.shared_providers.kind` 区分 OpenAI 兼容与 DeepSeek。DeepSeek 地址和模型列表留空时使用协议默认值；共享及 BYOK 都由 `agent/deepseek.ts` 创建 Messages 提供方，只有 `DEEPSEEK_APP_MODELS` 中的模型启用 App 扩展，其余按普通 Messages 调用。共享模型强制 high 安全检查，BYOK 按用户偏好选择 high/low；推理强度映射为 low/high/max，未指定时采用服务端默认。侧调用不加入原生工具或标题。
+
+每轮请求读取插件开关与本轮 @web：联网时仅提供 DeepSeek 的搜索和读链接工具，并移除 web 插件的普通工具和指引；仅有用户链接时只提供读链接。pi-ai 的供应商事件观察器组装步骤、结果、引用与原始块，fetch 流观察器补读 SDK 提前抛出的错误用量。进行中的 NativeTrace 最多每 250 ms 推送一次，只发给 watch 对应分支的网页连接。
+
+GenerationTask 的事务包装在 `pi.assistant` 后紧接着保存 `app.native`，其中有 NativeTrace、原始 blocks（含 kind/signature）和 responseId。助手模型记录也保留回放元数据；`app.native` 自身没有 model 内容，不进入提示词。回放只恢复当前上下文中、相同提供方/API/模型的原始块：重启和分叉可恢复读链接签名，换模型/提供方不会携带旧签名，压缩舍弃的历史也不会重新注入。分叉内部继承到相邻 `app.native`，对外 forkEntryId 和版本分组仍使用助手 id；编辑、重生成遵循同一边界。
+
+终态 refusal 及输入 400 Content Exists Risk 都清空回答正文、思考和待执行的客户端工具，以正常 stop 保存并记用量。飞书等外部渠道等待原生回答终态后才发布正文，拒答使用固定说明。首轮默认标题可由同次回答返回的 title 更新；`space.sqlite.deepseek_titles(treeId, manual)` 保护手动命名，包括与首句相同的命名。
+
+`agent/attachments.ts` 在发送前本地提取 Office/PDF 文本；扫描件、旧格式或非视觉模型的图片，使用任一有 key 的共享 DeepSeek 提供方调用独立 OCR。清理定位标记后写到原路径加 `.txt`，附件说明记录原路径、文本路径、text/ocr 和页数。`space.sqlite.attachment_parses(path, digest, how, pages)` 按原件 SHA-256 缓存，重启复用；解析失败仍发送原文件。OCR 同步等待，最长 180 秒，实际延迟待有 key 后评估。删除对话一并清理其解析索引、手动标题标记和内存进度。Files API 的解析结果不能下载，本轮不使用它做跨模型附件转换。
+
+`platform/speech.ts` 提供登录后的 GET `/api/speech` 和 POST `/api/speech/asr`、`/api/speech/tts`，只使用共享凭据；每用户每分钟最多 20 次写请求。ASR 接受 16-bit PCM WAV / Ogg Opus，限制 8 MiB、120 秒；TTS 限制 4000 个 Unicode 字符，开启 filter_markdown，将 HTTP WAV 响应体带背压地流式转发。浏览器不接触服务端 key。
+
+`app.sqlite.usage` 保存模型 token、searches/fetches 和 modelCalls：原生工具使用最终 tool_search + tool_image_search / tool_fetch，而非展示次数。独立 web Search/Fetch 成功且非空时记在共享 DeepSeek 的 web-tools 行，modelCalls 为 0；只有插件 key 时落在 deepseek-tools/BYOK 行。`service_usage(userId, day, service, calls, units)` 只记录 OCR 页数、ASR 向上取整秒数、TTS 计费字符（汉字×2），不重复计算联网。管理员 `/api/admin/usage` 与个人 `/api/usage` 返回 UsageReport，按 UTC 日期筛选，个人接口的两组数据都限定当前用户。
+
+实现依据见 [DeepSeek 调研](../research/deepseek-app-api.md)。测试使用自拟 SSE 经真实 SDK、SQLite、HTTP/WebSocket 和飞书本地平台；尚未用真实 key 验证上游字段组合、签名接受、拒答时机、识别/合成质量、延迟或账单。
 
 ## 飞书 / Lark
 

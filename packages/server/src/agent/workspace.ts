@@ -4,10 +4,11 @@
 //   /data/sessions/<treeId>/   a tree's workspace, the agent's cwd
 //   /data/skills/              shared Skills, read-only to the agent
 //   /data/uploads/             files the user uploaded, copied into a tree when attached to a message
+//   /data/projects/<id>/       project reference files, read-only to the agent
 import { BACKGROUND_CONTEXT, type Context } from '@earendil-works/chord/context'
 import type { ExecutionEnv, FileInfo } from '@earendil-works/pi-durable/env'
 import { basename, isUnder, resolvePath } from '../platform/fs/paths.ts'
-import type { FileEntry, FilePreview, UploadedFile } from '@gense/protocol'
+import { projectDir, type FileEntry, type FilePreview, type UploadedFile } from '@gense/protocol'
 
 export const DATA_DIR = '/data'
 export const SKILLS_DIR = '/data/skills'
@@ -57,21 +58,37 @@ const unwrap = <T>(r: { ok: true; value: T } | { ok: false; error: Error }) => {
 
 export class Workspace {
   readonly #env: EnvFactory
+  readonly #projectForTree: (treeId: string) => Promise<string | null>
 
-  constructor(env: EnvFactory) {
+  constructor(env: EnvFactory, projectForTree: (treeId: string) => Promise<string | null> = async () => null) {
     this.#env = env
+    this.#projectForTree = projectForTree
   }
 
   env(cwd: string) {
     return this.#env(cwd)
   }
 
-  /** Throws unless the panel may touch `path` for this tree: its own workspace, or the read-only Skills. */
-  #check(treeId: string, path: string, write: boolean) {
+  /** The agent may read this tree's project, even though the user's container mounts all projects read-only. */
+  async agentEnv(cwd: string) {
+    const env = await this.#env(cwd), treeId = /^\/data\/sessions\/([^/]+)(?:\/|$)/.exec(cwd)?.[1]
+    const projectId = treeId ? await this.#projectForTree(treeId) : null
+    const readOnly = (env as ExecutionEnv & { readOnlyMounts?: string[] }).readOnlyMounts ?? []
+    return new Proxy(env, { get(target, key) {
+      if (key === 'readOnlyMounts') return [...readOnly, ...(projectId ? [projectDir(projectId)] : [])]
+      const value = Reflect.get(target, key, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    } })
+  }
+
+  /** The panel may write its workspace and read its project and the shared Skills. */
+  async #check(treeId: string, path: string, write: boolean) {
     const abs = resolvePath(treeDir(treeId), path)
     if (isUnder(abs, treeDir(treeId)) && abs !== treeDir(treeId)) return abs
     if (!write && isUnder(abs, SKILLS_DIR)) return abs
-    throw new Error(write ? '只能修改本会话工作区里的文件' : '只能查看本会话工作区和 Skills 里的文件')
+    const projectId = await this.#projectForTree(treeId)
+    if (!write && projectId && isUnder(abs, projectDir(projectId)) && abs !== projectDir(projectId)) return abs
+    throw new Error(write ? '只能修改本会话工作区里的文件' : '只能查看本会话工作区、当前项目和 Skills 里的文件')
   }
 
   async createTree(treeId: string, ctx: Context = BACKGROUND_CONTEXT) {
@@ -84,7 +101,7 @@ export class Workspace {
     unwrap(await env.remove(treeDir(treeId), { recursive: true, force: true }, ctx))
   }
 
-  /** Files under the tree's workspace and the Skills, depth first, without directories. */
+  /** Files under the tree's workspace, Skills and current project, depth first, without directories. */
   async list(treeId: string, ctx: Context = BACKGROUND_CONTEXT): Promise<FileEntry[]> {
     const env = await this.#env(treeDir(treeId))
     const out: FileEntry[] = []
@@ -100,12 +117,14 @@ export class Workspace {
     }
     await walk(treeDir(treeId), false)
     await walk(SKILLS_DIR, true)
+    const projectId = await this.#projectForTree(treeId)
+    if (projectId) await walk(projectDir(projectId), true)
     return out
   }
 
   async preview(treeId: string, path: string, ctx: Context = BACKGROUND_CONTEXT): Promise<FilePreview> {
     const env = await this.#env(treeDir(treeId))
-    const reader = unwrap(await env.openBinaryReader(this.#check(treeId, path, false), undefined, ctx))
+    const reader = unwrap(await env.openBinaryReader(await this.#check(treeId, path, false), undefined, ctx))
     try {
       const { size } = unwrap(await reader.info(ctx))
       const bytes = unwrap(await reader.read(0, Math.min(size, PREVIEW_BYTES), ctx))
@@ -124,14 +143,14 @@ export class Workspace {
   /** The whole file, for download. */
   async read(treeId: string, path: string, ctx: Context = BACKGROUND_CONTEXT) {
     const env = await this.#env(treeDir(treeId))
-    const abs = this.#check(treeId, path, false)
+    const abs = await this.#check(treeId, path, false)
     const bytes = unwrap(await env.readBinaryFile(abs, ctx))
     return { name: basename(abs), mimeType: mimeOf(abs), base64: toBase64(bytes) }
   }
 
   async delete(treeId: string, path: string, ctx: Context = BACKGROUND_CONTEXT) {
     const env = await this.#env(treeDir(treeId))
-    unwrap(await env.remove(this.#check(treeId, path, true), { recursive: true }, ctx))
+    unwrap(await env.remove(await this.#check(treeId, path, true), { recursive: true }, ctx))
   }
 
   /** Stores an upload under /data/uploads; it reaches a tree when attached to a message. */

@@ -100,7 +100,7 @@ export class Sandbox {
     await docker(['rm', '-f', this.name]).catch(() => {})
     // A fresh /tmp for each container, as a reboot would leave it.
     await rm(tmpDir(root), { recursive: true, force: true })
-    for (const dir of ['skills', '.cache', '.local', '.home', '.tmp']) {
+    for (const dir of ['skills', 'projects', '.cache', '.local', '.home', '.tmp']) {
       await assertConfined(root, join(root, dir))
       await mkdir(join(root, dir), { recursive: true })
     }
@@ -117,6 +117,7 @@ export class Sandbox {
       '--cpus', this.#options.cpus ?? '2', '--pids-limit', String(this.#options.pids ?? 512),
       '--mount', `type=bind,src=${root},dst=${DATA_DIR}`,
       '--mount', `type=bind,src=${join(root, 'skills')},dst=${SKILLS_DIR},readonly`,
+      '--mount', `type=bind,src=${join(root, 'projects')},dst=${DATA_DIR}/projects,readonly`,
       '--mount', `type=bind,src=${tmpDir(root)},dst=${SANDBOX_TMP}`,
       // The docker CLI adds the host's proxy settings; they point at the host, which the sandbox cannot reach.
       ...PROXY_VARS.flatMap((v) => ['--env', `${v}=`]),

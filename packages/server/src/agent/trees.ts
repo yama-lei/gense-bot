@@ -59,7 +59,9 @@ export async function conversationChanged(this: UserSpace, conversationId: numbe
     if (row && !this.closed) this.branchesChanged(row.treeId)
   }
 
-export async function createTree(this: UserSpace, ctx: Context = BACKGROUND_CONTEXT): Promise<TreeMeta> {
+export async function createTree(this: UserSpace, projectId?: string, ctx: Context = BACKGROUND_CONTEXT): Promise<TreeMeta> {
+  return this.projects.serial(async () => {
+    if (projectId !== undefined) await this.projects.get(projectId)
     const model = await this.accounts.defaultModel()
     const id = crypto.randomUUID()
     await this.workspace.createTree(id, ctx)
@@ -71,12 +73,13 @@ export async function createTree(this: UserSpace, ctx: Context = BACKGROUND_CONT
       ctx,
     )
     const now = this.now()
-    const meta: TreeMeta = { id, title: DEFAULT_TITLE, pinned: false, createdAt: now, updatedAt: now }
+    const meta: TreeMeta = { id, title: DEFAULT_TITLE, pinned: false, createdAt: now, updatedAt: now, ...(projectId && { projectId }) }
     const main: BranchRow = { id: crypto.randomUUID(), treeId: id, conversationId: conv.id, parentId: null, forkEntryId: null, role: 'main', mode: 'new', title: '', status: 'idle', createdAt: now }
     await this.insertBranch(main)
-    await this.db.run(`INSERT INTO trees (${COLUMNS}) VALUES (?, ?, ?, 0, ?, ?, ?, NULL)`, meta.id, conv.id, meta.title, now, now, main.id)
+    await this.db.run(`INSERT INTO trees (${COLUMNS}) VALUES (?, ?, ?, 0, ?, ?, ?, NULL, ?)`, meta.id, conv.id, meta.title, now, now, main.id, projectId ?? null)
     await this.changed()
     return meta
+  })
   }
 
 export function insertBranch(this: UserSpace, b: BranchRow): Promise<void> {
@@ -95,11 +98,15 @@ export function insertBranch(this: UserSpace, b: BranchRow): Promise<void> {
     )
   }
 
-export async function updateTree(this: UserSpace, treeId: string, patch: { title?: string; pinned?: boolean }): Promise<void> {
+export async function updateTree(this: UserSpace, treeId: string, patch: { title?: string; pinned?: boolean; projectId?: string | null }): Promise<void> {
+  return this.projects.serial(async () => {
     await this.row(treeId)
+    if (patch.projectId !== undefined && patch.projectId !== null) await this.projects.get(patch.projectId)
     if (patch.title !== undefined) await this.db.run('UPDATE trees SET title = ? WHERE id = ?', patch.title.trim() || DEFAULT_TITLE, treeId)
     if (patch.pinned !== undefined) await this.db.run('UPDATE trees SET pinned = ? WHERE id = ?', patch.pinned ? 1 : 0, treeId)
+    if (patch.projectId !== undefined) await this.db.run('UPDATE trees SET projectId = ?, updatedAt = ? WHERE id = ?', patch.projectId, this.now(), treeId)
     await this.changed()
+  })
   }
 
 export async function deleteTree(this: UserSpace, treeId: string, ctx: Context = BACKGROUND_CONTEXT): Promise<void> {

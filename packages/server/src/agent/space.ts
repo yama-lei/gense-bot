@@ -9,6 +9,7 @@ import { createToolSearchExtension } from '@earendil-works/pi-durable/tool-searc
 import { defineExtension, section } from '@earendil-works/pi-durable'
 import { PreferenceStore } from './preferences.ts'
 import { MemoryStore, memoryExtension } from './memory.ts'
+import { ProjectStore, projectExtension } from './projects.ts'
 // One user's conversations: a pi-durable Harness plus the sidebar index, in the same SQLite database (roadmap-3 D2).
 // A tree is a main conversation and the branches forked from it, all ownerless; tree and branch ids are ours,
 // conversation ids are pi-durable's. Each tree has one workspace directory, every branch's cwd (D6).
@@ -82,6 +83,7 @@ export class UserSpace {
   readonly mcp: McpHost
   readonly preferences: PreferenceStore
   readonly memories: MemoryStore
+  readonly projects: ProjectStore
   readonly accounts: ModelAccounts
 
   readonly options: SpaceOptions
@@ -106,6 +108,7 @@ export class UserSpace {
     this.mcp = mcp
     this.preferences = preferences
     this.memories = new MemoryStore(db, () => this.now())
+    this.projects = new ProjectStore(this)
     this.accounts = accounts
     this.options = options
     harness.subscribeCommits((publication) => {
@@ -144,7 +147,8 @@ export class UserSpace {
     const events = eventsExtension(getSpace)
     const memory = memoryExtension(getSpace)
     const explicitMemory = memoryExtension(getSpace, 'explicit')
-    for (const e of [gense, files, prefsExtension, toolSearch, events.extension, memory, explicitMemory, noSandbox, ...Object.entries(PLUGINS).map(([id, make]) => make(() => plugins.resolved(id)))]) {
+    const project = projectExtension(getSpace)
+    for (const e of [gense, files, prefsExtension, toolSearch, events.extension, memory, explicitMemory, project, noSandbox, ...Object.entries(PLUGINS).map(([id, make]) => make(() => plugins.resolved(id)))]) {
       registry.install(e)
       byName.set(e.name, e)
     }
@@ -162,7 +166,7 @@ export class UserSpace {
     const mcp = await McpHost.open(db, plugins, options.secretKey, options.mcp)
     const accounts = await ModelAccounts.open(db, { host: options.models, secretKey: options.secretKey, oauth: true })
     options.meterModels?.(accounts.models, provider => accounts.source(provider))
-    const workspace = new Workspace(options.env)
+    const workspace = new Workspace(options.env, async treeId => (await db.get<{ projectId: string | null }>('SELECT projectId FROM trees WHERE id = ?', treeId))?.projectId ?? null)
     const skills = await SkillStore.open(db, async () => workspace.env(DATA_DIR), ctx, options.skillTempDir)
     // Conversations follow the host's selection, read at every resolution: a plugin switched on or off applies from the
     // next turn of every conversation (D8). Every branch of a tree gets the same selection, so forks share its prefix (D3).
@@ -182,12 +186,12 @@ export class UserSpace {
             ])),
           },
         },
-        extensions: [gense, files, prefsExtension, toolSearch, events.extension, ...active.map((id) => byName.get(id)!), ...(active.includes('sandbox') ? [] : [noSandbox]), ...(preferences.get().useMemory === false ? [] : [preferences.get().memoryWrites === 'explicit' ? explicitMemory : memory])],
+        extensions: [gense, files, prefsExtension, toolSearch, events.extension, ...active.map((id) => byName.get(id)!), ...(active.includes('sandbox') ? [] : [noSandbox]), ...(preferences.get().useMemory === false ? [] : [preferences.get().memoryWrites === 'explicit' ? explicitMemory : memory]), project],
       }
     }
     const harness = await Harness.open(
       storage,
-      { ...options.harness, settings, models: accounts.models, registry: compactionRegistry(registry), env: ({ cwd }) => workspace.env(cwd ?? DATA_DIR) },
+      { ...options.harness, settings, models: accounts.models, registry: compactionRegistry(registry), env: ({ cwd }) => workspace.agentEnv(cwd ?? DATA_DIR) },
       ctx,
     )
     space = new UserSpace(db, harness, workspace, plugins, skills, accounts, options, preferences, mcp, channels, triggers, outbox)

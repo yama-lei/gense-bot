@@ -39,6 +39,8 @@ export class Connection {
     this.#unsubscribe.push(space.preferences.subscribe(() => this.#send({ t: 'prefs', prefs: space.preferences.get() })))
     this.#unsubscribe.push(space.memories.subscribe(memories => this.#send({ t: 'memories', memories })))
     this.#send({ t: 'memories', memories: await space.memories.list() })
+    this.#unsubscribe.push(space.projects.subscribe(projects => this.#send({ t: 'projects', projects })))
+    this.#send({ t: 'projects', projects: await space.projects.list() })
     const accounts = async () => {
       const { accounts } = space
       this.#send({ t: 'providers', providers: accounts.providers() })
@@ -91,9 +93,9 @@ export class Connection {
     const { space } = this.#o
     switch (r.t) {
       case 'tree.create':
-        return space.createTree()
+        return space.createTree(r.projectId)
       case 'tree.update':
-        return space.updateTree(r.treeId, { ...(r.title !== undefined && { title: r.title }), ...(r.pinned !== undefined && { pinned: r.pinned }) })
+        return space.updateTree(r.treeId, { ...(r.title !== undefined && { title: r.title }), ...(r.pinned !== undefined && { pinned: r.pinned }), ...(r.projectId !== undefined && { projectId: r.projectId }) })
       case 'tree.delete':
         await this.#unwatch(r.treeId)
         return space.deleteTree(r.treeId)
@@ -207,6 +209,20 @@ export class Connection {
       case 'memory.remove':
         await space.memories.remove(r.memoryId)
         return
+      case 'project.create':
+        return space.projects.create(r)
+      case 'project.update':
+        return space.projects.update(r.projectId, r)
+      case 'project.delete':
+        return space.projects.delete(r.projectId, r.deleteChats)
+      case 'project.files.list':
+        return space.projects.listFiles(r.projectId)
+      case 'project.files.add':
+        return space.projects.addFiles(r.projectId, r.uploads)
+      case 'project.files.delete':
+        return space.projects.deleteFile(r.projectId, r.path)
+      case 'project.files.read':
+        return space.projects.readFile(r.projectId, r.path)
       case 'trees.search':
         return space.searchTrees(r.query, r.limit)
       case 'plugin.set':

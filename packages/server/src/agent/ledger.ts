@@ -10,7 +10,6 @@ import type { ExecutionEnv } from '@earendil-works/pi-durable/env'
 import { createEditTool, createWriteTool } from '@earendil-works/pi-durable/tools'
 import { Type } from 'typebox'
 import { createDocumentReadTool } from './documents.ts'
-import { MountedEnv } from '../platform/fs/mounted-env.ts'
 import { isUnder, normalizePath } from '../platform/fs/paths.ts'
 import { SKILLS_DIR } from './workspace.ts'
 
@@ -50,7 +49,7 @@ async function resolve(env: ExecutionEnv, path: string, write: boolean, ctx: Con
   const abs = normalizePath(real.ok ? real.value : absolute.value)
   const root = normalizePath(env.cwd)
   if (isUnder(abs, root) && abs !== root) return absolute.value
-  const readable = [SKILLS_DIR, ...(env instanceof MountedEnv ? env.readOnlyMounts : [])]
+  const readable = [SKILLS_DIR, ...((env as ExecutionEnv & { readOnlyMounts?: string[] }).readOnlyMounts ?? [])]
   if (!write && readable.some((dir) => isUnder(abs, dir))) return absolute.value
   throw new Error(write ? `只能修改本会话工作区（${root}）里的文件` : `只能读取本会话工作区（${root}）和 ${readable.join('、')} 里的文件`)
 }

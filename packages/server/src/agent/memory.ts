@@ -54,14 +54,13 @@ export class MemoryStore {
   async #references(treeId: string | null, projectId: string | null, enabled: boolean) {
     if (typeof enabled !== 'boolean') throw new Error('记忆开关无效')
     if (treeId !== null && (typeof treeId !== 'string' || !await this.#db.get('SELECT id FROM trees WHERE id = ?', treeId))) throw new Error('会话不存在')
-    if (projectId !== null && (typeof projectId !== 'string' || !projectId.trim())) throw new Error('项目无效')
+    if (projectId !== null && (typeof projectId !== 'string' || !await this.#db.get('SELECT id FROM projects WHERE id = ?', projectId))) throw new Error('项目不存在')
   }
 
   add(input: AddMemory): Promise<Memory> {
     return this.#mutate(async () => {
-      const text = memoryText(input.text), source = input.source ?? 'manual', treeId = input.treeId ?? null, projectId = input.projectId ?? null, enabled = input.enabled ?? true
+      const text = memoryText(input.text), source = input.source === undefined ? 'manual' : input.source, treeId = input.treeId ?? null, projectId = input.projectId ?? null, enabled = input.enabled === undefined ? true : input.enabled
       if (!['manual', 'saved', 'model'].includes(source)) throw new Error('记忆来源无效')
-      if (source !== 'manual' && !treeId) throw new Error('记忆来源需要会话')
       await this.#references(treeId, projectId, enabled)
       const count = (await this.#db.get<{ n: number }>('SELECT count(*) AS n FROM memories'))!.n
       if (count >= MEMORY_LIMITS.entries) throw new Error(`记忆已满（${MEMORY_LIMITS.entries} 条），请先删除一些`)
@@ -103,6 +102,10 @@ export class MemoryStore {
       return previous
     })
   }
+
+  removeProject(projectId: string): Promise<void> {
+    return this.#mutate(() => this.#db.run('DELETE FROM memories WHERE projectId = ?', projectId))
+  }
 }
 
 /** Central conversation lookup; stage B can suppress memory here for ephemeral trees as well. */
@@ -112,7 +115,7 @@ export async function memoryContext(space: UserSpace, conversationId: number) {
   const tree = await space.row(branch.treeId)
   // The optional field is introduced by roadmap-7 B; keep the privacy decision beside the common lookup.
   if ((tree as typeof tree & { ephemeral?: number }).ephemeral) return undefined
-  return { treeId: tree.id, projectId: (tree as typeof tree & { projectId?: string | null }).projectId ?? null }
+  return { treeId: tree.id, projectId: tree.projectId }
 }
 
 export function memoryExtension(getSpace: () => UserSpace, writes: 'auto' | 'explicit' = 'auto') {

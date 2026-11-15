@@ -677,3 +677,35 @@ Include:
 
 Be concise, structured, and focused on helping the next LLM seamlessly continue the work.
 ````
+
+# Project conversation prompt
+
+A conversation in Research, with two memories and one project file. All other sections and tools are identical to the first-turn baseline above (checked by the test).
+
+## Section: memory
+
+````text
+<memory>
+What the user asked you to remember, or you saved earlier with the `memory` tool. Use it when relevant, without mentioning that you remembered unless asked. If the user contradicts an entry, follow the user and update the entry.
+<memories>
+- [memory-project] (project) Researches climate models.
+- [memory-global] Prefers metric units.
+</memories>
+</memory>
+````
+
+## Section: project
+
+````text
+<project>
+This conversation belongs to the user's project "Research".
+
+The project's instructions apply to every conversation in it. Where they differ from your default guidance, follow them:
+<project_instructions>
+Use SI units and cite primary sources.
+</project_instructions>
+
+The project's files are in /data/projects/project-research/ (read-only; copy one into the conversation's workspace before changing it). Read the ones relevant to the question before answering from memory:
+- reference.md (19 B)
+</project>
+````

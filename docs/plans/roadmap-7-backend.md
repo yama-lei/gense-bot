@@ -57,6 +57,13 @@
 - 验证：清除代理后 `npm run check:server` 通过，84 项全部通过，无跳过。新增验证涵盖双设备/双用户、重启、删除两种选项、分叉与移入移出、真实稀疏文件的容量/并发限制、真实 Docker 的挂载只读及工具访问范围；飞书已验证从网页移入项目后也带指令与项目记忆。
 - 内部 API 调整：`UserSpace.createTree(projectId?, ctx?)`，原有无参数调用不变；显式传 Context 的调用方应使用第二个参数。无其他协议改动。
 
+### A-3 收尾（2026-11-14）
+
+- 提示词快照新增“Research 项目对话、两条记忆（全局 / 项目各一）、一个项目文件”的场景。测试使用真实 SQLite 和文件，固定条目 id；对比两个真实模型请求，断言其余提示词节与工具完全相同，快照只追加有变化的 memory / project 两节，避免重复基础内容。`memory-prompt.ts` 原文未改。
+- `docs/design/architecture.md` 新增记忆与项目的数据表、文件位置、限额、动态提示词和删除行为。按 t4h 明确授权，同时校正与旧单所有者布局相关的段落：状态和结构说明、HTTP / WebSocket 路由、登录/密钥/模型来源、数据目录与 Trigger id 范围、飞书所属用户、工作区/沙箱/备份、验证范围的多用户排除项；其他路线图 5 内容保留。
+- 验证：`UPDATE_SNAPSHOT=1` 的提示词单测通过。首次完整并行检查受机器高负载影响，84 项中仅现有 R51/R52/R56 的 spawn-answer 等待超时；没有改断言或超时。用 `taskset -c 0 env -u https_proxy -u http_proxy -u all_proxy -u HTTPS_PROXY -u HTTP_PROXY -u ALL_PROXY npm run check:server` 降低本任务并发后，84 项全部通过，无跳过，包含真实 Docker 与本地飞书平台。
+- 无新的协议问题或设计偏离。阶段 A 完成，按 t4h 指示停下，等待合并和阶段 B 的任务。
+
 ## 协议问题
 
 - A-1：`memorySection` 的 8000 字符预算只计条目，不包含前导说明和标签。t4h 已明确接受，照用原文与现有预算，不修改。

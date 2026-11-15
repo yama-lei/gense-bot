@@ -9,6 +9,7 @@ import { test } from 'node:test'
 import { pluginDefaultsFromEnv, UserSpace } from '../src/index.ts'
 import { diskEnv } from './fixtures.ts'
 import { COMPACTION_INSTRUCTIONS } from '../src/agent/compaction.ts'
+import { SUGGEST_SYSTEM, suggestInput } from '../src/agent/suggest-prompt.ts'
 import { projectDir } from '@gense/protocol'
 import { deepseekModels } from '../src/agent/deepseek.ts'
 import { deepseekPlatform, fixture } from './deepseek-platform.ts'
@@ -104,7 +105,7 @@ async function nativeToolList() {
   } finally { await space.close(); await remote.close() }
 }
 
-test('A8 (roadmap-6), A2/A8/A9/A10/B5/C2 (roadmap-7): normal, project, temporary and native-tool prompts match the snapshot', async () => {
+test('A8 (roadmap-6), A2/A8/A9/A10/B5/C2/D2 (roadmap-7): conversation and follow-up prompts match the snapshot', async () => {
   const system = await firstSystemMessage()
   const project = await firstSystemMessage('project'), temporary = await firstSystemMessage('temporary')
   const { memory: baseMemory, ...baseSections } = system.sections
@@ -126,7 +127,13 @@ test('A8 (roadmap-6), A2/A8/A9/A10/B5/C2 (roadmap-7): normal, project, temporary
   ]
   const fence = String.fromCharCode(96).repeat(4)
   const native = ['# DeepSeek native search tools', '', 'Actual Messages request with the web plugin enabled. The web section is omitted; other tools remain available.', '', fence + 'json', JSON.stringify(await nativeToolList(), null, 2), fence, '']
-  const text = render(system) + '\n' + difference.join('\n') + '\n' + temporaryScene.join('\n') + '\n' + native.join('\n')
+  const suggestions = [
+    '# Follow-up side call', '',
+    'A separate request after the answer: no conversation history or tools.', '',
+    '## System', '', fence + 'text', SUGGEST_SYSTEM, fence, '',
+    '## User', '', fence + 'text', suggestInput('How do these two approaches compare?', 'The first approach is faster for small datasets. The second keeps memory bounded when the dataset grows.'), fence, '',
+  ]
+  const text = render(system) + '\n' + difference.join('\n') + '\n' + temporaryScene.join('\n') + '\n' + native.join('\n') + '\n' + suggestions.join('\n')
   if (process.env.UPDATE_SNAPSHOT) writeFileSync(SNAPSHOT, text)
   assert.equal(text, readFileSync(SNAPSHOT, 'utf8'), 'the prompt changed: review the diff and rerun with UPDATE_SNAPSHOT=1')
   // A10: the date is the user's, not the server's: 20:00 UTC on 11 Nov is already 12 Nov in Shanghai.

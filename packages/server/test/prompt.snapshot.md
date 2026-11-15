@@ -811,3 +811,35 @@ Actual Messages request with the web plugin enabled. The web section is omitted;
   }
 ]
 ````
+
+# Follow-up side call
+
+A separate request after the answer: no conversation history or tools.
+
+## System
+
+````text
+You suggest what the user might say next in a chat with an AI assistant. You are shown their last question and the assistant's answer.
+
+Write 3 short follow-ups the user would plausibly send next, each as the user speaking to the assistant:
+- Specific to this answer: dig into a point it raised, ask for the next step, apply it to a concrete case, or check a doubtful claim. Never generic ("tell me more", "give an example") unless nothing better fits.
+- Each different in direction; no two that ask the same thing.
+- In the language the user wrote in. At most 20 words, or 30 characters in Chinese or Japanese. No numbering, quotes or trailing period.
+- Nothing the answer already covers, nothing that needs information the assistant cannot have, nothing unsafe.
+
+If the exchange is a greeting, a finished small task, or a refusal, or no follow-up would help, return an empty list.
+
+Reply with JSON only: {"items": ["…", "…", "…"]}
+````
+
+## User
+
+````text
+<question>
+How do these two approaches compare?
+</question>
+
+<answer>
+The first approach is faster for small datasets. The second keeps memory bounded when the dataset grows.
+</answer>
+````

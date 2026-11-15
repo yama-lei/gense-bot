@@ -186,6 +186,8 @@
 - 验证：`UPDATE_SNAPSHOT=1` 的提示词单测通过。首次完整并行检查受机器高负载影响，84 项中仅现有 R51/R52/R56 的 spawn-answer 等待超时；没有改断言或超时。用 `taskset -c 0 env -u https_proxy -u http_proxy -u all_proxy -u HTTPS_PROXY -u HTTP_PROXY -u ALL_PROXY npm run check:server` 降低本任务并发后，84 项全部通过，无跳过，包含真实 Docker 与本地飞书平台。
 - 无新的协议问题或设计偏离。阶段 A 完成，按 t4h 指示停下，等待合并和阶段 B 的任务。
 
+- C-1（2026-11-14）：共享提供方持久化 kind，DeepSeek 的空地址/模型列表使用官方默认；共享及 BYOK DeepSeek 改用 Messages 工厂，能力按模型白名单及提供方类型判断。新增真实 SQLite 重新打开、加密凭据、BYOK 登录及刷新测试，旧共享模型测试按新契约显式发送 kind。`npm run check:server` 通过。原生请求字段和流处理留在 C-2；未进行真实 DeepSeek 请求，无协议偏离。
+
 ## 协议问题
 
 - A-1：`memorySection` 的 8000 字符预算只计条目，不包含前导说明和标签。t4h 已明确接受，照用原文与现有预算，不修改。

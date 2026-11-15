@@ -1,17 +1,18 @@
 // Host-wide provider configuration and usage. Only public metadata leaves this module.
 import { applySqliteMigrations, type SqliteDatabase } from '@earendil-works/chord/sqlite'
 import { createAssistantMessageEventStream, type AssistantMessage, type MutableModels } from '@earendil-works/pi-ai'
-import type { ModelSource, SharedProviderInfo, SharedProviderInput, UsageSummary } from '@gense/protocol'
+import { DEEPSEEK_BASE_URL, type ModelSource, type SharedProviderInfo, type SharedProviderInput, type UsageSummary } from '@gense/protocol'
 import { relayModels, type ModelSetup } from '../agent/models.ts'
+import { deepseekModels, DEEPSEEK_MODELS } from '../agent/deepseek.ts'
 import { Sealer } from '../plugins/store.ts'
 
 const migrations = [{ version: 1, statements: [
   'CREATE TABLE shared_providers (id TEXT PRIMARY KEY, name TEXT NOT NULL, baseUrl TEXT NOT NULL, modelIds TEXT NOT NULL, sealed TEXT NOT NULL)',
   'CREATE TABLE usage (id INTEGER PRIMARY KEY, userId TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, source TEXT NOT NULL, input INTEGER NOT NULL, output INTEGER NOT NULL, cacheRead INTEGER NOT NULL, cacheWrite INTEGER NOT NULL, totalTokens INTEGER NOT NULL, createdAt INTEGER NOT NULL)',
   'CREATE INDEX usage_user_day ON usage(userId, createdAt)',
-] }]
-type ProviderRow = { id: string; name: string; baseUrl: string; modelIds: string; sealed: string }
-const publicProvider = (r: ProviderRow): SharedProviderInfo => ({ id: r.id, name: r.name, baseUrl: r.baseUrl, modelIds: JSON.parse(r.modelIds), hasKey: !!r.sealed })
+] }, { version: 2, statements: ["ALTER TABLE shared_providers ADD COLUMN kind TEXT NOT NULL DEFAULT 'openai'"] }]
+type ProviderRow = { id: string; kind: 'openai' | 'deepseek'; name: string; baseUrl: string; modelIds: string; sealed: string }
+const publicProvider = (r: ProviderRow): SharedProviderInfo => ({ id: r.id, kind: r.kind, name: r.name, baseUrl: r.baseUrl, modelIds: JSON.parse(r.modelIds), hasKey: !!r.sealed })
 
 export class AppStore {
   readonly #db: SqliteDatabase
@@ -34,10 +35,10 @@ export class AppStore {
     const setups: ModelSetup[] = []
     for (const row of await this.#db.all<ProviderRow>('SELECT * FROM shared_providers ORDER BY id')) {
       if (!this.#sealer) throw new Error('共享模型需要 TOKEN_ENCRYPTION_KEY')
-      setups.push(relayModels({ providerId: row.id, name: row.name, baseUrl: row.baseUrl, apiKey: await this.#sealer.open(row.sealed), modelIds: JSON.parse(row.modelIds) }))
+      setups.push((row.kind === 'deepseek' ? deepseekModels : relayModels)({ providerId: row.id, name: row.name, baseUrl: row.baseUrl, apiKey: await this.#sealer.open(row.sealed), modelIds: JSON.parse(row.modelIds) }))
     }
     const options = setups.flatMap(s => s.options)
-    this.#models = { providers: setups.flatMap(s => s.providers), options, defaultModel: options[0] ?? null }
+    this.#models = { providers: setups.flatMap(s => s.providers), options, defaultModel: options[0] ?? null, kinds: Object.assign({}, ...setups.map(s => s.kinds)) }
     await Promise.all([...this.#listeners].map(fn => fn()))
   }
   #serial<T>(fn: () => Promise<T>): Promise<T> {
@@ -49,13 +50,15 @@ export class AppStore {
     return this.#serial(async () => {
       if (!this.#sealer) throw new Error('共享模型需要 TOKEN_ENCRYPTION_KEY')
       const old = await this.#db.get<ProviderRow>('SELECT * FROM shared_providers WHERE id = ?', id)
-      const url = new URL(input.baseUrl)
+      if (input.kind !== 'openai' && input.kind !== 'deepseek') throw new Error('提供方类型无效')
+      const modelIds = input.kind === 'deepseek' && Array.isArray(input.modelIds) && !input.modelIds.length ? DEEPSEEK_MODELS : input.modelIds
+      const url = new URL(input.baseUrl || (input.kind === 'deepseek' ? DEEPSEEK_BASE_URL : ''))
       if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new Error('模型地址无效')
-      if (!input.name?.trim() || input.name.length > 200 || !Array.isArray(input.modelIds) || !input.modelIds.length || input.modelIds.length > 200 || input.modelIds.some(m => typeof m !== 'string' || !m.trim() || m.length > 300)) throw new Error('名称或模型列表无效')
+      if (!input.name?.trim() || input.name.length > 200 || !Array.isArray(modelIds) || !modelIds.length || modelIds.length > 200 || modelIds.some(m => typeof m !== 'string' || !m.trim() || m.length > 300)) throw new Error('名称或模型列表无效')
       if (input.apiKey !== undefined && (typeof input.apiKey !== 'string' || !input.apiKey.trim())) throw new Error('密钥不能为空')
       const sealed = input.apiKey ? await this.#sealer.seal(input.apiKey) : old?.sealed
       if (!sealed) throw new Error('需要密钥')
-      await this.#db.run('INSERT INTO shared_providers VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, baseUrl = excluded.baseUrl, modelIds = excluded.modelIds, sealed = excluded.sealed', id, input.name.trim(), url.href, JSON.stringify([...new Set(input.modelIds.map(m => m.trim()))]), sealed)
+      await this.#db.run('INSERT INTO shared_providers (id, name, baseUrl, modelIds, sealed, kind) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, baseUrl = excluded.baseUrl, modelIds = excluded.modelIds, sealed = excluded.sealed, kind = excluded.kind', id, input.name.trim(), url.href, JSON.stringify([...new Set(modelIds.map(m => m.trim()))]), sealed, input.kind)
       await this.#reload()
       return (await this.providers()).find(p => p.id === id)!
     })

@@ -60,7 +60,7 @@ export class Spaces {
         : new MountedEnv(confinedEnv(new NodeExecutionEnv({ cwd: files }), files), { mount: DATA_DIR, target: files, cwd })
       // Faux is only a development host provider; production shared providers come from app.sqlite.
       const development = config.models()
-      const models = () => { const shared = this.#app.models(); const options = [...shared.options, ...development.options]; return { providers: [...shared.providers, ...development.providers], options, defaultModel: options[0] ?? null } }
+      const models = () => { const shared = this.#app.models(); const options = [...shared.options, ...development.options]; return { providers: [...shared.providers, ...development.providers], options, defaultModel: options[0] ?? null, kinds: { ...development.kinds, ...shared.kinds } } }
       try {
         space = await UserSpace.open(db, { userId, models, env, plugins: config.plugins, secretKey: config.secretKey, sandbox: !!sandbox, webhooks: true, skillTempDir: join(dir, 'skill-tmp'), mcp: { publicUrl: config.publicUrl, callbackPath: `/api/users/${userId}/mcp/callback` }, feishu: { ...config.feishu, publicUrl: config.publicUrl }, meterModels: (registry, source) => this.#app.meter(userId, registry, source) })
         const backup = config.backups === false ? undefined : startBackups(db, join(config.dataDir, 'backups', 'users', userId), config.backups)

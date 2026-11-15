@@ -290,9 +290,11 @@ export function useChat(treeId: string) {
   const host = useHost()
   const view = host.views[treeId]
   const branches = host.branches[treeId]
-  const turns = useMemo(() => (view ? withVersions(toTurns(view), branches) : []), [view, branches])
-  const compaction = useMemo(() => compactionState(view), [view])
   const branchId = host.shown[treeId]
+  const live = host.native[treeId]
+  const native = live && live.branchId === branchId ? live.trace : undefined
+  const turns = useMemo(() => (view ? withVersions(toTurns(view, native), branches) : []), [view, branches, native])
+  const compaction = useMemo(() => compactionState(view), [view])
   return {
     tree: findTree(host, treeId),
     loaded: !!view,

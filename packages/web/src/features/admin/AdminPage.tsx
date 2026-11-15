@@ -1,6 +1,7 @@
 // The admin's back office (roadmap-6 D7): accounts and the registration switch, the models shared with everyone, and
 // what each account has spent. All of it goes over the HTTP admin API; the server checks the role on every call.
-import type { RegistrationState, SharedProviderInfo, SharedProviderInput, UserInfo, UserPatch } from '@gense/protocol'
+import type { ProviderKind, RegistrationState, SharedProviderInfo, SharedProviderInput, UserInfo, UserPatch } from '@gense/protocol'
+import { DEEPSEEK_APP_MODELS, DEEPSEEK_BASE_URL } from '@gense/protocol'
 import { KeyRound, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react'
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { toast } from 'sonner'
@@ -208,7 +209,7 @@ function Providers() {
       {!providers && !error && <Skeleton className="h-32 rounded-2xl" />}
       {providers?.length === 0 && (
         <Empty icon={<KeyRound />} title="还没有共享模型">
-          添加一个兼容 OpenAI Responses 接口的服务，所有用户就能直接用它的模型。
+          添加一个 DeepSeek 账户或兼容 OpenAI Responses 接口的服务，所有用户就能直接用它的模型。
         </Empty>
       )}
       {!!providers?.length && (
@@ -219,10 +220,12 @@ function Providers() {
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="font-medium">{p.name}</span>
+                    {p.kind === 'deepseek' && <Badge variant="accent">DeepSeek</Badge>}
                     {!p.hasKey && <Badge variant="warning">缺少密钥</Badge>}
                   </div>
                   <p className="mt-0.5 truncate text-sm text-muted-foreground" title={p.baseUrl}>
-                    {hostOf(p.baseUrl)}
+                    {hostOf(p.baseUrl || DEEPSEEK_BASE_URL)}
+                    {p.kind === 'deepseek' && ' · 安全检查始终开启'}
                   </p>
                 </div>
                 <Button variant="ghost" size="icon-sm" aria-label={`编辑 ${p.name}`} onClick={() => setEditing(p)}>
@@ -233,11 +236,17 @@ function Providers() {
                 </Button>
               </div>
               <ul className="mt-3 flex flex-wrap gap-1.5">
+                {p.modelIds.length === 0 && (
+                  <li>
+                    <Badge variant="outline">DeepSeek 当前的全部模型</Badge>
+                  </li>
+                )}
                 {p.modelIds.map((m, i) => (
                   <li key={m}>
                     <Badge variant="outline">
                       {m}
                       {i === 0 && <span className="font-normal opacity-75">· 默认</span>}
+                      {(DEEPSEEK_APP_MODELS as readonly string[]).includes(m) && p.kind === 'deepseek' && <span className="font-normal opacity-75">· 原生联网</span>}
                     </Badge>
                   </li>
                 ))}
@@ -262,7 +271,14 @@ function Providers() {
 
 const splitIds = (text: string) => [...new Set(text.split(/[\s,，]+/).map((s) => s.trim()).filter(Boolean))]
 
+const kinds: { id: ProviderKind; label: string; description: string }[] = [
+  { id: 'deepseek', label: 'DeepSeek', description: '官方接口，支持原生联网搜索、读链接和安全检查' },
+  { id: 'openai', label: 'OpenAI 兼容', description: '任何兼容 OpenAI Responses 接口的服务' },
+]
+
 function ProviderDialog({ provider, onClose, onSaved }: { provider: SharedProviderInfo | null; onClose: () => void; onSaved: () => void }) {
+  const [kind, setKind] = useState<ProviderKind>(provider?.kind ?? 'deepseek')
+  const deepseek = kind === 'deepseek'
   const [name, setName] = useState(provider?.name ?? '')
   const [baseUrl, setBaseUrl] = useState(provider?.baseUrl ?? '')
   const [ids, setIds] = useState(provider?.modelIds.join('\n') ?? '')
@@ -270,13 +286,14 @@ function ProviderDialog({ provider, onClose, onSaved }: { provider: SharedProvid
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const modelIds = splitIds(ids)
-  const ready = !!name.trim() && !!baseUrl.trim() && modelIds.length > 0 && (!!provider || !!apiKey.trim())
+  // DeepSeek fills in its own address and models when they are left empty.
+  const ready = !!name.trim() && (deepseek || (!!baseUrl.trim() && modelIds.length > 0)) && (!!provider || !!apiKey.trim())
 
   const save = async (e: FormEvent) => {
     e.preventDefault()
     setBusy(true)
     setError(null)
-    const body: SharedProviderInput = { kind: provider?.kind ?? 'openai', name: name.trim(), baseUrl: baseUrl.trim(), modelIds, ...(apiKey.trim() && { apiKey: apiKey.trim() }) }
+    const body: SharedProviderInput = { kind, name: name.trim(), baseUrl: baseUrl.trim(), modelIds, ...(apiKey.trim() && { apiKey: apiKey.trim() }) }
     try {
       await api<SharedProviderInfo>(provider ? `/api/admin/providers/${encodeURIComponent(provider.id)}` : '/api/admin/providers', { method: provider ? 'PUT' : 'POST', body })
       toast.success(provider ? '已保存' : `已添加 ${body.name}`)
@@ -290,18 +307,34 @@ function ProviderDialog({ provider, onClose, onSaved }: { provider: SharedProvid
 
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent title={provider ? `编辑 ${provider.name}` : '添加共享模型'} description="兼容 OpenAI Responses 接口的服务。">
+      <DialogContent title={provider ? `编辑 ${provider.name}` : '添加共享模型'}>
         <form onSubmit={(e) => void save(e)} className="flex min-h-0 flex-1 flex-col">
           <DialogBody className="flex flex-col gap-4">
+            <div role="radiogroup" aria-label="服务类型" className="grid grid-cols-2 gap-2">
+              {kinds.map((k) => (
+                <button
+                  key={k.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={kind === k.id}
+                  onClick={() => setKind(k.id)}
+                  className={cn('flex flex-col gap-0.5 rounded-xl border px-3 py-2.5 text-left text-sm transition-colors', kind === k.id ? 'border-accent bg-accent-soft' : 'hover:bg-hover')}
+                >
+                  <span className={cn('font-medium', kind === k.id && 'text-accent')}>{k.label}</span>
+                  <span className="text-xs text-muted-foreground">{k.description}</span>
+                </button>
+              ))}
+            </div>
             <Field label="名称" help="模型菜单里的分组名。">
-              <Input required autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：公司中转" />
+              <Input required autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder={deepseek ? '例如：DeepSeek' : '例如：公司中转'} />
             </Field>
-            <Field label="接口地址">
-              <Input type="url" required value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://example.com/v1" />
+            <Field label="接口地址" help={deepseek ? '留空使用官方地址。' : undefined}>
+              <Input type="url" required={!deepseek} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder={deepseek ? DEEPSEEK_BASE_URL : 'https://example.com/v1'} />
             </Field>
-            <Field label="模型" help="每行一个模型 ID，第一个是默认模型。">
-              <Textarea required rows={4} value={ids} onChange={(e) => setIds(e.target.value)} className="font-mono text-sm" />
+            <Field label="模型" help={deepseek ? `每行一个模型 ID，第一个是默认模型；留空提供 DeepSeek 当前的全部模型。${DEEPSEEK_APP_MODELS.join('、')} 支持原生联网。` : '每行一个模型 ID，第一个是默认模型。'}>
+              <Textarea required={!deepseek} rows={4} value={ids} onChange={(e) => setIds(e.target.value)} className="font-mono text-sm" placeholder={deepseek ? DEEPSEEK_APP_MODELS.join('\n') : undefined} />
             </Field>
+            {deepseek && <Notice tone="info">共享的 DeepSeek 服务对所有请求开启安全检查，被拦下的提问不会得到回答。</Notice>}
             <Field label="密钥" help={provider ? (provider.hasKey ? '留空则保留现在的密钥。' : '还没有密钥，请填写。') : undefined}>
               <Input type="password" autoComplete="off" required={!provider} value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={provider?.hasKey ? '••••••••' : undefined} />
             </Field>

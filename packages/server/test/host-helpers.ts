@@ -2,7 +2,7 @@
 import { applyImmutable, decoder, type Decoder } from '@earendil-works/chord/delta'
 import type { PluginInfo as PluginState } from '@gense/protocol'
 import { parseNote } from '@gense/protocol/notes'
-import { EVENT_KIND, type BranchesState, type BranchMeta, type ClientRequest, type EventData, type FileEntry, type LoginPrompt, type ModelInfo, type ProviderState, type ScheduleInfo, type ServerMessage, type SkillInfo, type TreeMeta, type UploadedFile, type WebhookInfo } from '@gense/protocol'
+import { EVENT_KIND, type BranchesState, type BranchMeta, type ClientRequest, type EventData, type FileEntry, type LoginPrompt, type Memory, type ModelInfo, type Preferences, type Project, type ProviderState, type ScheduleInfo, type ServerMessage, type SkillInfo, type TreeMeta, type UploadedFile, type WebhookInfo } from '@gense/protocol'
 import assert from 'node:assert/strict'
 import { mkdtemp } from 'node:fs/promises'
 import { createServer } from 'node:http'
@@ -41,6 +41,9 @@ export class Client {
   readonly branches = new Map<string, BranchesState>()
   readonly shown = new Map<string, string>()
   trees: TreeMeta[] = []
+  memories: Memory[] = []
+  projects: Project[] = []
+  prefs: Preferences | undefined
   plugins: PluginState[] = []
   skills: SkillInfo[] = []
   models: ModelInfo[] = []
@@ -77,6 +80,9 @@ export class Client {
 
   #receive(m: ServerMessage) {
     if (m.t === 'trees') this.trees = m.trees
+    if (m.t === 'memories') this.memories = m.memories
+    if (m.t === 'projects') this.projects = m.projects
+    if (m.t === 'prefs') this.prefs = m.prefs
     if (m.t === 'plugins') this.plugins = m.plugins
     if (m.t === 'skills') this.skills = m.skills
     if (m.t === 'models') this.models = m.models

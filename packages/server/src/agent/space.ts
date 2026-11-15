@@ -8,6 +8,7 @@ import { McpHost } from '../plugins/mcp/host.ts'
 import { createToolSearchExtension } from '@earendil-works/pi-durable/tool-search'
 import { defineExtension, section } from '@earendil-works/pi-durable'
 import { PreferenceStore } from './preferences.ts'
+import { MemoryStore, memoryExtension } from './memory.ts'
 // One user's conversations: a pi-durable Harness plus the sidebar index, in the same SQLite database (roadmap-3 D2).
 // A tree is a main conversation and the branches forked from it, all ownerless; tree and branch ids are ours,
 // conversation ids are pi-durable's. Each tree has one workspace directory, every branch's cwd (D6).
@@ -80,6 +81,7 @@ export class UserSpace {
   readonly channelWatches = new Set<ConversationWatch>()
   readonly mcp: McpHost
   readonly preferences: PreferenceStore
+  readonly memories: MemoryStore
   readonly accounts: ModelAccounts
 
   readonly options: SpaceOptions
@@ -103,6 +105,7 @@ export class UserSpace {
     this.outbox = outbox
     this.mcp = mcp
     this.preferences = preferences
+    this.memories = new MemoryStore(db, () => this.now())
     this.accounts = accounts
     this.options = options
     harness.subscribeCommits((publication) => {
@@ -134,11 +137,14 @@ export class UserSpace {
     const registry = createRegistry()
     const byName = new Map<string, Extension>()
     let space: UserSpace | undefined
-    const events = eventsExtension(() => {
+    const getSpace = () => {
       if (!space) throw new Error('UserSpace is not open')
       return space
-    })
-    for (const e of [gense, files, prefsExtension, toolSearch, events.extension, noSandbox, ...Object.entries(PLUGINS).map(([id, make]) => make(() => plugins.resolved(id)))]) {
+    }
+    const events = eventsExtension(getSpace)
+    const memory = memoryExtension(getSpace)
+    const explicitMemory = memoryExtension(getSpace, 'explicit')
+    for (const e of [gense, files, prefsExtension, toolSearch, events.extension, memory, explicitMemory, noSandbox, ...Object.entries(PLUGINS).map(([id, make]) => make(() => plugins.resolved(id)))]) {
       registry.install(e)
       byName.set(e.name, e)
     }
@@ -176,7 +182,7 @@ export class UserSpace {
             ])),
           },
         },
-        extensions: [gense, files, prefsExtension, toolSearch, events.extension, ...active.map((id) => byName.get(id)!), ...(active.includes('sandbox') ? [] : [noSandbox])],
+        extensions: [gense, files, prefsExtension, toolSearch, events.extension, ...active.map((id) => byName.get(id)!), ...(active.includes('sandbox') ? [] : [noSandbox]), ...(preferences.get().useMemory === false ? [] : [preferences.get().memoryWrites === 'explicit' ? explicitMemory : memory])],
       }
     }
     const harness = await Harness.open(

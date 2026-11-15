@@ -39,8 +39,16 @@
 
 ## 汇报
 
-（在这里按阶段追加：做了什么、测试结果、偏离之处）
+### A-1 记忆（2026-11-14）
+
+- `space.sqlite` 新增 `memories`，提供增删改、来源与会话关联、开关、200 条 / 每条 500 字符限制；同用户全部连接首次和变化时推送，其他用户隔离。偏好默认 `useMemory: true`、`memoryWrites: auto`，请求校验并持久化。
+- 每轮通过原样的 `memorySection` 渲染靠后的记忆节，按偏好提供 `MEMORY_TOOL` 并拼接原文写入说明。工具返回英文确认及 `MemoryToolDetails`，更新/删除的撤销值与写操作串行取得；拒绝疑似密钥、私钥、长数字和密码。
+- A1–A6 / A11 测试覆盖真实 SQLite、双设备 WebSocket、双用户、重启、faux 工具结果、上限和敏感内容，以及真实飞书 SDK 对本地 HTTP / protobuf WebSocket 平台的收发；基础提示词快照已更新。
+- 适配 faux 模型：动态提示词可能在工具结果后插入 system 消息，脚本改为从最后一条非 system 消息识别结果，避免重复执行工具。临时对话的禁用判断留在公共会话查询位置，阶段 B 接入。
+- 验证：`env -u https_proxy -u http_proxy -u all_proxy -u HTTPS_PROXY -u HTTP_PROXY -u ALL_PROXY npm run check:server` 通过，80 项测试全部通过（含真实 Docker 与本地飞书平台），无跳过。
 
 ## 协议问题
 
-（在这里记录）
+- A-1：`memorySection` 的 8000 字符预算只计条目，不包含前导说明和标签。t4h 已明确接受，照用原文与现有预算，不修改。
+- A-1：原 `memory.add.source` 不接受 `model`，撤销删除模型记忆会丢失来源。t4h 明确授权本次唯一的协议改动：将其放宽为 `MemorySource`；后端照存并测试删除后恢复来源。
+- A-2 沙箱取舍已获 t4h 确认：仍每用户一个容器，整体只读挂载 `projects/`，read/write/edit/delete 只允许当前项目；bash 可以读取同用户其他项目，不拆分容器。

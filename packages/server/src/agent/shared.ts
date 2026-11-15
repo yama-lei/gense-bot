@@ -79,6 +79,13 @@ export const migrations = [
       'CREATE TABLE webhooks (id TEXT PRIMARY KEY, treeId TEXT NOT NULL, secret TEXT NOT NULL, createdAt INTEGER NOT NULL, lastUsedAt INTEGER)',
     ],
   },
+  {
+    version: 4,
+    statements: [
+      'CREATE TABLE memories (id TEXT PRIMARY KEY, text TEXT NOT NULL, source TEXT NOT NULL, treeId TEXT, projectId TEXT, enabled INTEGER NOT NULL, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL)',
+      'CREATE INDEX memories_updated ON memories (updatedAt DESC)',
+    ],
+  },
 ]
 
 /** Who the assistant is and how it answers (roadmap-6 A10). Only the date changes, once a day, so the prompt cache holds. */

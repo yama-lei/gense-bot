@@ -37,6 +37,8 @@ export class Connection {
     this.#unsubscribe.push(space.channels.subscribe(() => this.#send({ t: 'channels', channels: space.channels.list() })))
     this.#send({ t: 'prefs', prefs: space.preferences.get() })
     this.#unsubscribe.push(space.preferences.subscribe(() => this.#send({ t: 'prefs', prefs: space.preferences.get() })))
+    this.#unsubscribe.push(space.memories.subscribe(memories => this.#send({ t: 'memories', memories })))
+    this.#send({ t: 'memories', memories: await space.memories.list() })
     const accounts = async () => {
       const { accounts } = space
       this.#send({ t: 'providers', providers: accounts.providers() })
@@ -198,6 +200,13 @@ export class Connection {
         return space.plugins.setTool(r.pluginId, r.tool, r.enabled)
       case 'prefs.set':
         return space.preferences.set(r)
+      case 'memory.add':
+        return space.memories.add(r)
+      case 'memory.update':
+        return space.memories.update(r.memoryId, r)
+      case 'memory.remove':
+        await space.memories.remove(r.memoryId)
+        return
       case 'trees.search':
         return space.searchTrees(r.query, r.limit)
       case 'plugin.set':

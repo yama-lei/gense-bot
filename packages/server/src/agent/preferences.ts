@@ -2,7 +2,7 @@ import type { SqliteDatabase } from '@earendil-works/chord/sqlite'
 import type { Preferences } from '@gense/protocol'
 
 export class PreferenceStore {
-  #value: Preferences = { name: '', instructions: '' }
+  #value: Preferences = { name: '', instructions: '', useMemory: true, memoryWrites: 'auto' }
   #listeners = new Set<() => void>()
   private db: SqliteDatabase
   private constructor(db: SqliteDatabase) { this.db = db }
@@ -10,7 +10,7 @@ export class PreferenceStore {
     await db.run('CREATE TABLE IF NOT EXISTS preferences (id INTEGER PRIMARY KEY CHECK (id = 1), value TEXT NOT NULL)')
     const store = new PreferenceStore(db)
     const row = await db.get<{ value: string }>('SELECT value FROM preferences WHERE id = 1')
-    if (row) store.#value = JSON.parse(row.value)
+    if (row) store.#value = { ...store.#value, ...JSON.parse(row.value) }
     return store
   }
   get(): Preferences { return { ...this.#value } }
@@ -22,6 +22,14 @@ export class PreferenceStore {
       if (typeof patch[key] !== 'string' || patch[key].length > (key === 'instructions' ? 20_000 : 200)) throw new Error('偏好无效')
       if (key === 'timeZone' && !validTimeZone(patch[key])) throw new Error('时区无效')
       next[key] = patch[key]
+    }
+    if (patch.useMemory !== undefined) {
+      if (typeof patch.useMemory !== 'boolean') throw new Error('记忆开关无效')
+      next.useMemory = patch.useMemory
+    }
+    if (patch.memoryWrites !== undefined) {
+      if (patch.memoryWrites !== 'auto' && patch.memoryWrites !== 'explicit') throw new Error('记忆写入偏好无效')
+      next.memoryWrites = patch.memoryWrites
     }
     await this.db.run('INSERT INTO preferences VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET value = excluded.value', JSON.stringify(next))
     this.#value = next

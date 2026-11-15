@@ -26,7 +26,8 @@ export function fauxModels(): ModelSetup {
   const faux = fauxProvider({ models: [{ id: 'faux-1', name: 'Faux' }], tokensPerSecond: 200 })
   const reply: FauxResponseFactory = (context) => {
     faux.appendResponses([reply])
-    const last = context.messages.at(-1)
+    // A tool may change a dynamic prompt section (memory, projects), adding a system patch after its result.
+    const last = context.messages.findLast(m => m.role !== 'system')
     if (last?.role === 'toolResult') {
       const result = last.content.map((b) => (b.type === 'text' ? b.text : '')).join('')
       return fauxAssistantMessage([fauxText(`工具结果：${result}`)])

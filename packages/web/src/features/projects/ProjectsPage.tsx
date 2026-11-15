@@ -194,7 +194,7 @@ function ProjectDetail({ project }: { project: Project }) {
   // The server adds the project's instructions and files to the prompt of every conversation in it.
   const start = (message: Outgoing) => {
     setStarting(true)
-    client.start(message, project.id).then(
+    client.start(message, { projectId: project.id }).then(
       (id) => navigate({ name: 'chat', id }),
       (e: unknown) => {
         setStarting(false)

@@ -1,5 +1,5 @@
 import type { AccountResponse, UserInfo } from '@gense/protocol'
-import { StrictMode, useEffect, useState } from 'react'
+import { lazy, StrictMode, Suspense, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Toaster } from 'sonner'
 import './styles/app.css'
@@ -9,6 +9,22 @@ import { Shell } from './app/Shell'
 import { api } from './lib/api'
 import { useTheme } from './lib/theme'
 import { TooltipProvider } from './ui/tooltip'
+
+const SharedPage = lazy(() => import('./features/share/SharedPage').then((m) => ({ default: m.SharedPage })))
+/** `/s/<token>`: a public link, shown without signing in (roadmap-7 B2). */
+const shareToken = /^\/s\/([A-Za-z0-9_-]+)\/?$/.exec(location.pathname)?.[1]
+
+function Public({ token }: { token: string }) {
+  const theme = useTheme()
+  return (
+    <TooltipProvider delayDuration={350}>
+      <Suspense>
+        <SharedPage token={token} />
+      </Suspense>
+      <Toaster theme={theme} position="top-center" />
+    </TooltipProvider>
+  )
+}
 
 /** Shows the app once the session cookie checks out, the login page otherwise. */
 function Root() {
@@ -36,7 +52,5 @@ function Root() {
 }
 
 createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <Root />
-  </StrictMode>,
+  <StrictMode>{shareToken ? <Public token={shareToken} /> : <Root />}</StrictMode>,
 )

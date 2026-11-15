@@ -11,6 +11,7 @@ import type {
   PluginInfo,
   Preferences,
   Project,
+  ShareInfo,
   ProviderState,
   ScheduleInfo,
   ServerMessage,
@@ -23,7 +24,9 @@ import type { View } from './turns'
 export interface SocketState {
   models: ModelInfo[]
   defaultModel: ModelInfo | null
+  /** Conversations to list; temporary chats are kept apart in `temporary` (roadmap-7 B5). */
   trees: TreeMeta[] | null
+  temporary: TreeMeta[]
   views: Record<string, View>
   /** Per watched tree, its branches (R35), and which one `views` shows. */
   branches: Record<string, BranchesState>
@@ -37,6 +40,7 @@ export interface SocketState {
   /** Null until the server sends them (roadmap-7 A). */
   memories: Memory[] | null
   projects: Project[] | null
+  shares: ShareInfo[] | null
   schedules: ScheduleInfo[]
   webhooks: WebhookInfo[]
   canCreateWebhooks: boolean
@@ -60,6 +64,7 @@ export class HostSocket {
     models: [],
     defaultModel: null,
     trees: null,
+    temporary: [],
     views: {},
     branches: {},
     shown: {},
@@ -70,6 +75,7 @@ export class HostSocket {
     prefs: null,
     memories: null,
     projects: null,
+    shares: null,
     schedules: [],
     webhooks: [],
     canCreateWebhooks: true,
@@ -162,12 +168,14 @@ export class HostSocket {
         return this.#set({ memories: m.memories })
       case 'projects':
         return this.#set({ projects: m.projects })
+      case 'shares':
+        return this.#set({ shares: m.shares })
       case 'schedules':
         return this.#set({ schedules: m.schedules })
       case 'webhooks':
         return this.#set({ webhooks: m.webhooks, canCreateWebhooks: m.canCreate })
       case 'trees':
-        return this.#set({ trees: m.trees })
+        return this.#set({ trees: m.trees.filter((t) => !t.temporary), temporary: m.trees.filter((t) => t.temporary) })
       case 'branches': {
         const { t: _, treeId, ...state } = m
         return this.#set({ branches: { ...this.state.branches, [treeId]: state } })

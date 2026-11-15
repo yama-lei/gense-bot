@@ -8,7 +8,7 @@ import { Link, navigate, useRoute } from '../lib/router'
 import { Button } from '../ui/button'
 import { Drawer } from '../ui/dialog'
 import { Empty, Spinner } from '../ui/feedback'
-import { localPrefs, useClient, useHost, useLocalPrefs, useUser, useProjects } from './client'
+import { localPrefs, useClient, useHost, useLocalPrefs, useUser, useProjects, findTree } from './client'
 import { CommandPalette } from './CommandPalette'
 import { phoneQuery, ShellContext, useShell, type ShellApi } from './shell-context'
 import { Sidebar } from './Sidebar'
@@ -106,14 +106,14 @@ export function Shell() {
   const [palette, setPalette] = useState(false)
 
   // Only the open conversation streams.
-  const chatId = route.name === 'chat' && host.trees?.some((t) => t.id === route.id) ? route.id : ''
+  const chatId = route.name === 'chat' && findTree(host, route.id) ? route.id : ''
   useEffect(() => client.socket.watch(chatId ? [chatId] : []), [client, chatId])
 
   useEffect(() => {
     const title =
-      route.name === 'chat' ? host.trees?.find((t) => t.id === route.id)?.title : route.name === 'projects' && route.id ? projects?.find((p) => p.id === route.id)?.name : titles[route.name]
+      route.name === 'chat' ? findTree(host, route.id)?.title : route.name === 'projects' && route.id ? projects?.find((p) => p.id === route.id)?.name : titles[route.name]
     document.title = title ? `${title} · Gense` : 'Gense'
-  }, [route, host.trees, projects])
+  }, [route, host.trees, host.temporary, projects])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

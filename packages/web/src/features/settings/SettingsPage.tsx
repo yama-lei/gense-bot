@@ -1,13 +1,14 @@
 // Settings: how the assistant addresses the owner, model accounts, appearance, shortcuts, local data, usage and the
 // owner's password. A section list on the left, one section on the right.
-import type { LoginPrompt, ProviderState } from '@gense/protocol'
-import { Check, Cpu, Database, Download, ExternalLink, Gauge, Keyboard, LogOut, Monitor, Moon, Palette, ShieldCheck, Sun, UserRound } from 'lucide-react'
+import type { LoginPrompt, ProviderState, ShareInfo } from '@gense/protocol'
+import { sharePath } from '@gense/protocol'
+import { Check, Cpu, Database, Download, ExternalLink, Gauge, Keyboard, Link2, LogOut, Monitor, Moon, Palette, ShieldCheck, Sun, UserRound } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { report, useClient, useHost, useMemories, useUser } from '../../app/client'
+import { report, useClient, useHost, useMemories, useShares, useUser } from '../../app/client'
 import { Page } from '../../app/Shell'
 import { cn } from '../../lib/cn'
-import { errorText, saveBlob } from '../../lib/format'
+import { errorText, formatTime, saveBlob } from '../../lib/format'
 import { modKey } from '../../lib/hooks'
 import { lab, useLab } from '../../lib/lab'
 import { Link, type SettingsSection } from '../../lib/router'
@@ -501,6 +502,57 @@ function Shortcuts() {
 /** Everything this browser keeps for the interface, by localStorage key. */
 const localKeys = () => Object.keys(localStorage).filter((k) => k.startsWith('gense.'))
 
+/** Every public link the user made, to open or stop (roadmap-7 B3). */
+function Shares() {
+  const client = useClient()
+  const shares = useShares()
+  const [stopping, setStopping] = useState<ShareInfo | null>(null)
+  return (
+    <Section title="公开链接" description="拿到链接的人无需登录就能看到对话的快照。新建或更新链接在对话的「分享」里。">
+      {shares === null ? (
+        <Skeleton className="h-14 rounded-2xl" />
+      ) : shares.length === 0 ? (
+        <p className="rounded-2xl border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">还没有公开分享过对话。临时对话不能分享。</p>
+      ) : (
+        <ul className={rowsClass}>
+          {shares.map((sh) => (
+            <li key={sh.token} className="flex items-center gap-3 px-4 py-3">
+              <Link2 className="size-4 shrink-0 text-muted-foreground" />
+              <div className="min-w-0 flex-1">
+                <Link to={{ name: 'chat', id: sh.treeId }} className="block truncate text-sm font-medium hover:underline">
+                  {sh.title || '新对话'}
+                </Link>
+                <div className="text-xs text-muted-foreground">
+                  {sh.turns} 轮 · 快照于 {formatTime(sh.updatedAt)}
+                </div>
+              </div>
+              <Button size="sm" variant="ghost" asChild>
+                <a href={sharePath(sh.token)} target="_blank" rel="noreferrer">
+                  <ExternalLink /> 打开
+                </a>
+              </Button>
+              <Button size="sm" variant="ghost-destructive" onClick={() => setStopping(sh)}>
+                停止分享
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <ConfirmDialog
+        open={!!stopping}
+        onOpenChange={(v) => !v && setStopping(null)}
+        title="停止分享？"
+        confirm="停止分享"
+        onConfirm={() => {
+          if (stopping) client.deleteShare(stopping.token).catch(report)
+        }}
+      >
+        「{stopping?.title || '新对话'}」的链接会立即失效，已经打开的人刷新后也看不到。对话本身不受影响。
+      </ConfirmDialog>
+    </Section>
+  )
+}
+
 function Data() {
   const { prefs } = useHost()
   const client = useClient()
@@ -519,9 +571,6 @@ function Data() {
           <Row title="在对话中参考记忆" description={<>记忆在「<Link to={{ name: 'memory' }} className="text-accent underline-offset-4 hover:underline">记忆</Link>」页管理，共 {memories?.length ?? 0} 条，网页和飞书里的对话都会参考。</>}>
             <Switch checked={prefs?.useMemory ?? true} disabled={!prefs} onCheckedChange={(v) => client.setPrefs({ useMemory: v })} aria-label="在对话中参考记忆" />
           </Row>
-          <Row title={<span className="flex items-center gap-2">临时对话 <PreviewBadge /></span>} description="不保存到历史、不写入记忆的对话。">
-            <Switch disabled aria-label="临时对话" />
-          </Row>
           <Row title={<span className="flex items-center gap-2">导出全部对话 <PreviewBadge /></span>} description="把所有对话和文件打包下载。现在可以在每个对话的「分享」里导出 Markdown。">
             <Button disabled>
               <Download /> 导出
@@ -529,6 +578,7 @@ function Data() {
           </Row>
         </div>
       </Section>
+      <Shares />
       <Section title="这个浏览器里的数据" description="回答反馈、草稿和界面偏好保存在这个浏览器里，不会同步到其他设备。项目和记忆在你的账户里。">
         <div className={rowsClass}>
           <Row title="导出本地数据" description="下载为一个 JSON 文件。">

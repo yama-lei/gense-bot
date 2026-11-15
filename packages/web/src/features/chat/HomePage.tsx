@@ -1,4 +1,4 @@
-import { ArrowUpRight, CalendarClock, Code, GraduationCap, Inbox, LayoutDashboard, MessageCircle, PenLine, Telescope, Timer, type LucideIcon } from 'lucide-react'
+import { ArrowUpRight, CalendarClock, Code, Ghost, GraduationCap, Inbox, LayoutDashboard, MessageCircle, PenLine, Telescope, Timer, type LucideIcon } from 'lucide-react'
 import { useState } from 'react'
 import { report, useClient, useHost } from '../../app/client'
 import { SidebarToggle } from '../../app/Shell'
@@ -7,6 +7,8 @@ import { formatTime } from '../../lib/format'
 import { Link, navigate } from '../../lib/router'
 import type { Outgoing } from '../../lib/types'
 import { Logo } from '../../ui/logo'
+import { Button } from '../../ui/button'
+import { Tooltip } from '../../ui/tooltip'
 import { useInbox } from '../inbox/items'
 import { Composer } from './Composer'
 
@@ -41,10 +43,11 @@ export function HomePage() {
   const [starting, setStarting] = useState(false)
   const [seed, setSeed] = useState<{ text: string; key: number }>()
   const [starter, setStarter] = useState<string | null>(null)
+  const [temporary, setTemporary] = useState(false)
 
   const start = (message: Outgoing) => {
     setStarting(true)
-    client.start(message).then(
+    client.start(message, { temporary }).then(
       (id) => navigate({ name: 'chat', id }),
       (e: unknown) => {
         setStarting(false)
@@ -65,6 +68,17 @@ export function HomePage() {
       <header className="relative flex h-13 shrink-0 items-center justify-between px-2 md:px-3">
         <SidebarToggle />
         <span className="flex-1" />
+        <Tooltip label={temporary ? '关闭临时对话' : '临时对话：不进历史、不读写记忆'}>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-pressed={temporary}
+            onClick={() => setTemporary(!temporary)}
+            className={cn('gap-1.5 text-muted-foreground', temporary && 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent')}
+          >
+            <Ghost /> <span className="max-sm:hidden">临时对话</span>
+          </Button>
+        </Tooltip>
         {inbox.unread > 0 && (
           <Link to={{ name: 'inbox' }} className="flex h-8 items-center gap-1.5 rounded-full border bg-card px-3 text-sm text-muted-foreground shadow-float hover:text-foreground">
             <Inbox className="size-4 text-accent" /> {inbox.unread} 条新动态
@@ -75,8 +89,9 @@ export function HomePage() {
       <div className="relative flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-3 pb-6 md:px-6">
         <div className="flex w-full max-w-3xl flex-1 flex-col md:flex-none md:pt-[max(2rem,calc(22dvh-3rem))]">
           <div className="flex flex-1 animate-rise flex-col items-center justify-center gap-4 py-8 max-md:order-1 md:flex-none md:pt-0 md:pb-9">
-            <Logo className="size-11" />
-            <h1 className="text-center text-[1.75rem] leading-tight font-semibold tracking-tight md:text-[2.4rem]">{greeting(prefs?.name.trim() ?? '')}</h1>
+            {temporary ? <Ghost className="size-11 text-accent" strokeWidth={1.5} /> : <Logo className="size-11" />}
+            <h1 className="text-center text-[1.75rem] leading-tight font-semibold tracking-tight md:text-[2.4rem]">{temporary ? '临时对话' : greeting(prefs?.name.trim() ?? '')}</h1>
+            {temporary && <p className="-mt-1 max-w-md text-center text-sm text-muted-foreground">不会出现在历史和搜索里，不参考也不写入记忆。离开对话或 24 小时后删除。</p>}
           </div>
 
           <div className="max-md:order-3">

@@ -1,18 +1,18 @@
-import { ArrowDown, Check, ChevronDown, Copy, Download, FolderInput, FolderOpen, GitBranch, Link2, Minimize2, Pencil, Pin, PinOff, Radio, Share, Trash2, X } from 'lucide-react'
+import { ArrowDown, Check, ChevronDown, Copy, Download, FolderInput, ExternalLink, FolderOpen, Ghost, GitBranch, Globe, Link2, Minimize2, Pencil, Pin, PinOff, Radio, RefreshCw, Share, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { report, useChat, useClient, useFiles, useHost, useTools, projectOf, useProjects } from '../../app/client'
+import { report, useChat, useClient, useFiles, useHost, useTools, projectOf, useProjects, useShares, findTree } from '../../app/client'
 import { SidebarToggle } from '../../app/Shell'
 import { phoneQuery } from '../../app/shell-context'
 import { cn } from '../../lib/cn'
-import { copyText, saveBlob } from '../../lib/format'
+import { copyText, formatTime, saveBlob } from '../../lib/format'
 import { useFlash, useMediaQuery } from '../../lib/hooks'
 import { projectColors, useLab } from '../../lib/lab'
-import { Link, navigate } from '../../lib/router'
+import { href, Link, navigate } from '../../lib/router'
 import type { Outgoing, ToolCall, Turn } from '../../lib/types'
-import { Badge, PreviewBadge } from '../../ui/badge'
+import { Badge } from '../../ui/badge'
 import { Button } from '../../ui/button'
 import { ConfirmDialog, Dialog, DialogBody, DialogContent, DialogFooter } from '../../ui/dialog'
-import { Skeleton } from '../../ui/feedback'
+import { Skeleton, Spinner } from '../../ui/feedback'
 import { Input } from '../../ui/input'
 import { DropdownMenu, DropdownMenuCheckItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '../../ui/menu'
 import { Tooltip } from '../../ui/tooltip'
@@ -24,6 +24,9 @@ import { footnote } from './HomePage'
 import { TurnView, type TurnContext } from './Turn'
 import { ViewSlot } from './ViewSlot'
 import { WorkspacePanel } from './WorkspacePanel'
+import { buildSnapshot } from '../share/snapshot'
+import { sharePath } from '@gense/protocol'
+import { toast } from 'sonner'
 
 /** What the side panel holds: one call's view, or the conversation's files. */
 type Panel = { kind: 'view'; callId: string } | { kind: 'files'; path: string | null }
@@ -95,6 +98,8 @@ export function ChatPage({ treeId }: { treeId: string }) {
   const column = wide ? 'max-w-5xl' : 'max-w-3xl'
   const files = useFiles(treeId, panel?.kind === 'files', entryCount)
   const { scroller, content, away, toBottom, onScroll } = useFollow(loaded)
+  const temporary = !!tree?.temporary
+  useLeaveTemporary(treeId, temporary)
 
   const send = useCallback(
     (message: Outgoing) => {
@@ -142,7 +147,7 @@ export function ChatPage({ treeId }: { treeId: string }) {
       <div className={cn('flex h-full min-w-0 flex-1 flex-col', panel && phone && 'hidden')}>
         <header className="flex h-13 shrink-0 items-center gap-1 px-2 md:px-3">
           <SidebarToggle />
-          <TitleMenu treeId={treeId} title={tree?.title ?? ''} pinned={!!tree?.pinned} canCompact={turns.length > 0 && !running} onExport={() => saveBlob(`${tree?.title || '对话'}.md`, new Blob([toMarkdown(tree?.title ?? '', turns)], { type: 'text/markdown' }))} />
+          <TitleMenu treeId={treeId} title={tree?.title ?? ''} pinned={!!tree?.pinned} temporary={temporary} canCompact={turns.length > 0 && !running} onExport={() => saveBlob(`${tree?.title || '对话'}.md`, new Blob([toMarkdown(tree?.title ?? '', turns)], { type: 'text/markdown' }))} />
           {tree?.source && (
             <Badge variant="outline" className="max-sm:hidden">
               <Radio /> {tree.source.label || tree.source.kind}
@@ -150,9 +155,11 @@ export function ChatPage({ treeId }: { treeId: string }) {
           )}
           <span className="flex-1" />
           {branches && branch && <BranchMap state={branches} shown={branch.id} onShow={(id) => client.showBranch(treeId, id)} />}
-          <Button variant="ghost" size="sm" disabled={turns.length === 0} onClick={() => setSharing(true)} className="gap-1.5 text-muted-foreground max-sm:hidden">
-            <Share /> 分享
-          </Button>
+          {!temporary && (
+            <Button variant="ghost" size="sm" disabled={turns.length === 0} onClick={() => setSharing(true)} className="gap-1.5 text-muted-foreground max-sm:hidden">
+              <Share /> 分享
+            </Button>
+          )}
           <Tooltip label="文件">
             <Button
               variant="ghost"
@@ -166,6 +173,15 @@ export function ChatPage({ treeId }: { treeId: string }) {
             </Button>
           </Tooltip>
         </header>
+
+        {temporary && (
+          <div className={cn('mx-auto flex w-full shrink-0 items-center gap-2 px-4 pb-2 text-sm text-muted-foreground md:px-6', column)}>
+            <Ghost className="size-4 shrink-0 text-accent" />
+            <span className="min-w-0 flex-1">
+              <span className="font-medium text-foreground">临时对话</span> · 不进历史、不读写记忆；离开这个页面或 24 小时后删除
+            </span>
+          </div>
+        )}
 
         {onSide && (
           <div className={cn('mx-auto flex w-full shrink-0 flex-wrap items-center gap-2 px-4 pb-2 text-sm md:px-6', column)}>
@@ -220,7 +236,7 @@ export function ChatPage({ treeId }: { treeId: string }) {
         </div>
       </div>
 
-      <ShareDialog open={sharing} onOpenChange={setSharing} title={tree?.title ?? ''} turns={turns} />
+      <ShareDialog open={sharing} onOpenChange={setSharing} treeId={treeId} title={tree?.title ?? ''} turns={turns} />
 
       {panel && (
         <aside
@@ -292,13 +308,30 @@ function Outline({ turns, scroller }: { turns: Turn[]; scroller: React.RefObject
   )
 }
 
-function ShareDialog({ open, onOpenChange, title, turns }: { open: boolean; onOpenChange: (v: boolean) => void; title: string; turns: Turn[] }) {
+/**
+ * Deletes a temporary chat when the user goes elsewhere in the app (B6). A reload keeps it, and the server deletes what
+ * is left after 24 hours. Checked a tick later, so React's development remount does not count as leaving.
+ */
+function useLeaveTemporary(treeId: string, temporary: boolean) {
+  const client = useClient()
+  useEffect(() => {
+    if (!temporary) return
+    return () => {
+      setTimeout(() => {
+        if (location.pathname !== href({ name: 'chat', id: treeId })) client.request({ t: 'tree.delete', treeId }).catch(() => {})
+      })
+    }
+  }, [client, treeId, temporary])
+}
+
+function ShareDialog({ open, onOpenChange, treeId, title, turns }: { open: boolean; onOpenChange: (v: boolean) => void; treeId: string; title: string; turns: Turn[] }) {
   const [copied, flash] = useFlash()
   const markdown = () => toMarkdown(title, turns)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent title="分享对话" description={`「${title || '新对话'}」 · ${turns.length} 轮`} className="sm:max-w-md">
         <DialogBody className="flex flex-col gap-2">
+          <PublicLink treeId={treeId} title={title} turns={turns} />
           <button type="button" onClick={() => void copyText(markdown()).then((ok) => ok && flash())} className="flex items-center gap-3 rounded-xl border p-3 text-left transition-colors hover:bg-hover">
             <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted">{copied ? <Check className="size-4 text-accent" /> : <Copy className="size-4" />}</span>
             <span className="min-w-0 flex-1">
@@ -315,23 +348,88 @@ function ShareDialog({ open, onOpenChange, title, turns }: { open: boolean; onOp
               <span className="block text-xs text-muted-foreground">保存一份 .md 到本机</span>
             </span>
           </button>
-          <div className="flex items-center gap-3 rounded-xl border border-dashed p-3 opacity-80">
-            <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted">
-              <Link2 className="size-4" />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="flex items-center gap-1.5 text-sm font-medium">
-                公开链接 <PreviewBadge />
-              </span>
-              <span className="block text-xs text-muted-foreground">生成只读网页，别人无需登录即可查看。服务端支持后开放。</span>
-            </span>
-            <Button size="sm" disabled>
-              创建
-            </Button>
-          </div>
         </DialogBody>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/** A read-only page anyone with the link can open (roadmap-7 B1–B3): a snapshot, refreshed only when asked. */
+function PublicLink({ treeId, title, turns }: { treeId: string; title: string; turns: Turn[] }) {
+  const client = useClient()
+  const tools = useTools()
+  const share = useShares()?.find((s) => s.treeId === treeId)
+  const [busy, setBusy] = useState<'create' | 'update' | 'delete' | null>(null)
+  const [copied, flash] = useFlash()
+  const url = share ? new URL(sharePath(share.token), location.origin).href : ''
+  // Turns since the snapshot was taken, so "update" says what it would add.
+  const newer = share ? turns.filter((t) => t.createdAt > share.updatedAt).length : 0
+
+  const run = (kind: 'create' | 'update' | 'delete') => {
+    setBusy(kind)
+    const snapshot = () => buildSnapshot(title, turns, tools, (path) => client.request<{ mimeType: string; base64: string }>({ t: 'files.read', treeId, path }))
+    const work =
+      kind === 'delete'
+        ? client.deleteShare(share!.token).then(() => toast('已停止分享，原链接不再能打开'))
+        : snapshot()
+            .then((snap) => (kind === 'create' ? client.createShare(treeId, snap) : client.updateShare(share!.token, snap)))
+            .then((info) => copyText(new URL(sharePath(info.token), location.origin).href))
+            .then((ok) => {
+              if (ok) flash()
+              toast.success(kind === 'create' ? '链接已创建并复制' : '链接已更新为最新内容', { description: kind === 'create' ? '之后的对话不会出现在链接里，需要时点「更新」。' : undefined })
+            })
+    work.then(
+      () => setBusy(null),
+      (e: unknown) => {
+        setBusy(null)
+        report(e)
+      },
+    )
+  }
+
+  if (!share)
+    return (
+      <div className="flex items-center gap-3 rounded-xl border p-3">
+        <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted">
+          <Link2 className="size-4" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium">公开链接</span>
+          <span className="block text-xs text-muted-foreground">拿到链接的人无需登录就能看到问答和生成的界面；看不到思考过程、工具细节和文件。</span>
+        </span>
+        <Button size="sm" variant="primary" disabled={!!busy} onClick={() => run('create')}>
+          {busy ? <Spinner /> : null} 创建
+        </Button>
+      </div>
+    )
+
+  return (
+    <div className="flex flex-col gap-2.5 rounded-xl border border-accent/30 bg-accent-soft/40 p-3">
+      <div className="flex items-center gap-2">
+        <Globe className="size-4 shrink-0 text-accent" />
+        <span className="text-sm font-medium">已公开分享</span>
+        <span className="ml-auto text-xs text-muted-foreground">快照于 {formatTime(share.updatedAt)} · {share.turns} 轮</span>
+      </div>
+      <div className="flex gap-2">
+        <Input readOnly value={url} aria-label="公开链接" onFocus={(e) => e.currentTarget.select()} className="h-9 font-mono text-xs" />
+        <Button size="sm" className="h-9" onClick={() => void copyText(url).then((ok) => ok && flash())}>
+          {copied ? <Check /> : <Copy />} {copied ? '已复制' : '复制'}
+        </Button>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" disabled={!!busy} onClick={() => run('update')}>
+          {busy === 'update' ? <Spinner /> : <RefreshCw />} 更新为最新内容{newer > 0 ? `（新增 ${newer} 轮）` : ''}
+        </Button>
+        <Button size="sm" variant="ghost" asChild>
+          <a href={url} target="_blank" rel="noreferrer">
+            <ExternalLink /> 打开
+          </a>
+        </Button>
+        <Button size="sm" variant="ghost-destructive" disabled={!!busy} onClick={() => run('delete')} className="ml-auto">
+          {busy === 'delete' ? <Spinner /> : null} 停止分享
+        </Button>
+      </div>
+    </div>
   )
 }
 
@@ -348,10 +446,10 @@ function Loading() {
   )
 }
 
-function TitleMenu({ treeId, title, pinned, canCompact, onExport }: { treeId: string; title: string; pinned: boolean; canCompact: boolean; onExport: () => void }) {
+function TitleMenu({ treeId, title, pinned, temporary, canCompact, onExport }: { treeId: string; title: string; pinned: boolean; temporary: boolean; canCompact: boolean; onExport: () => void }) {
   const client = useClient()
   const projects = useProjects() ?? []
-  const project = projectOf(projects, useHost().trees?.find((t) => t.id === treeId))
+  const project = projectOf(projects, findTree(useHost(), treeId))
   const [renaming, setRenaming] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [draft, setDraft] = useState('')
@@ -387,10 +485,12 @@ function TitleMenu({ treeId, title, pinned, canCompact, onExport }: { treeId: st
           >
             <Pencil /> 重命名
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => void client.request({ t: 'tree.update', treeId, pinned: !pinned }).catch(report)}>
-            {pinned ? <PinOff /> : <Pin />} {pinned ? '取消置顶' : '置顶'}
-          </DropdownMenuItem>
-          {projects.length > 0 && (
+          {!temporary && (
+            <DropdownMenuItem onSelect={() => void client.request({ t: 'tree.update', treeId, pinned: !pinned }).catch(report)}>
+              {pinned ? <PinOff /> : <Pin />} {pinned ? '取消置顶' : '置顶'}
+            </DropdownMenuItem>
+          )}
+          {!temporary && projects.length > 0 && (
             <>
               <DropdownMenuSeparator />
               <DropdownMenuLabel className="flex items-center gap-1.5">

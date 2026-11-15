@@ -1,6 +1,6 @@
 // The app's data: the server's state over one WebSocket (lib/socket.ts), what this browser keeps for itself, and the
 // actions pages call. Failures of actions nobody awaits become toasts.
-import type { BranchMeta, BranchesState, CompactionOutcome, Effort, FileEntry, FilePreview, Memory, MemorySource, ModelInfo, Preferences, Project, ToolCallResult, TreeMeta, UploadedFile, UserInfo } from '@gense/protocol'
+import type { BranchMeta, BranchesState, CompactionOutcome, Effort, FileEntry, FilePreview, Memory, MemorySource, ModelInfo, Preferences, Project, ShareInfo, ShareSnapshot, ToolCallResult, TreeMeta, UploadedFile, UserInfo } from '@gense/protocol'
 import { createContext, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { errorText, fileBase64, saveBlob, toBlob } from '../lib/format'
@@ -62,9 +62,9 @@ export class Client {
     })
   }
 
-  /** A new conversation with its first message, in `projectId` when given; resolves to its id. */
-  async start(message: Outgoing, projectId?: string) {
-    const tree = await this.request<{ id: string }>({ t: 'tree.create', ...(projectId && { projectId }) })
+  /** A new conversation with its first message, in `projectId` or temporary when asked; resolves to its id. */
+  async start(message: Outgoing, where: { projectId?: string; temporary?: boolean } = {}) {
+    const tree = await this.request<{ id: string }>({ t: 'tree.create', ...(where.projectId && { projectId: where.projectId }), ...(where.temporary && { temporary: true }) })
     await this.#send(tree.id, message)
     return tree.id
   }
@@ -126,6 +126,10 @@ export class Client {
   updateMemory = (memoryId: string, patch: { text?: string; enabled?: boolean; projectId?: string | null }) =>
     void this.request<Memory>({ t: 'memory.update', memoryId, ...patch }).catch(report)
   removeMemory = (memoryId: string) => void this.request({ t: 'memory.remove', memoryId }).catch(report)
+
+  createShare = (treeId: string, snapshot: ShareSnapshot) => this.request<ShareInfo>({ t: 'share.create', treeId, snapshot })
+  updateShare = (token: string, snapshot: ShareSnapshot) => this.request<ShareInfo>({ t: 'share.update', token, snapshot })
+  deleteShare = (token: string) => this.request({ t: 'share.delete', token })
 
   createProject = (project: { name: string; instructions?: string; color?: number }) => this.request<Project>({ t: 'project.create', ...project })
   updateProject = (projectId: string, patch: { name?: string; instructions?: string; color?: number }) =>
@@ -242,6 +246,10 @@ export function useHost(): SocketState {
 
 export const useMemories = () => useHost().memories
 export const useProjects = () => useHost().projects
+export const useShares = () => useHost().shares
+
+/** A conversation by id, listed or temporary. */
+export const findTree = (host: SocketState, treeId: string) => host.trees?.find((t) => t.id === treeId) ?? host.temporary.find((t) => t.id === treeId)
 
 /** The project a conversation is in. */
 export const projectOf = (projects: readonly Project[] | null, tree: TreeMeta | undefined) => (tree?.projectId ? projects?.find((p) => p.id === tree.projectId) : undefined)
@@ -274,7 +282,7 @@ export function useChat(treeId: string) {
   const compaction = useMemo(() => compactionState(view), [view])
   const branchId = host.shown[treeId]
   return {
-    tree: host.trees?.find((t) => t.id === treeId),
+    tree: findTree(host, treeId),
     loaded: !!view,
     turns,
     branches,

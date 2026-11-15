@@ -192,6 +192,8 @@
 
 - C-3（2026-11-14）：已基于 `19feb91` 集成版本接通发送前附件解析。本地支持的 Office/PDF 写相邻 `.txt`；PDF 有效文字少于 32 字符、旧 DOC/PPT 或非视觉模型的图片，使用共享 DeepSeek 的独立 OCR，去除 ref/box 与坐标；失败保留原路径继续发送。按原件哈希在 `space.sqlite.attachment_parses` 缓存，重启复用，不重复收费；OCR 成功页数写 `app.sqlite.service_usage`。因此服务用量的基础表/写入先在 C-3 落地，C-5 再补全统计接口与联网计账。附件协议直接使用 t4h 的 `9e08e9f`：`path -> path.txt (text)` / `path -> path.txt (ocr, N pages)`；未修改 protocol。新增真实文件、SQLite 重开和 multipart HTTP 测试，OCR 错误、无视觉图片、页数和缓存均覆盖。清代理且 `taskset -c 0-3 npm run check:server`，92 项全部通过。未实测真实 OCR 的识别质量、延迟或计费；Files API 不用于跨模型文本提取，与 C0 结论一致。
 
+- C-4（2026-11-14）：新增登录后的 GET `/api/speech`、POST `/api/speech/asr` / `tts`，只使用共享提供方凭据，浏览器不接触 key；按用户每分钟 20 次并校验来源。ASR 校验 WAV/Ogg Opus 容器、8 MiB / 120 秒边界，返回协议的 text/durationMs；TTS 校验 4000 字符、音色，HTTP 转发 WAV 流并开启 filter_markdown。主机 HTTP 输出改为带背压的流式管道，ASR 请求单独扩大 body 上限；超限返回 413。服务账务记录 ASR 向上取整秒数、TTS 汉字×2 的 Unicode 字符数。新增真实 HTTP、SQLite、WAV/Ogg、登录/跨用户限流、首段音频先于上游结束到达的测试；`taskset -c 0-3` 清代理 `check:server` 94 项全部通过。只实现任务要求的 HTTP TTS，没有增加 WS TTS；未实测真实音频识别/合成质量和账单。
+
 ## 协议问题
 
 

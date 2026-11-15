@@ -13,6 +13,9 @@ import { lockData } from './data-lock.ts'
 import { AppStore } from './app.ts'
 import { readJson } from './http.ts'
 import type { SharedProviderInput, UserPatch } from '@gense/protocol'
+import { SpeechApi, ASR_MAX_BYTES } from './speech.ts'
+import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 
 const MAX_BODY = 64 * 1024
 const TYPES: Record<string, string> = {
@@ -39,9 +42,10 @@ async function toRequest(req: IncomingMessage) {
   if (req.method === 'GET' || req.method === 'HEAD') return new Request(url, { method: req.method, headers })
   let size = 0
   const chunks: Buffer[] = []
-  for await (const chunk of req as AsyncIterable<Buffer>) {
+  const limit = new URL(url).pathname === '/api/speech/asr' ? ASR_MAX_BYTES : MAX_BODY
+  for await (const chunk of req.iterator({ destroyOnReturn: false }) as AsyncIterable<Buffer>) {
     size += chunk.length
-    if (size > MAX_BODY) throw new Error('请求太大')
+    if (size > limit) { req.resume(); throw Object.assign(new Error('请求太大'), { status: 413 }) }
     chunks.push(chunk)
   }
   return new Request(url, { method: req.method, headers, body: Buffer.concat(chunks) })
@@ -49,7 +53,8 @@ async function toRequest(req: IncomingMessage) {
 
 async function send(res: ServerResponse, response: Response) {
   res.writeHead(response.status, Object.fromEntries(response.headers))
-  res.end(Buffer.from(await response.arrayBuffer()))
+  if (response.body) await pipeline(Readable.fromWeb(response.body as import('node:stream/web').ReadableStream), res)
+  else res.end()
 }
 
 export async function startServer(config: HostConfig) {
@@ -63,6 +68,7 @@ async function openServer(config: HostConfig, unlock: () => Promise<void>) {
   try {
     const auth = await Auth.open(db)
     const app = await AppStore.open(db, config.secretKey)
+    const speech = new SpeechApi(app)
     const spaces = new Spaces(config, auth, app)
     cleanup = async () => { await spaces.close(); await db.close() }
     await spaces.start()
@@ -96,6 +102,10 @@ async function openServer(config: HostConfig, unlock: () => Promise<void>) {
       const userRoute = /^\/api\/users\/([^/]+)\/(.*)$/.exec(path)
       const hook = /^\/hooks\/([^/]+)\/([^/]+)$/.exec(path)
       const user = await signedIn(auth, request)
+      if (path === '/api/speech' || path.startsWith('/api/speech/')) {
+        if (!user) return json(401, { error: '未登录' })
+        return speech.handle(user.id, request)
+      }
       // Webhook secrets authenticate external callers. A browser session may only target its own space.
       if (hook) {
         if (user && user.id !== hook[1]) return json(403, { error: '无权访问' })
@@ -169,7 +179,7 @@ async function openServer(config: HostConfig, unlock: () => Promise<void>) {
         ? toRequest(req).then(api).then(r => send(res, r))
         : staticFile(res, path)
       handled.catch((error) => {
-        if (!res.headersSent) void send(res, json(500, { error: error instanceof Error ? error.message : String(error) }))
+        if (!res.headersSent) void send(res, json((error as { status?: number })?.status === 413 ? 413 : 500, { error: error instanceof Error ? error.message : String(error) }))
         else res.destroy()
       })
     })

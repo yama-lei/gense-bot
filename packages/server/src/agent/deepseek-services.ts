@@ -1,11 +1,11 @@
 // Standalone DeepSeek services. Credentials are supplied by the host's encrypted shared-provider store.
 export interface DeepSeekService { provider: string; key: string; baseUrl: string }
 
-export async function deepseekServiceRequest(service: DeepSeekService, path: string, body: FormData | Record<string, unknown>, signal?: AbortSignal) {
+export async function deepseekServiceRequest(service: DeepSeekService, path: string, body: FormData | Record<string, unknown>, signal?: AbortSignal, timeoutMs = 180_000) {
   const form = body instanceof FormData
   return fetch(`${service.baseUrl.replace(/\/+$/, '')}/v1/tools/${path}`, {
     method: 'POST', headers: { authorization: `Bearer ${service.key}`, ...(!form && { 'content-type': 'application/json' }) },
-    body: form ? body : JSON.stringify(body), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(180_000)]) : AbortSignal.timeout(180_000),
+    body: form ? body : JSON.stringify(body), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
   })
 }
 

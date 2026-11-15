@@ -94,6 +94,13 @@ export const migrations = [
       'CREATE INDEX trees_project ON trees (projectId)',
     ],
   },
+  {
+    version: 6,
+    statements: [
+      'ALTER TABLE trees ADD COLUMN expiresAt INTEGER',
+      'CREATE INDEX trees_expiry ON trees (expiresAt) WHERE expiresAt IS NOT NULL',
+    ],
+  },
 ]
 
 /** Who the assistant is and how it answers (roadmap-6 A10). Only the date changes, once a day, so the prompt cache holds. */
@@ -184,11 +191,11 @@ export interface SpaceOptions {
   webhooks?: boolean
 }
 
-export type TreeRow = { id: string; rootId: number; title: string; pinned: number; createdAt: number; updatedAt: number; activeBranchId: string; source: string | null; projectId: string | null }
+export type TreeRow = { id: string; rootId: number; title: string; pinned: number; createdAt: number; updatedAt: number; activeBranchId: string; source: string | null; projectId: string | null; expiresAt: number | null }
 
-export const COLUMNS = 'id, rootId, title, pinned, createdAt, updatedAt, activeBranchId, source, projectId'
+export const COLUMNS = 'id, rootId, title, pinned, createdAt, updatedAt, activeBranchId, source, projectId, expiresAt'
 
-export const toMeta = ({ rootId: _, activeBranchId: __, source, projectId, ...r }: TreeRow): TreeMeta => ({ ...r, pinned: r.pinned === 1, ...(source && { source: JSON.parse(source) }), ...(projectId && { projectId }) })
+export const toMeta = ({ rootId: _, activeBranchId: __, source, projectId, expiresAt, ...r }: TreeRow): TreeMeta => ({ ...r, pinned: r.pinned === 1, ...(source && { source: JSON.parse(source) }), ...(projectId && { projectId }), ...(expiresAt !== null && { temporary: { expiresAt } }) })
 
 export type BranchRow = {
   id: string

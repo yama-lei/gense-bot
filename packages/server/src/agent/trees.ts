@@ -27,6 +27,8 @@ import { BRANCH_COLUMNS,type BranchRow,COLUMNS,DEFAULT_TITLE,SCHEDULE_COLUMNS,ty
 import type { UserSpace } from './space.ts'
 import { historyWatch } from './history.ts'
 import { deepseekTitleEdited } from './deepseek.ts'
+import { TEMPORARY_TTL_MS } from '@gense/protocol'
+import { temporaryInit } from './temporary.ts'
 export function now(this: UserSpace): number {
     return (this.options.now ?? Date.now)()
   }
@@ -60,8 +62,10 @@ export async function conversationChanged(this: UserSpace, conversationId: numbe
     if (row && !this.closed) this.branchesChanged(row.treeId)
   }
 
-export async function createTree(this: UserSpace, projectId?: string, ctx: Context = BACKGROUND_CONTEXT): Promise<TreeMeta> {
+export async function createTree(this: UserSpace, projectId?: string, ctx: Context = BACKGROUND_CONTEXT, temporary = false): Promise<TreeMeta> {
   return this.projects.serial(async () => {
+    if (typeof temporary !== 'boolean') throw new Error('临时对话开关无效')
+    if (temporary && projectId !== undefined) throw new Error('临时对话不能放进项目')
     if (projectId !== undefined) await this.projects.get(projectId)
     const model = await this.accounts.defaultModel()
     const id = crypto.randomUUID()
@@ -70,14 +74,16 @@ export async function createTree(this: UserSpace, projectId?: string, ctx: Conte
       {
         ownership: { kind: 'ownerless' },
         agent: { cwd: treeDir(id), ...(model && { model: { provider: model.provider, modelId: model.id } }) },
+        ...(temporary && { init: temporaryInit }),
       },
       ctx,
     )
     const now = this.now()
-    const meta: TreeMeta = { id, title: DEFAULT_TITLE, pinned: false, createdAt: now, updatedAt: now, ...(projectId && { projectId }) }
+    const expiresAt = temporary ? now + TEMPORARY_TTL_MS : null
+    const meta: TreeMeta = { id, title: DEFAULT_TITLE, pinned: false, createdAt: now, updatedAt: now, ...(projectId && { projectId }), ...(expiresAt !== null && { temporary: { expiresAt } }) }
     const main: BranchRow = { id: crypto.randomUUID(), treeId: id, conversationId: conv.id, parentId: null, forkEntryId: null, role: 'main', mode: 'new', title: '', status: 'idle', createdAt: now }
     await this.insertBranch(main)
-    await this.db.run(`INSERT INTO trees (${COLUMNS}) VALUES (?, ?, ?, 0, ?, ?, ?, NULL, ?)`, meta.id, conv.id, meta.title, now, now, main.id, projectId ?? null)
+    await this.db.run(`INSERT INTO trees (${COLUMNS}) VALUES (?, ?, ?, 0, ?, ?, ?, NULL, ?, ?)`, meta.id, conv.id, meta.title, now, now, main.id, projectId ?? null, expiresAt)
     await this.changed()
     return meta
   })
@@ -101,7 +107,8 @@ export function insertBranch(this: UserSpace, b: BranchRow): Promise<void> {
 
 export async function updateTree(this: UserSpace, treeId: string, patch: { title?: string; pinned?: boolean; projectId?: string | null }): Promise<void> {
   return this.projects.serial(async () => {
-    await this.row(treeId)
+    const tree = await this.row(treeId)
+    if (tree.expiresAt !== null && patch.projectId !== undefined) throw new Error('临时对话不能放进项目')
     if (patch.projectId !== undefined && patch.projectId !== null) await this.projects.get(patch.projectId)
     if (patch.title !== undefined) {
       await deepseekTitleEdited(this, treeId)
@@ -187,6 +194,7 @@ export async function watch(this: UserSpace, treeId: string, branchId?: string, 
 
 export async function close(this: UserSpace, ctx: Context = BACKGROUND_CONTEXT): Promise<void> {
     this.closed = true
+    await this.stopTemporaryCleanup()
     await this.shares?.flush()
     this.listeners.clear()
     this.branchListeners.clear()
@@ -204,6 +212,7 @@ export async function searchTrees(this: UserSpace, query: string, limit = 30): P
   if (!needle) return []
   const hits: import('@gense/protocol').TreeHit[] = []
   for (const tree of await this.trees()) {
+    if (tree.temporary) continue
     let match = tree.title.toLocaleLowerCase().includes(needle) ? tree.title : ''
     for (const branch of (await this.branches(tree.id)).branches) {
       const conv = await this.harness.conversation(branch.conversationId as ConversationId, BACKGROUND_CONTEXT)

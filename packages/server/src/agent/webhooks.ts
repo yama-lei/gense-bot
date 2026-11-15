@@ -26,7 +26,7 @@ export async function webhooks(this: UserSpace): Promise<WebhookInfo[]> {
 export async function createWebhook(this: UserSpace, treeId: string): Promise<{ webhook: WebhookInfo; secret: string; }> {
     if (!this.options.webhooks) throw new Error('这个部署没有开启 Webhook')
     if (!this.sealer) throw new Error('服务器没有配置 TOKEN_ENCRYPTION_KEY，无法保存 Webhook 密钥')
-    await this.row(treeId)
+    if ((await this.row(treeId)).expiresAt !== null) throw new Error('临时对话不能创建 Webhook')
     const secret = `whsec_${[...crypto.getRandomValues(new Uint8Array(24))].map((b) => b.toString(16).padStart(2, '0')).join('')}`
     const row: WebhookRow = { id: crypto.randomUUID().replaceAll('-', ''), treeId, secret: await this.sealer.seal(secret), createdAt: this.now(), lastUsedAt: null }
     await this.db.run('DELETE FROM webhooks WHERE treeId = ?', treeId)

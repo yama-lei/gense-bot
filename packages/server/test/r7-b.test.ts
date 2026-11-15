@@ -1,16 +1,20 @@
 // Roadmap-7 B1–B6: real host, SQLite, public HTTP and authenticated WebSocket clients.
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context'
 import { openNodeSqliteDatabase } from '@earendil-works/chord/sqlite/node'
-import { SHARE_LIMITS, type ShareInfo, type SharedPage, type ShareSnapshot, type TreeMeta, type UserInfo } from '@gense/protocol'
+import type { Message } from '@earendil-works/pi-ai'
+import { SHARE_LIMITS, TEMPORARY_TTL_MS, type ClientRequest, type ExportInfo, type FileEntry, type LibraryPage, type ShareInfo, type SharedPage, type ShareSnapshot, type TreeMeta, type UserInfo } from '@gense/protocol'
+import { unzipSync } from 'fflate'
 import assert from 'node:assert/strict'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
+import { access, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { SESSION_COOKIE } from '../src/index.ts'
+import { fauxModels, SESSION_COOKIE, UserSpace } from '../src/index.ts'
 import { configFromEnv } from '../src/platform/config.ts'
 import { ShareRateLimit } from '../src/platform/shares.ts'
 import { startServer } from '../src/platform/server.ts'
 import { Client, tempDir } from './host-helpers.ts'
+import { diskEnv } from './fixtures.ts'
 
 const config = (root: string) => ({ ...configFromEnv({ GENSE_FAUX: '1', DATA_DIR: root, SANDBOX: '0', BACKUPS: '0', TOKEN_ENCRYPTION_KEY: 'r7-b-key' }), port: 0 })
 async function register(host: Awaited<ReturnType<typeof startServer>>, email: string) {
@@ -109,7 +113,9 @@ test('B1/B2/B4: share schema, UTF-8 byte and turn limits are enforced; only appr
   boundary.turns[0]!.answer = [{ kind: 'text', text: 'a'.repeat(SHARE_LIMITS.bytes - overhead) }]
   assert.equal(Buffer.byteLength(JSON.stringify(boundary)), SHARE_LIMITS.bytes)
   const exact = await create(boundary)
-  assert.equal((await fetch(host.url + '/api/share/' + exact.token)).status, 200)
+  const response = await fetch(host.url + '/api/share/' + exact.token)
+  assert.equal(response.status, 200)
+  await response.arrayBuffer()
 })
 
 test('B4: public reads are rate limited by socket IP, without trusting forwarded headers', async t => {
@@ -125,4 +131,176 @@ test('B4: public reads are rate limited by socket IP, without trusting forwarded
   const limit = new ShareRateLimit()
   for (let i = 0; i < 60; i++) assert.equal(limit.allow('one', 100), true)
   assert.equal(limit.allow('one', 100), false); assert.equal(limit.allow('two', 100), true); assert.equal(limit.allow('one', 60_100), true)
+})
+
+test('B4: trusted proxy mode buckets the rightmost valid hop; spoofed prefixes cannot reset its limit', async t => {
+  assert.equal(configFromEnv({}).trustProxy, false)
+  assert.equal(configFromEnv({ GENSE_TRUST_PROXY: '1' }).trustProxy, true)
+  const host = await startServer({ ...config(await tempDir()), trustProxy: true }); t.after(() => host.close())
+  const owner = await register(host, 'a@example.com'), client = await Client.connect(host.url, owner.cookie)
+  t.after(() => client.close())
+  const tree = await client.request<TreeMeta>({ t: 'tree.create' }), share = await client.request<ShareInfo>({ t: 'share.create', treeId: tree.id, snapshot: snapshot() })
+  const read = async (forwarded?: string) => {
+    const response = await fetch(host.url + '/api/share/' + share.token, { headers: forwarded === undefined ? {} : { 'x-forwarded-for': forwarded } })
+    await response.arrayBuffer()
+    return response.status
+  }
+  for (let i = 0; i < 60; i++) assert.equal(await read(`198.51.100.${i}, 203.0.113.10`), 200)
+  assert.equal(await read('192.0.2.1, 203.0.113.10'), 429, 'a forged earlier hop is ignored')
+  assert.equal(await read('192.0.2.1, 203.0.113.11'), 200, 'another actual client has its own budget')
+  assert.equal(await read('192.0.2.1,  2001:db8::1 '), 200, 'IPv6 is valid')
+  for (let i = 0; i < 60; i++) assert.equal(await read(`203.0.113.${i}, invalid`), 200)
+  assert.equal(await read(), 429, 'invalid or absent forwarded IPs use the same socket bucket')
+})
+
+test('B5: temporary roots, inherited forks and empty regenerated branches never read or offer memory', async t => {
+  const models = fauxModels(), requests: { sections: Record<string, string>; tools: Set<string> }[] = []
+  const provider = models.providers[0] as unknown as Record<'stream' | 'streamSimple', (model: unknown, context: { messages: Message[] }, options: unknown) => unknown>
+  for (const key of ['stream', 'streamSimple'] as const) {
+    const original = provider[key].bind(provider)
+    provider[key] = (model, context, options) => {
+      const sections: Record<string, string> = {}, tools = new Set<string>()
+      for (const message of context.messages) if (message.role === 'system') {
+        for (const [name, text] of Object.entries(message.sections ?? {})) { if (text === null) delete sections[name]; else sections[name] = text }
+        for (const tool of message.toolsRemoved ?? []) tools.delete(tool.name)
+        for (const tool of message.toolsAdded ?? []) tools.add(tool.name)
+      }
+      requests.push({ sections, tools })
+      return original(model, context, options)
+    }
+  }
+  const space = await UserSpace.open(await openNodeSqliteDatabase(':memory:'), { models, env: await diskEnv() })
+  t.after(() => space.close())
+  await space.memories.add({ text: 'A stable remembered preference' })
+  const tree = await space.createTree(undefined, ctx, true)
+  let n = 0
+  const ask = async (text: string, branchId?: string) => { await space.send(tree.id, { text, requestId: String(++n), ...(branchId && { branchId }) }); await space.harness.waitForIdle(ctx) }
+  await ask('Temporary first message')
+  const { watch, branchId } = await space.watch(tree.id); await watch.stop()
+  const first = watch.value.entries.find(entry => entry.kind === 'pi.user')!
+  const fork = await space.fork(tree.id, branchId, first.id)
+  await ask('Inherited fork', fork.id)
+  const regenerated = await space.regenerate(tree.id, branchId, first.id, { requestId: 'empty-regenerated' })
+  await space.harness.waitForIdle(ctx)
+  await space.preferences.set({ memoryWrites: 'explicit' })
+  await ask('[工具 memory] {"action":"add","text":"Temporary secret must not be saved"}', regenerated.id)
+  assert.ok(requests.length >= 4)
+  for (const request of requests) {
+    assert.equal(request.sections.memory, undefined); assert.equal(request.tools.has('memory'), false)
+    assert.doesNotMatch(JSON.stringify(request.sections), /A stable remembered preference/)
+  }
+  assert.deepEqual((await space.memories.list()).map(entry => entry.text), ['A stable remembered preference'])
+  const resolved = await (await space.open((await space.branchRow(tree.id, regenerated.id)).branch, ctx)).agent(ctx)
+  assert.ok(!resolved.callable.some(tool => tool.name === 'memory'), 'nested tools cannot call memory either')
+})
+
+test('B5: temporary metadata synchronizes, stays out of search and rejects projects, shares, memory and automations', async t => {
+  const host = await startServer(config(await tempDir())); t.after(() => host.close())
+  const owner = await register(host, 'a@example.com'), first = await Client.connect(host.url, owner.cookie), second = await Client.connect(host.url, owner.cookie)
+  t.after(() => { first.close(); second.close() })
+  const project = await host.spaces.get(owner.user.id)!.projects.create({ name: 'A project' })
+  await assert.rejects(first.request({ t: 'tree.create', temporary: true, projectId: project.id }), /临时对话不能放进项目/)
+  await assert.rejects(first.request({ t: 'tree.create', temporary: 'yes' } as never), /临时对话开关无效/)
+  const temporary = await first.request<TreeMeta>({ t: 'tree.create', temporary: true })
+  assert.equal(temporary.temporary!.expiresAt, temporary.createdAt + TEMPORARY_TTL_MS)
+  await second.until(() => second.trees.some(tree => tree.id === temporary.id && tree.temporary?.expiresAt === temporary.temporary!.expiresAt))
+  await first.request({ t: 'tree.update', treeId: temporary.id, title: 'temporary-search-sentinel' })
+  await first.request({ t: 'send', treeId: temporary.id, text: 'temporary-search-sentinel', requestId: 'search' })
+  await host.spaces.get(owner.user.id)!.harness.waitForIdle(ctx)
+  assert.deepEqual(await first.request({ t: 'trees.search', query: 'temporary-search-sentinel' }), [])
+  for (const projectId of [project.id, null]) await assert.rejects(first.request({ t: 'tree.update', treeId: temporary.id, projectId }), /临时对话不能放进项目/)
+  await assert.rejects(first.request({ t: 'share.create', treeId: temporary.id, snapshot: snapshot() }), /临时对话不能分享/)
+  await assert.rejects(first.request({ t: 'memory.add', treeId: temporary.id, source: 'saved', text: 'One-time facts' }), /临时对话不能写入记忆/)
+  await assert.rejects(first.request({ t: 'schedule.create', treeId: temporary.id, name: 'Reminder', prompt: 'Wake', rule: { kind: 'interval', minutes: 5 }, tz: 'UTC' }), /临时对话不能创建定时任务/)
+  await assert.rejects(first.request({ t: 'webhook.create', treeId: temporary.id }), /临时对话不能创建 Webhook/)
+})
+
+type WithoutId<T> = T extends unknown ? Omit<T, 'id'> : never
+async function optionalActivity<T>(client: Client, request: WithoutId<ClientRequest>) {
+  try { return await client.request<T>(request) }
+  catch (error) { assert.match(String(error), /未知请求/); return undefined }
+}
+
+test('B5/B6: deletion and expiry make temporary content unreachable through content lists, files, shares and memory', async t => {
+  const root = await tempDir(), host = await startServer(config(root)); t.after(() => host.close())
+  const owner = await register(host, 'a@example.com'), client = await Client.connect(host.url, owner.cookie), second = await Client.connect(host.url, owner.cookie)
+  t.after(() => { client.close(); second.close() })
+  const space = host.spaces.get(owner.user.id)!, db = await openNodeSqliteDatabase(join(root, 'app.sqlite'))
+  t.after(() => db.close())
+  let n = 0
+  for (const mode of ['delete', 'expire'] as const) {
+    const marker = 'temporary-private-sentinel-' + mode
+    const tree = await client.request<TreeMeta>({ t: 'tree.create', temporary: true })
+    await client.request({ t: 'tree.update', treeId: tree.id, title: marker })
+    await client.request({ t: 'watch', treeId: tree.id })
+    const branchId = client.shown.get(tree.id)!
+    await client.request({ t: 'send', treeId: tree.id, text: marker, requestId: String(++n) }); await space.harness.waitForIdle(ctx)
+    await client.request({ t: 'send', treeId: tree.id, text: '[工具 write] ' + JSON.stringify({ path: marker + '.txt', content: marker }), requestId: String(++n) }); await space.harness.waitForIdle(ctx)
+    const path = (await client.request<FileEntry[]>({ t: 'files.list', treeId: tree.id })).find(file => !file.readOnly && file.path.includes(marker))!.path
+    const activity = async () => {
+      const page = await optionalActivity<LibraryPage>(client, { t: 'library.list', limit: 200 })
+      if (page) { assert.ok(!page.items.some(item => item.treeId === tree.id)); assert.ok(!JSON.stringify(page).includes(marker)) }
+      else t.diagnostic('D library.list is not implemented on this baseline; it exposes no content. This probe checks real results once available.')
+      const exported = await optionalActivity<ExportInfo>(client, { t: 'export.create' })
+      if (exported) {
+        const done = exported.status === 'running' ? await client.until(() => client.exports.find(item => item.id === exported.id && item.status !== 'running'), 60_000, 'export completion') : exported
+        assert.equal(done.status, 'ready', done.error)
+        const response = await fetch(host.url + '/api/exports/' + done.id, { headers: { cookie: owner.cookie } })
+        assert.equal(response.status, 200)
+        for (const [name, bytes] of Object.entries(unzipSync(new Uint8Array(await response.arrayBuffer())))) {
+          assert.ok(!name.includes(marker)); assert.ok(!Buffer.from(bytes).includes(Buffer.from(marker)), name)
+        }
+        await client.request({ t: 'export.delete', exportId: done.id })
+      } else t.diagnostic('D export.create is not implemented on this baseline; it exposes no content. This probe checks real archives once available.')
+    }
+    await activity() // Also catches future D implementations that accidentally enumerate live temporary trees.
+    const token = randomBytes(16).toString('base64url')
+    const stale: ShareSnapshot = { title: marker, turns: [{ question: marker, answer: [], createdAt: Date.now() }] }
+    // An invalid legacy/direct-database share must be revoked too; the public creation API already refuses it.
+    await db.run('INSERT INTO shares (token, userId, treeId, title, snapshot, turns, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 1, ?, ?)', token, owner.user.id, tree.id, marker, JSON.stringify(stale), Date.now(), Date.now())
+    assert.equal((await fetch(host.url + '/api/share/' + token)).status, 200)
+    if (mode === 'delete') await second.request({ t: 'tree.delete', treeId: tree.id })
+    else {
+      await space.db.run('UPDATE trees SET expiresAt = ? WHERE id = ?', Date.now() - 1, tree.id)
+      await Promise.all([space.cleanupTemporary(), space.cleanupTemporary()])
+    }
+    await client.until(() => !client.trees.some(item => item.id === tree.id))
+    await assert.rejects(access(join(root, 'users', owner.user.id, 'files', 'sessions', tree.id)))
+    const triggers = await client.request({ t: 'triggers.list', channelId: 'web' }), uploads = await client.request({ t: 'uploads' })
+    const lists = { trees: client.trees, projects: client.projects, memories: client.memories, shares: client.shares, schedules: client.schedules, webhooks: client.webhooks, triggers, uploads }
+    assert.ok(!JSON.stringify(lists).includes(marker)); assert.ok(!JSON.stringify(lists).includes(tree.id))
+    assert.deepEqual(await client.request({ t: 'trees.search', query: marker }), [])
+    for (const request of [
+      { t: 'watch', treeId: tree.id }, { t: 'files.list', treeId: tree.id }, { t: 'files.read', treeId: tree.id, path }, { t: 'files.preview', treeId: tree.id, path },
+      { t: 'send', treeId: tree.id, text: 'continue', requestId: String(++n) }, { t: 'share.create', treeId: tree.id, snapshot: snapshot() },
+      { t: 'memory.add', source: 'saved', treeId: tree.id, text: marker }, { t: 'branch.fork', treeId: tree.id, branchId, at: 1 },
+    ] as const) await assert.rejects(client.request(request), /会话不存在/)
+    const fileResponse = await fetch(host.url + `/api/users/${owner.user.id}/files/${tree.id}?path=` + encodeURIComponent(path), { headers: { cookie: owner.cookie } })
+    assert.equal(fileResponse.status, 404)
+    assert.equal((await fetch(host.url + '/api/share/' + token)).status, 404)
+    await activity()
+    const usage = await fetch(host.url + '/api/admin/usage', { headers: { cookie: owner.cookie } })
+    assert.equal(usage.status, 200); assert.ok(!JSON.stringify(await usage.json()).includes(marker), 'usage retains metering without message content')
+  }
+})
+
+test('B6: startup removes an expired unfinished temporary run and its workspace before recovery', { timeout: 60_000 }, async t => {
+  const root = await tempDir(), options = config(root)
+  let host = await startServer(options)
+  const clients: Client[] = []
+  t.after(async () => { for (const client of clients) client.close(); await host.close() })
+  const owner = await register(host, 'a@example.com'), client = await Client.connect(host.url, owner.cookie); clients.push(client)
+  const tree = await client.request<TreeMeta>({ t: 'tree.create', temporary: true }), space = host.spaces.get(owner.user.id)!
+  await client.request({ t: 'watch', treeId: tree.id })
+  await client.request({ t: 'send', treeId: tree.id, text: '[长回答] temporary-running-sentinel', requestId: 'running' })
+  await client.until(() => client.branches.get(tree.id)?.branches.some(branch => branch.status === 'running'))
+  await space.db.run('UPDATE trees SET expiresAt = ? WHERE id = ?', Date.now() - 1, tree.id)
+  client.close(); await host.close()
+  host = await startServer(options)
+  const reopened = await Client.connect(host.url, owner.cookie); clients.push(reopened)
+  await reopened.until(() => reopened.prefs)
+  assert.ok(!reopened.trees.some(item => item.id === tree.id))
+  await assert.rejects(reopened.request({ t: 'watch', treeId: tree.id }), /会话不存在/)
+  await assert.rejects(access(join(root, 'users', owner.user.id, 'files', 'sessions', tree.id)))
+  await host.spaces.get(owner.user.id)!.harness.waitForIdle(ctx)
 })

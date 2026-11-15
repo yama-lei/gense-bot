@@ -204,6 +204,16 @@
 - 无协议问题或设计偏离。临时对话的拒绝逻辑将在 B-2 接入 expiresAt。
 
 - C-5（2026-11-14）：已合入 `3b5c33c`。模型账务增加 searches/fetches，使用最终 `tool_search + tool_image_search` / `tool_fetch`，包括 SSE error 的收费用量；独立 web Search/Fetch 成功且非空才计数，记在共享 DeepSeek 提供方的 `web-tools` 行，calls 为 0。仅有插件 key 时使用 `deepseek-tools` / BYOK 行。按 t4h 的口径，service_usage 仅记 OCR/ASR/TTS，不重复记联网。管理员与当前用户接口统一返回 UsageReport，两组数据均按 UTC 日期筛选，普通用户只见自己。真实本地 HTTP、SDK 与 SQLite 测试覆盖显示数/计费数不同、错误用量、空结果/失败不计账、无额外模型调用、双用户隔离；清代理并用 `taskset -c 0-3` 跑 `check:server`，99 项全部通过。未实测真实 DeepSeek 账单；无协议修改。
+### B-2 临时对话及代理限流（2026-11-14）
+
+- 按 t4h 指示先快进到集成提交 `3b5c33c`，保留 shares、speech 和 deepseekService/serviceUsage 的全部接线。
+- `trees.expiresAt` 非空表示临时对话，创建时为 now + 24 小时，以 `TreeMeta.temporary = { expiresAt }` 推送全部连接，搜索排除。拒绝临时对话加入项目、分享、定时任务、Webhook，以及带该 treeId 的记忆写入。
+- 在创建根对话与空分支时通过 AgentDoc 禁用 memory 工具；普通分叉继承禁用状态。memoryContext 同时拒绝临时树，因而不生成记忆节，切换 auto/explicit 也不恢复工具；嵌套工具同样不能调用它。
+- 启动时先清理已到期临时树，再恢复 Trigger / Harness；运行中每 10 分钟清理，重复清理共用一个操作。复用 tree.delete：先终止运行，删除业务索引和工作区，撤销链接并推送 trees。连接收到删除后的列表会停止该树的 watch，避免继续保留订阅。
+- 按 t4h 追加要求修正反向代理限流：HostConfig.trustProxy / `GENSE_TRUST_PROXY=1` 启用时取 X-Forwarded-For 最右侧的有效 IP，关闭或头无效时使用 socket IP。生产 compose 开启，直接暴露端口的开发 compose 关闭，`.env.example` 默认关闭。真实 HTTP 覆盖两种模式、伪造前缀、无效头、不同客户端及 IPv6；Compose YAML 解析验证通过。
+- 追加真实删除/到期回归：搜索和现有内容列表不再包含临时内容，watch/files/分叉/分享/记忆接口不能访问，原工作区消失，直接写入的旧分享也被撤销；用量只保留计数，不包含问答正文。资料库和导出在本基线尚未实现，测试确认其返回“未知请求”；接口上线后，同一回归会检查真实资料列表和 ZIP 中均无临时内容，包含临时树仍存活时的检查。
+- **已知缺口（t4h 明确接受并将告知用户）：不做 pi_* 底层记录的物理擦除。** 临时删除/到期和普通 tree.delete 一样只移除业务可达性与工作区，底层对话和条目仍可能保留在 space.sqlite 及其备份中。当前 pi-durable 1.4 没有公开的 deleteConversation API，本轮不直接修改活动 Harness 的内部表。
+- 验证：8 组专项测试全过；`taskset -c 0` 加清除代理的 `npm run check:server` 在 `3b5c33c` 基线上通过，102 项全过，无跳过，包含 C-2/C-3/C-4。未改 protocol 或模型提示词原文。另显式消费精确 8 MB 测试的响应体，适配 C-4 的 pipeline 流式收尾。
 
 ## 协议问题
 

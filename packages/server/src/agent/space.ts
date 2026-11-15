@@ -11,6 +11,7 @@ import { PreferenceStore } from './preferences.ts'
 import { MemoryStore, memoryExtension } from './memory.ts'
 import { ProjectStore, projectExtension } from './projects.ts'
 import type { UserShares } from '../platform/shares.ts'
+import * as temporary from './temporary.ts'
 // One user's conversations: a pi-durable Harness plus the sidebar index, in the same SQLite database (roadmap-3 D2).
 // A tree is a main conversation and the branches forked from it, all ownerless; tree and branch ids are ours,
 // conversation ids are pi-durable's. Each tree has one workspace directory, every branch's cwd (D6).
@@ -91,6 +92,8 @@ export class UserSpace {
   readonly accounts: ModelAccounts
 
   readonly options: SpaceOptions
+  temporaryTimer: ReturnType<typeof setInterval> | undefined
+  temporaryCleanup: Promise<void> | undefined
 
   readonly sealer: Sealer | undefined
 
@@ -204,6 +207,7 @@ export class UserSpace {
     space = new UserSpace(db, harness, workspace, plugins, skills, accounts, options, preferences, mcp, channels, triggers, outbox)
     space.schedule = events.schedule
     space.agentTask = events.agent
+    await space.cleanupTemporary()
     channels.register(feishuDefinition(space, options.feishu))
     for (const definition of options.channels ?? []) channels.register(definition)
     await channels.start(trigger => space!.ingestChannel(trigger))
@@ -211,6 +215,7 @@ export class UserSpace {
     outbox.start()
     // Continue runs a previous process left unfinished (R32).
     harness.resume()
+    space.startTemporaryCleanup()
     return space
   }
 
@@ -298,4 +303,7 @@ export class UserSpace {
   compact = compact.bind(this)
   watch: OmitThisParameter<typeof trees.watch> = trees.watch.bind(this)
   close: OmitThisParameter<typeof trees.close> = trees.close.bind(this)
+  cleanupTemporary = temporary.cleanupTemporary.bind(this)
+  startTemporaryCleanup = temporary.startTemporaryCleanup.bind(this)
+  stopTemporaryCleanup = temporary.stopTemporaryCleanup.bind(this)
 }

@@ -37,7 +37,7 @@ export async function scheduleRow(this: UserSpace, id: string): Promise<Schedule
   }
 
 export async function createSchedule(this: UserSpace, treeId: string, input: { name: string; prompt: string; rule: ScheduleRule; tz: string }, ctx: Context = BACKGROUND_CONTEXT): Promise<ScheduleInfo> {
-    await this.row(treeId)
+    if ((await this.row(treeId)).expiresAt !== null) throw new Error('临时对话不能创建定时任务')
     const name = input.name.trim()
     const prompt = input.prompt.trim()
     if (!name || !prompt) throw new Error('名称和内容不能为空')

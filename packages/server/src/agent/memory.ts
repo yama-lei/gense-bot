@@ -53,7 +53,11 @@ export class MemoryStore {
 
   async #references(treeId: string | null, projectId: string | null, enabled: boolean) {
     if (typeof enabled !== 'boolean') throw new Error('记忆开关无效')
-    if (treeId !== null && (typeof treeId !== 'string' || !await this.#db.get('SELECT id FROM trees WHERE id = ?', treeId))) throw new Error('会话不存在')
+    if (treeId !== null) {
+      const tree = typeof treeId === 'string' && await this.#db.get<{ expiresAt: number | null }>('SELECT expiresAt FROM trees WHERE id = ?', treeId)
+      if (!tree) throw new Error('会话不存在')
+      if (tree.expiresAt !== null) throw new Error('临时对话不能写入记忆')
+    }
     if (projectId !== null && (typeof projectId !== 'string' || !await this.#db.get('SELECT id FROM projects WHERE id = ?', projectId))) throw new Error('项目不存在')
   }
 
@@ -108,13 +112,12 @@ export class MemoryStore {
   }
 }
 
-/** Central conversation lookup; stage B can suppress memory here for ephemeral trees as well. */
+/** Central conversation lookup for memory and project sections. Temporary trees never expose either. */
 export async function memoryContext(space: UserSpace, conversationId: number) {
   const branch = await space.db.get<{ treeId: string }>('SELECT treeId FROM branches WHERE conversationId = ?', conversationId)
   if (!branch) return undefined
   const tree = await space.row(branch.treeId)
-  // The optional field is introduced by roadmap-7 B; keep the privacy decision beside the common lookup.
-  if ((tree as typeof tree & { ephemeral?: number }).ephemeral) return undefined
+  if (tree.expiresAt !== null) return undefined
   return { treeId: tree.id, projectId: tree.projectId }
 }
 

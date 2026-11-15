@@ -34,6 +34,7 @@ import { BRANCH_COLUMNS,type BranchRow,DEFAULT_TITLE,entryText,MENTIONED_CHAT_CH
 import type { UserSpace } from './space.ts'
 import { parsedAttachments } from './attachments.ts'
 import { historyEntries } from './history.ts'
+import { temporaryInit } from './temporary.ts'
 export async function branches(this: UserSpace, treeId: string, ctx: Context = BACKGROUND_CONTEXT): Promise<BranchesState> {
     const tree = await this.row(treeId)
     const rows = await this.db.all<BranchRow>(`SELECT ${BRANCH_COLUMNS} FROM branches WHERE treeId = ? ORDER BY createdAt, rowid`, treeId)
@@ -99,10 +100,12 @@ export async function addBranch(this: UserSpace, tree: TreeRow, from: BranchRow,
 
 export async function emptyLike(this: UserSpace, treeId: string, like: Conversation, ctx: Context): Promise<Conversation> {
     const agent = await like.agent(ctx)
+    const tree = await this.row(treeId)
     return this.harness.createConversation(
       {
         ownership: { kind: 'ownerless' },
         agent: { cwd: treeDir(treeId), ...(agent.model && { model: agent.model }), ...(agent.thinkingLevel && { thinkingLevel: agent.thinkingLevel }) },
+        ...(tree.expiresAt !== null && { init: temporaryInit }),
       },
       ctx,
     )

@@ -64,6 +64,55 @@
 - 提示词快照加一个“临时对话”场景（应当没有 memory 一节）。
 - `docs/design/architecture.md` 补上 `shares` 表和临时对话的清理。
 
+## 阶段 D：其余预览功能
+
+协议见 `packages/protocol/src/activity.ts` 和 `index.ts` 里的 `feedback.*`、`inbox.read`、`library.list`、`export.*`、`Preferences.suggestions` 以及对应的推送。提交消息用 `feat/r7-d-<slug>`。
+
+### D-1 反馈
+
+- `space.sqlite` 新表 `feedback(treeId, turnId, value, reasons JSON, comment, model, updatedAt, PRIMARY KEY(treeId, turnId))`。`feedback.set` 校验：树属于该用户；`reasons`、`comment` 只在 `down` 时保存（`up` 时丢弃）；`comment` 截断到 500 字；`value: null` 删除该行。
+- `model` 由服务器填：该轮回答的 assistant 消息的 `provider:model`（找不到就留空）。
+- 推送 `feedback`：watch 一棵树时发一次（即使为空），每次 `feedback.set` 后发给该用户全部连接。
+- 后台统计：同时在 `app.sqlite` 记一行（`userId, day, model, value, reasons`，按 `userId+treeId+turnId` 唯一，改值时覆盖），`GET /api/admin/feedback?from&to` 返回 `FeedbackSummary[]`（只有管理员）。删除对话不必回删统计。
+
+### D-2 追问建议
+
+- 提示词在 `packages/server/src/agent/suggest-prompt.ts`（Claude 写）：`SUGGEST_SYSTEM`、`suggestInput`、`parseSuggestions`，照用。
+- 时机：主分支一轮回答成功结束、且 `prefs.suggestions !== false` 时，在后台做一次侧调用（不进对话历史、不带工具），用回答这一轮的同一个模型和凭据，`maxTokens` 约 300、关掉 thinking/reasoning。用量照常记进 ledger。失败、超时（20 秒）或解析为空都不推送。
+- 只保留每棵树最新一轮的结果（内存或 `space.sqlite` 一行都行）；新一轮开始时清掉。推送 `suggestions`：生成后发给该用户全部连接；watch 时若有就发一次。
+- 临时对话照样生成；飞书渠道不生成。
+- 阶段 C 接入 DeepSeek App API 后若能随回答一起拿到追问，再改为直接用它，那时另说。
+
+### D-3 收件箱已读
+
+- `space.sqlite` 新表 `inbox_read(id PRIMARY KEY, readAt)`，只保留最新 `INBOX_READ_KEPT` 条。`inbox.read { ids }` 合并写入（每个 id 截断到 200 字符，单次最多 500 个），之后向全部连接推送 `inboxRead`；连接建立时推送一次。
+- id 由网页端生成，服务器不解析。（与 roadmap 原文“未读数由服务器给出”略有不同：服务器只存已读集合，未读数由网页端按它算，这样服务器不需要知道收件箱里有什么。）
+
+### D-4 资料库
+
+- `library.list` 返回 `LibraryPage`：遍历该用户全部非临时对话的工作区和全部项目文件（不含 skills 等只读挂载、隐藏文件和 `node_modules` 之类的目录），按 `mtime` 降序。`kind` 按协议的 `fileKind` 过滤；`query` 对文件名做不区分大小写的子串匹配；`limit` 默认 50、最大 200；`cursor` 是不透明字符串（例如 `mtime:path` 编码）。
+- 文件很多时不要每次全量扫描：可以缓存每个工作区的列表、按目录 mtime 失效，做法你定，在汇报里说明。
+
+### D-5 导出
+
+- `export.create`：同一用户已有 `running` 的就报错“已有一个导出在进行”。立即返回 `ExportInfo`（`running`），后台生成 zip 放到 `files/exports/<id>.zip`：
+  - `conversations/<日期>-<标题>/conversation.md`：主分支的问答（用户消息、回答正文；工具调用只写一行名字）；同目录 `files/` 放该对话工作区文件。
+  - `projects/<名字>/`：`project.json`（指令等）和文件；`memories.json`；`preferences.json`。
+  - 不含临时对话、凭据、API key。
+- 完成或失败后更新状态并推送 `exports`；只保留最近 3 个（删多余的文件）。`export.delete` 删记录和文件。连接建立时推送一次。
+- `GET /api/exports/:id`：需要登录且属于该用户，`Content-Disposition: attachment; filename="gense-export-<日期>.zip"`。
+- 网页端会把完成的导出显示在收件箱里，服务器不用另做收件箱消息。
+
+### D-6 用量
+
+- `GET /api/usage?from&to`：返回 `UsageSummary[]`，与 `/api/admin/usage` 同一查询，但只限当前登录用户；普通用户可访问。
+
+### D-7 收尾
+
+- 测试按 D1–D6：真实 SQLite、文件和 HTTP（反馈改值和清除、他人树拒绝、admin 汇总；faux 模型返回 JSON 和乱码时的追问；已读截断到 500；资料库分页、按类型、搜索、不含临时对话；导出 zip 的目录结构和内容、并发拒绝、他人下载 403/404；用量只含自己）。
+- 提示词快照加追问侧调用一节（`SUGGEST_SYSTEM` + 一个 `suggestInput` 示例）。
+- `docs/design/architecture.md` 补上新表、导出文件位置和追问的侧调用。
+
 ## 汇报
 
 （在这里按阶段追加：做了什么、测试结果、偏离之处）

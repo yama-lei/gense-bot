@@ -14,9 +14,11 @@ export * from './plugins.ts'
 export * from './discover.ts'
 export * from './memory.ts'
 export * from './share.ts'
+export * from './activity.ts'
 
 import type { Memory, MemorySource, Project } from './memory.ts'
 import type { ShareInfo, ShareSnapshot } from './share.ts'
+import type { ExportInfo, Feedback, FeedbackReason, FileKind, Suggestions } from './activity.ts'
 
 /** A conversation as the sidebar lists it: a tree of branches, titled by its main branch (roadmap-3 R35). */
 export interface TreeMeta {
@@ -55,6 +57,8 @@ export interface Preferences {
   useMemory?: boolean
   /** `explicit`: the model writes memories only when the user asks it to (Q1). Default `auto`. */
   memoryWrites?: 'auto' | 'explicit'
+  /** Follow-up suggestions after each answer (roadmap-7 D2). Default true. */
+  suggestions?: boolean
 }
 
 export type BranchRole = 'main' | 'user' | 'agent'
@@ -220,7 +224,7 @@ export type ClientRequest =
   | { t: 'share.delete'; id: number; token: string }
   /** Conversations whose title or messages match; resolves to TreeHit[], best first. */
   | { t: 'trees.search'; id: number; query: string; limit?: number }
-  | { t: 'prefs.set'; id: number; name?: string; instructions?: string; timeZone?: string; useMemory?: boolean; memoryWrites?: 'auto' | 'explicit' }
+  | { t: 'prefs.set'; id: number; name?: string; instructions?: string; timeZone?: string; useMemory?: boolean; memoryWrites?: 'auto' | 'explicit'; suggestions?: boolean }
   /** Resolves to the new Memory. `source` defaults to `manual`; `saved` keeps an answer of `treeId`; `model` restores an entry the model wrote (undo). */
   | { t: 'memory.add'; id: number; text: string; source?: MemorySource; treeId?: string; projectId?: string | null; enabled?: boolean }
   /** Resolves to the changed Memory. */
@@ -325,6 +329,15 @@ export type ClientRequest =
   /** A new webhook for the tree, replacing its old one; resolves to `{ webhook, secret }`, the secret shown only now. */
   | { t: 'webhook.create'; id: number; treeId: string }
   | { t: 'webhook.delete'; id: number; webhookId: string }
+  /** 👍 / 👎 on a turn's answer (D1); `value: null` clears it. The server answers with the tree's `feedback`. */
+  | { t: 'feedback.set'; id: number; treeId: string; turnId: string; value: 'up' | 'down' | null; reasons?: FeedbackReason[]; comment?: string }
+  /** Marks inbox items read on every device (D3). */
+  | { t: 'inbox.read'; id: number; ids: string[] }
+  /** Resolves to a LibraryPage (D4): files of every conversation and project, newest first. */
+  | { t: 'library.list'; id: number; query?: string; kind?: FileKind; cursor?: string; limit?: number }
+  /** Starts an export of everything (D5); resolves to its ExportInfo at once, `exports` follows as it progresses. */
+  | { t: 'export.create'; id: number }
+  | { t: 'export.delete'; id: number; exportId: string }
 
 export type ServerMessage =
   | { t: 'hello' }
@@ -348,6 +361,14 @@ export type ServerMessage =
   | { t: 'projects'; projects: Project[] }
   /** All of the user's share links, newest first; sent on connect and after every change. */
   | { t: 'shares'; shares: ShareInfo[] }
+  /** The feedback on a watched tree's answers; sent when the tree is watched and after every change. */
+  | { t: 'feedback'; treeId: string; feedback: Feedback[] }
+  /** Follow-ups for the newest answer of a watched tree: sent on watch when it has some, and when they are generated. */
+  | ({ t: 'suggestions'; treeId: string } & Suggestions)
+  /** Inbox items read (newest INBOX_READ_KEPT); sent on connect and after every change. */
+  | { t: 'inboxRead'; ids: string[] }
+  /** The user's exports, newest first (at most 3 kept); sent on connect and whenever one changes. */
+  | { t: 'exports'; exports: ExportInfo[] }
   | { t: 'schedules'; schedules: ScheduleInfo[] }
   /** `canCreate` is false when the host has no TOKEN_ENCRYPTION_KEY to seal a webhook's secret. */
   | { t: 'webhooks'; webhooks: WebhookInfo[]; canCreate: boolean }

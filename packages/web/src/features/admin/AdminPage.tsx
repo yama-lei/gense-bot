@@ -1,8 +1,8 @@
 // The admin's back office (roadmap-6 D7): accounts and the registration switch, the models shared with everyone, and
 // what each account has spent. All of it goes over the HTTP admin API; the server checks the role on every call.
-import type { RegistrationState, SharedProviderInfo, SharedProviderInput, UsageSummary, UserInfo, UserPatch } from '@gense/protocol'
+import type { RegistrationState, SharedProviderInfo, SharedProviderInput, UserInfo, UserPatch } from '@gense/protocol'
 import { KeyRound, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { useState, type FormEvent, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { report, useUser } from '../../app/client'
 import { Page } from '../../app/Shell'
@@ -11,12 +11,12 @@ import { cn } from '../../lib/cn'
 import { errorText, hostOf } from '../../lib/format'
 import { navigate, type AdminSection } from '../../lib/router'
 import { Badge } from '../../ui/badge'
+import { UsageReport, useLoad } from '../usage/UsageReport'
 import { Button } from '../../ui/button'
 import { ConfirmDialog, Dialog, DialogBody, DialogContent, DialogFooter } from '../../ui/dialog'
 import { Empty, Notice, Skeleton } from '../../ui/feedback'
 import { Field, Input, Textarea } from '../../ui/input'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../../ui/menu'
-import { Select } from '../../ui/select'
 import { Switch } from '../../ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../ui/tabs'
 
@@ -50,26 +50,6 @@ export default function AdminPage({ section = 'users' }: { section?: AdminSectio
       </Tabs>
     </Page>
   )
-}
-
-/** Loads `path` when it changes and on `reload()`; `data` stays until the next load succeeds. Null loads nothing. */
-function useLoad<T>(path: string | null) {
-  const [data, setData] = useState<T | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const reload = useCallback(
-    async () =>
-      path &&
-      api<T>(path).then(
-        (d) => {
-          setData(d)
-          setError(null)
-        },
-        (e) => setError(errorText(e)),
-      ),
-    [path],
-  )
-  useEffect(() => void reload(), [reload])
-  return { data, error, reload, setData }
 }
 
 function Section({ title, description, actions, children }: { title: string; description?: string; actions?: ReactNode; children: ReactNode }) {
@@ -341,125 +321,10 @@ function ProviderDialog({ provider, onClose, onSaved }: { provider: SharedProvid
 
 // ── Usage ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-const utcDay = (offset = 0) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10)
-const compact = new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 })
-const full = new Intl.NumberFormat('zh-CN')
-
-type GroupBy = 'user' | 'day' | 'model'
-const groupOptions = [
-  { value: 'user', label: '按用户' },
-  { value: 'day', label: '按天' },
-  { value: 'model', label: '按模型' },
-]
-type Totals = Pick<UsageSummary, 'calls' | 'input' | 'output' | 'cacheRead' | 'totalTokens'>
-const columns: { key: keyof Totals; label: string }[] = [
-  { key: 'calls', label: '调用' },
-  { key: 'input', label: '输入' },
-  { key: 'output', label: '输出' },
-  { key: 'cacheRead', label: '缓存读取' },
-  { key: 'totalTokens', label: '合计' },
-]
-const zero = (): Totals => ({ calls: 0, input: 0, output: 0, cacheRead: 0, totalTokens: 0 })
-const add = (t: Totals, r: Totals) => {
-  for (const c of columns) t[c.key] += r[c.key]
-  return t
-}
-
 function Usage() {
-  const [from, setFrom] = useState(utcDay(-6))
-  const [to, setTo] = useState(utcDay())
-  const [by, setBy] = useState<GroupBy>('user')
-  const valid = !!from && !!to && from <= to
-  const { data, error } = useLoad<UsageSummary[]>(valid ? `/api/admin/usage?from=${from}&to=${to}` : null)
-
-  const rows = useMemo(() => {
-    const groups = new Map<string, { label: string; source?: UsageSummary['source']; totals: Totals }>()
-    for (const r of data ?? []) {
-      const key = by === 'user' ? r.userId : by === 'day' ? r.day : `${r.source}:${r.provider}:${r.model}`
-      const label = by === 'user' ? r.email : by === 'day' ? r.day : r.model
-      const g = groups.get(key) ?? { label, ...(by === 'model' && { source: r.source }), totals: zero() }
-      add(g.totals, r)
-      groups.set(key, g)
-    }
-    const list = [...groups.values()]
-    return by === 'day' ? list.sort((a, b) => b.label.localeCompare(a.label)) : list.sort((a, b) => b.totals.totalTokens - a.totals.totalTokens)
-  }, [data, by])
-  const total = useMemo(() => rows.reduce((t, r) => add(t, r.totals), zero()), [rows])
-
   return (
-    <Section title="用量" description="每次模型调用的 token，按 UTC 日期统计；包括自带账户的调用。">
-      <div className="mb-4 flex flex-wrap items-end gap-3">
-        <Field label="从" className="w-40">
-          <Input type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value)} />
-        </Field>
-        <Field label="到" className="w-40">
-          <Input type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} />
-        </Field>
-        {/* Not a Field: a label around the select's button would open it twice. */}
-        <div className="flex w-32 flex-col gap-1.5 text-sm">
-          <span className="font-medium">分组</span>
-          <Select label="分组" value={by} onChange={(v) => setBy(v as GroupBy)} options={groupOptions} />
-        </div>
-      </div>
-      {!valid ? (
-        <Notice tone="warning">开始日期不能晚于结束日期。</Notice>
-      ) : error ? (
-        <Notice tone="error">{error}</Notice>
-      ) : !data ? (
-        <Skeleton className="h-40 rounded-2xl" />
-      ) : rows.length === 0 ? (
-        <Empty title="这段时间没有调用" className="py-10" />
-      ) : (
-        <div className="overflow-x-auto rounded-2xl border bg-card">
-          <table className="w-full min-w-[34rem] text-sm">
-            <thead className="text-left text-xs text-muted-foreground">
-              <tr className="border-b">
-                <th className="px-4 py-2.5 font-medium">{groupOptions.find((g) => g.value === by)!.label.slice(1)}</th>
-                {columns.map((c) => (
-                  <th key={c.key} className="px-3 py-2.5 text-right font-medium">
-                    {c.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {rows.map((r) => (
-                <tr key={`${r.label}:${r.source ?? ''}`}>
-                  <td className="max-w-56 px-4 py-2.5">
-                    <div className="flex min-w-0 items-center gap-1.5">
-                      <span className="truncate" title={r.label}>
-                        {r.label}
-                      </span>
-                      {r.source && <Badge variant={r.source === 'shared' ? 'neutral' : 'accent'}>{r.source === 'shared' ? '共享' : '自带'}</Badge>}
-                    </div>
-                  </td>
-                  {columns.map((c) => (
-                    <Cell key={c.key} n={r.totals[c.key]} strong={c.key === 'totalTokens'} />
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-            {rows.length > 1 && (
-              <tfoot className="border-t font-medium">
-                <tr>
-                  <td className="px-4 py-2.5">合计</td>
-                  {columns.map((c) => (
-                    <Cell key={c.key} n={total[c.key]} strong />
-                  ))}
-                </tr>
-              </tfoot>
-            )}
-          </table>
-        </div>
-      )}
+    <Section title="用量" description="每次模型调用的 token，以及搜索、识别、语音等服务的用量，按 UTC 日期统计；包括自带账户的调用。">
+      <UsageReport everyone />
     </Section>
-  )
-}
-
-function Cell({ n, strong }: { n: number; strong?: boolean }) {
-  return (
-    <td className={cn('px-3 py-2.5 text-right tabular-nums', !strong && 'text-muted-foreground')} title={full.format(n)}>
-      {compact.format(n)}
-    </td>
   )
 }

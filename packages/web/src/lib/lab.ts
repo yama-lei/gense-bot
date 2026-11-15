@@ -1,6 +1,5 @@
-// What the interface already offers but the server does not keep yet: answer feedback, drafts and a few toggles.
-// All of it lives in this browser (lib/local.ts) until the server grows the matching state; each store's shape is
-// what that state should look like.
+// What stays in this browser on purpose (lib/local.ts): drafts and how this device shows things. Everything about
+// the user's account lives on the server.
 import { localStore, useLocal } from './local'
 
 export const projectColors = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)', 'var(--series-4)', 'var(--series-5)', 'var(--muted-foreground)']
@@ -27,18 +26,11 @@ export interface LegacyMemory {
 export const legacyProjects = localStore<LegacyProject[]>('gense.projects', [])
 export const legacyMemories = localStore<LegacyMemory[]>('gense.memories', [])
 
-/** 👍 / 👎 per answer, keyed `treeId:turnId`. */
-export const feedback = localStore<Record<string, 'up' | 'down'>>('gense.feedback', {})
-export const useFeedback = () => useLocal(feedback)
-
 /** What was typed and not sent, per conversation (`home` for the start page). */
 export const drafts = localStore<Record<string, string>>('gense.drafts', {})
 
-/** Switches that are remembered but not wired to the server yet. */
+/** This device's preferences. */
 export const lab = localStore('gense.lab', {
-  suggestions: true,
-  /** Which Inbox items were read, by id. */
-  read: [] as string[],
   sendKey: 'enter' as 'enter' | 'mod-enter',
   wide: false,
 })

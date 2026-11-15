@@ -5,6 +5,8 @@ import type {
   BranchesState,
   ChannelInfo,
   ClientRequest,
+  ExportInfo,
+  Feedback,
   LoginPrompt,
   Memory,
   ModelInfo,
@@ -15,6 +17,7 @@ import type {
   ProviderState,
   ScheduleInfo,
   ServerMessage,
+  Suggestions,
   SkillInfo,
   TreeMeta,
   WebhookInfo,
@@ -41,6 +44,13 @@ export interface SocketState {
   memories: Memory[] | null
   projects: Project[] | null
   shares: ShareInfo[] | null
+  /** Per watched tree, its answers' 👍 / 👎 by turn id (roadmap-7 D1). */
+  feedback: Record<string, Record<string, Feedback>>
+  /** Per watched tree, follow-ups for its newest answer (D2). */
+  suggestions: Record<string, Suggestions>
+  /** Inbox items read on any device (D3); null until the server sends them. */
+  inboxRead: string[] | null
+  exports: ExportInfo[]
   schedules: ScheduleInfo[]
   webhooks: WebhookInfo[]
   canCreateWebhooks: boolean
@@ -76,6 +86,10 @@ export class HostSocket {
     memories: null,
     projects: null,
     shares: null,
+    feedback: {},
+    suggestions: {},
+    inboxRead: null,
+    exports: [],
     schedules: [],
     webhooks: [],
     canCreateWebhooks: true,
@@ -170,6 +184,16 @@ export class HostSocket {
         return this.#set({ projects: m.projects })
       case 'shares':
         return this.#set({ shares: m.shares })
+      case 'feedback':
+        return this.#set({ feedback: { ...this.state.feedback, [m.treeId]: Object.fromEntries(m.feedback.map((f) => [f.turnId, f])) } })
+      case 'suggestions': {
+        const { t: _, treeId, ...s } = m
+        return this.#set({ suggestions: { ...this.state.suggestions, [treeId]: s } })
+      }
+      case 'inboxRead':
+        return this.#set({ inboxRead: m.ids })
+      case 'exports':
+        return this.#set({ exports: m.exports })
       case 'schedules':
         return this.#set({ schedules: m.schedules })
       case 'webhooks':

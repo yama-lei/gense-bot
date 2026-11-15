@@ -1,5 +1,5 @@
-import type { EventData, MemoryToolDetails, ModelInfo } from '@gense/protocol'
-import { MEMORY_LIMITS } from '@gense/protocol'
+import type { EventData, FeedbackReason, MemoryToolDetails, ModelInfo } from '@gense/protocol'
+import { FEEDBACK_REASONS, MEMORY_LIMITS } from '@gense/protocol'
 import {
   BookmarkPlus,
   Bot,
@@ -33,12 +33,11 @@ import {
 } from 'lucide-react'
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { modelKey, report, useClient, type Client } from '../../app/client'
+import { modelKey, report, useClient, useHost, type Client } from '../../app/client'
 import { cn } from '../../lib/cn'
 import { copyText, formatBytes, formatDuration, formatTime } from '../../lib/format'
 import { useFlash } from '../../lib/hooks'
 import { Link } from '../../lib/router'
-import { feedback, useFeedback, useLab } from '../../lib/lab'
 import type { ToolIndex, ToolMeta } from '../../lib/tools'
 import type { ToolCall, Turn, TurnBlock, Versions, WebSource } from '../../lib/types'
 import type { DisplayMode } from '../../plugins/types'
@@ -104,12 +103,12 @@ function segments(blocks: TurnBlock[], tools: ToolIndex): Segment[] {
   return out
 }
 
-const followUps = ['展开讲讲', '更简洁一点', '举个例子', '换个角度']
-
 /** `last` is the newest turn of the conversation: it alone offers follow-ups. */
 export function TurnView({ turn, ctx, last: newest }: { turn: Turn; ctx: TurnContext; last?: boolean }) {
-  const { suggestions } = useLab()
   const client = useClient()
+  const { prefs, suggestions } = useHost()
+  // Follow-ups the server wrote for this answer (roadmap-7 D2); none while they are off or not generated yet.
+  const followUps = newest && prefs?.suggestions !== false && suggestions[ctx.treeId]?.turnId === turn.id ? suggestions[ctx.treeId]!.items : []
   const active = turn.status === 'queued' || turn.status === 'running'
   // An Event or a brief is not the user's message: it has no versions to edit or ask again.
   const own = !turn.event && turn.brief === undefined
@@ -192,7 +191,7 @@ export function TurnView({ turn, ctx, last: newest }: { turn: Turn; ctx: TurnCon
           {!active && (
             <div className="-ml-1.5 flex flex-wrap items-center gap-0.5 text-muted-foreground">
               {turn.assistantMessage && <CopyButton text={turn.assistantMessage} />}
-              {turn.assistantMessage && <Feedback id={`${ctx.treeId}:${turn.id}`} />}
+              {turn.assistantMessage && own && <Feedback treeId={ctx.treeId} turnId={turn.id} />}
               {turn.assistantMessage && canSpeak && <ReadAloud id={turn.id} text={turn.assistantMessage} />}
               {canChange && (
                 <Tooltip label="重新回答">
@@ -232,7 +231,7 @@ export function TurnView({ turn, ctx, last: newest }: { turn: Turn; ctx: TurnCon
             </div>
           )}
 
-          {newest && suggestions && turn.status === 'succeeded' && turn.assistantMessage && !ctx.busy && (
+          {followUps.length > 0 && turn.status === 'succeeded' && turn.assistantMessage && !ctx.busy && (
             <div className="flex animate-rise flex-wrap gap-1.5 pt-1">
               {followUps.map((f) => (
                 <button
@@ -305,33 +304,102 @@ function MemoryChip({ details }: { details: MemoryToolDetails }) {
   )
 }
 
-/** 👍 / 👎 on an answer. */
-function Feedback({ id }: { id: string }) {
-  const value = useFeedback()[id]
-  const set = (next: 'up' | 'down') => {
-    feedback.set((all) => {
-      const { [id]: _, ...rest } = all
-      return value === next ? rest : { ...rest, [id]: next }
-    })
-    if (value !== next) toast(next === 'up' ? '谢谢，已记下这个回答有帮助' : '已记下，下次会注意', { duration: 1800 })
+const reasonLabels: Record<FeedbackReason, string> = {
+  inaccurate: '内容不准确',
+  ignored: '没按要求做',
+  'too-long': '太长了',
+  'too-short': '太简略',
+  unsafe: '不安全或不恰当',
+  other: '其他',
+}
+
+/** 👍 / 👎 on an answer, kept on the server (roadmap-7 D1); 👎 asks what went wrong, optionally. */
+function Feedback({ treeId, turnId }: { treeId: string; turnId: string }) {
+  const client = useClient()
+  const value = useHost().feedback[treeId]?.[turnId]?.value
+  const [asking, setAsking] = useState(false)
+  const set = (next: 'up' | 'down' | null) => {
+    client.setFeedback(treeId, turnId, next).catch(report)
+    if (next === 'up') toast('谢谢，已记下这个回答有帮助', { duration: 1800 })
+    if (next === 'down') setAsking(true)
   }
   return (
     <>
       {value !== 'down' && (
         <Tooltip label="有帮助">
-          <Button variant="ghost" size="icon-sm" aria-label="有帮助" aria-pressed={value === 'up'} onClick={() => set('up')} className={cn(value === 'up' && 'text-accent')}>
+          <Button variant="ghost" size="icon-sm" aria-label="有帮助" aria-pressed={value === 'up'} onClick={() => set(value === 'up' ? null : 'up')} className={cn(value === 'up' && 'text-accent')}>
             <ThumbsUp className={cn(value === 'up' && 'fill-current')} />
           </Button>
         </Tooltip>
       )}
       {value !== 'up' && (
-        <Tooltip label="没帮助">
-          <Button variant="ghost" size="icon-sm" aria-label="没帮助" aria-pressed={value === 'down'} onClick={() => set('down')} className={cn(value === 'down' && 'text-foreground')}>
-            <ThumbsDown className={cn(value === 'down' && 'fill-current')} />
-          </Button>
-        </Tooltip>
+        <Popover open={asking} onOpenChange={setAsking}>
+          <Tooltip label="没帮助">
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="没帮助"
+                aria-pressed={value === 'down'}
+                onClick={(e) => {
+                  e.preventDefault()
+                  set(value === 'down' ? null : 'down')
+                }}
+                className={cn(value === 'down' && 'text-foreground')}
+              >
+                <ThumbsDown className={cn(value === 'down' && 'fill-current')} />
+              </Button>
+            </PopoverTrigger>
+          </Tooltip>
+          <PopoverContent align="start" className="w-80">
+            <WhyDown onDone={(more) => {
+              setAsking(false)
+              if (!more) return
+              client.setFeedback(treeId, turnId, 'down', more).then(() => toast('谢谢，已记下', { duration: 1800 }), report)
+            }} />
+          </PopoverContent>
+        </Popover>
       )}
     </>
+  )
+}
+
+function WhyDown({ onDone }: { onDone: (more: { reasons: FeedbackReason[]; comment?: string } | null) => void }) {
+  const [reasons, setReasons] = useState<FeedbackReason[]>([])
+  const [comment, setComment] = useState('')
+  const toggle = (r: FeedbackReason) => setReasons((rs) => (rs.includes(r) ? rs.filter((x) => x !== r) : [...rs, r]))
+  return (
+    <form
+      className="flex flex-col gap-3"
+      onSubmit={(e) => {
+        e.preventDefault()
+        onDone({ reasons, ...(comment.trim() && { comment: comment.trim().slice(0, 500) }) })
+      }}
+    >
+      <div className="text-sm font-medium">哪里不好？</div>
+      <div className="flex flex-wrap gap-1.5">
+        {FEEDBACK_REASONS.map((r) => (
+          <button
+            key={r}
+            type="button"
+            aria-pressed={reasons.includes(r)}
+            onClick={() => toggle(r)}
+            className={cn('h-7 rounded-full border px-2.5 text-xs transition-colors hover:bg-hover', reasons.includes(r) && 'border-accent bg-accent/10 text-foreground')}
+          >
+            {reasonLabels[r]}
+          </button>
+        ))}
+      </div>
+      <Textarea value={comment} onChange={(e) => setComment(e.target.value)} maxLength={500} rows={2} placeholder="补充一句（可选）" className="min-h-0 text-sm" />
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="ghost" size="sm" onClick={() => onDone(null)}>
+          跳过
+        </Button>
+        <Button type="submit" variant="primary" size="sm" disabled={!reasons.length && !comment.trim()}>
+          提交
+        </Button>
+      </div>
+    </form>
   )
 }
 

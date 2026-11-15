@@ -30,7 +30,7 @@ import { cn } from '../../lib/cn'
 import { availableCommands, localSkillNames, toOutgoingCommand, type Command } from '../../lib/commands'
 import { baseName, errorText } from '../../lib/format'
 import { modKey } from '../../lib/hooks'
-import { drafts, lab, useLab } from '../../lib/lab'
+import { drafts, useLab } from '../../lib/lab'
 import { Link, navigate } from '../../lib/router'
 import type { Attachment, Outgoing } from '../../lib/types'
 import { Badge } from '../../ui/badge'
@@ -474,7 +474,7 @@ export function Composer({ treeId, placeholder, onSend, busy, onStop, autoFocus,
                 始终生效
               </DropdownMenuLabel>
               <MemoryToggle />
-              <LabToggle icon={<Sparkles />} label="追问建议" hint="每个回答后给出可点的后续问题" field="suggestions" />
+              <SuggestionsToggle />
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => navigate({ name: 'plugins' })}>
                 <Settings2 /> 管理插件与 Skill
@@ -562,9 +562,12 @@ function MemoryToggle() {
   return <ToolToggle icon={<Brain />} label="参考记忆" hint="回答时带上你让它记住的事" disabled={!prefs} checked={on} onToggle={() => client.setPrefs({ useMemory: !on })} />
 }
 
-function LabToggle({ field, ...props }: { icon: ReactNode; label: string; hint: string; field: 'suggestions' }) {
-  const value = useLab()[field]
-  return <ToolToggle {...props} checked={value} onToggle={() => lab.set((l) => ({ ...l, [field]: !l[field] }))} />
+/** Follow-up suggestions after each answer (roadmap-7 D2); the server skips generating them when off. */
+function SuggestionsToggle() {
+  const { prefs } = useHost()
+  const client = useClient()
+  const on = prefs?.suggestions ?? true
+  return <ToolToggle icon={<Sparkles />} label="追问建议" hint="每个回答后给出可点的后续问题" disabled={!prefs} checked={on} onToggle={() => client.setPrefs({ suggestions: !on })} />
 }
 
 function Chip({ icon, label, title, tone, onRemove }: { icon: ReactNode; label: string; title?: string; tone?: 'accent' | 'error'; onRemove: () => void }) {

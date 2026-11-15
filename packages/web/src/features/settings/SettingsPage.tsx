@@ -1,26 +1,28 @@
 // Settings: how the assistant addresses the owner, model accounts, appearance, shortcuts, local data, usage and the
 // owner's password. A section list on the left, one section on the right.
-import type { LoginPrompt, ProviderState, ShareInfo } from '@gense/protocol'
+import type { ExportInfo, LoginPrompt, ProviderState, ShareInfo } from '@gense/protocol'
 import { sharePath } from '@gense/protocol'
-import { Check, Cpu, Database, Download, ExternalLink, Gauge, Keyboard, Link2, LogOut, Monitor, Moon, Palette, ShieldCheck, Sun, UserRound } from 'lucide-react'
+import { Archive, Check, Cpu, Database, Download, ExternalLink, Gauge, Keyboard, Link2, LogOut, Monitor, Moon, Palette, ShieldCheck, Sun, UserRound } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { report, useClient, useHost, useMemories, useShares, useUser } from '../../app/client'
 import { Page } from '../../app/Shell'
 import { cn } from '../../lib/cn'
-import { errorText, formatTime, saveBlob } from '../../lib/format'
+import { errorText, formatBytes, formatTime, saveBlob } from '../../lib/format'
 import { modKey } from '../../lib/hooks'
 import { lab, useLab } from '../../lib/lab'
 import { Link, type SettingsSection } from '../../lib/router'
 import type { LoginHandlers } from '../../lib/socket'
 import { accentPref, accents, themePref, useAccent, useThemePref, type ThemePref } from '../../lib/theme'
-import { Badge, PreviewBadge } from '../../ui/badge'
+import { Badge } from '../../ui/badge'
 import { Button } from '../../ui/button'
 import { ConfirmDialog } from '../../ui/dialog'
 import { Notice, Skeleton, Spinner } from '../../ui/feedback'
 import { Field, Input, Textarea } from '../../ui/input'
 import { Select } from '../../ui/select'
 import { Switch } from '../../ui/switch'
+import { exportHref } from '../inbox/items'
+import { UsageReport } from '../usage/UsageReport'
 
 const sections: { id: SettingsSection; label: string; icon: ReactNode }[] = [
   { id: 'personal', label: '个性化', icon: <UserRound /> },
@@ -363,7 +365,9 @@ const themes: { id: ThemePref; label: string; icon: ReactNode }[] = [
 function Appearance() {
   const pref = useThemePref()
   const accent = useAccent()
-  const { wide, suggestions } = useLab()
+  const { wide } = useLab()
+  const { prefs } = useHost()
+  const client = useClient()
   return (
     <>
       <Section title="主题" description="只对这个浏览器生效。">
@@ -410,8 +414,8 @@ function Appearance() {
           <Row title="宽版布局" description="让对话区域占用更多横向空间，适合大屏幕和长代码。">
             <Switch checked={wide} onCheckedChange={(v) => lab.set((l) => ({ ...l, wide: v }))} aria-label="宽版布局" />
           </Row>
-          <Row title="追问建议" description="在最新的回答下面给出几个可以继续问的方向。">
-            <Switch checked={suggestions} onCheckedChange={(v) => lab.set((l) => ({ ...l, suggestions: v }))} aria-label="追问建议" />
+          <Row title="追问建议" description="在最新的回答下面给出几个可以继续问的方向。会多调用一次模型，所有设备生效。">
+            <Switch checked={prefs?.suggestions ?? true} disabled={!prefs} onCheckedChange={(v) => client.setPrefs({ suggestions: v })} aria-label="追问建议" />
           </Row>
         </div>
       </Section>
@@ -553,6 +557,59 @@ function Shares() {
   )
 }
 
+const exportStatus = (e: ExportInfo) =>
+  e.status === 'running' ? '正在打包…' : e.status === 'failed' ? `失败：${e.error || '打包时出了问题'}` : `${formatBytes(e.size ?? 0)} · 完成于 ${formatTime(e.finishedAt ?? e.createdAt)}`
+
+/** A zip of everything in the account (roadmap-7 D5); the server keeps the newest few and tells the inbox when one is ready. */
+function Exports() {
+  const client = useClient()
+  const { exports } = useHost()
+  const [busy, setBusy] = useState(false)
+  const running = exports.some((e) => e.status === 'running')
+  const start = async () => {
+    setBusy(true)
+    try {
+      await client.createExport()
+      toast.success('开始打包，完成后会出现在收件箱')
+    } catch (e) {
+      report(e)
+    }
+    setBusy(false)
+  }
+  return (
+    <Section title="导出全部数据" description="把所有对话、上传的文件、记忆和项目打包成一个 zip 下载。最多保留最近 3 份。">
+      <div className={rowsClass}>
+        <Row title="新建导出" description={running ? '已有一份正在打包，完成后再新建。' : '对话越多打包越久，可以离开这个页面。'}>
+          <Button onClick={() => void start()} disabled={busy || running}>
+            {busy ? <Spinner /> : <Archive />} 导出
+          </Button>
+        </Row>
+        {exports.map((e) => (
+          <div key={e.id} className="flex items-center gap-3 px-4 py-3">
+            {e.status === 'running' ? <Spinner className="size-4 shrink-0" /> : <Archive className={cn('size-4 shrink-0', e.status === 'failed' ? 'text-destructive' : 'text-muted-foreground')} />}
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium">{formatTime(e.createdAt)} 的导出</div>
+              <div className={cn('text-xs', e.status === 'failed' ? 'text-destructive' : 'text-muted-foreground')}>{exportStatus(e)}</div>
+            </div>
+            {e.status === 'ready' && (
+              <Button size="sm" variant="ghost" asChild>
+                <a href={exportHref(e.id)} download>
+                  <Download /> 下载
+                </a>
+              </Button>
+            )}
+            {e.status !== 'running' && (
+              <Button size="sm" variant="ghost-destructive" onClick={() => client.deleteExport(e.id)}>
+                删除
+              </Button>
+            )}
+          </div>
+        ))}
+      </div>
+    </Section>
+  )
+}
+
 function Data() {
   const { prefs } = useHost()
   const client = useClient()
@@ -571,22 +628,18 @@ function Data() {
           <Row title="在对话中参考记忆" description={<>记忆在「<Link to={{ name: 'memory' }} className="text-accent underline-offset-4 hover:underline">记忆</Link>」页管理，共 {memories?.length ?? 0} 条，网页和飞书里的对话都会参考。</>}>
             <Switch checked={prefs?.useMemory ?? true} disabled={!prefs} onCheckedChange={(v) => client.setPrefs({ useMemory: v })} aria-label="在对话中参考记忆" />
           </Row>
-          <Row title={<span className="flex items-center gap-2">导出全部对话 <PreviewBadge /></span>} description="把所有对话和文件打包下载。现在可以在每个对话的「分享」里导出 Markdown。">
-            <Button disabled>
-              <Download /> 导出
-            </Button>
-          </Row>
         </div>
       </Section>
+      <Exports />
       <Shares />
-      <Section title="这个浏览器里的数据" description="回答反馈、草稿和界面偏好保存在这个浏览器里，不会同步到其他设备。项目和记忆在你的账户里。">
+      <Section title="这个浏览器里的数据" description="草稿和界面偏好（发送键、宽版布局、主题）保存在这个浏览器里，不会同步到其他设备。其他数据都在你的账户里。">
         <div className={rowsClass}>
           <Row title="导出本地数据" description="下载为一个 JSON 文件。">
             <Button onClick={exportLocal}>
               <Download /> 导出
             </Button>
           </Row>
-          <Row title="清除本地数据" description="删除反馈、草稿和界面偏好。对话、项目和记忆不受影响。">
+          <Row title="清除本地数据" description="删除草稿和界面偏好。账户里的数据不受影响。">
             <Button variant="destructive" onClick={() => setClearing(true)}>
               清除
             </Button>
@@ -603,7 +656,7 @@ function Data() {
           location.reload()
         }}
       >
-        反馈、草稿和界面偏好都会删除，无法恢复。服务器上的对话、项目、记忆、文件和设置不受影响。
+        草稿和界面偏好都会删除，无法恢复。账户里的对话、项目、记忆、文件和设置不受影响。
       </ConfirmDialog>
     </>
   )
@@ -647,13 +700,8 @@ function Plan() {
           ))}
         </dl>
       </Section>
-      <Section title="用量明细" badge={<PreviewBadge />} description="按模型和日期统计的 Token 用量与花费，以及每月预算提醒。">
-        <div className="flex h-32 items-end gap-1.5 rounded-2xl border border-dashed p-4" aria-hidden>
-          {[28, 44, 36, 62, 50, 78, 58, 40, 66, 84, 52, 70, 46, 60].map((h, i) => (
-            <span key={i} className="flex-1 rounded-t-sm bg-accent/25" style={{ height: `${h}%` }} />
-          ))}
-        </div>
-        <p className="mt-2 text-xs text-muted-foreground">示意图，尚未连接真实数据。</p>
+      <Section title="用量明细" description="你的每次模型调用用掉的 token，以及搜索、识别、语音等服务的用量，按 UTC 日期统计。">
+        <UsageReport />
       </Section>
     </>
   )

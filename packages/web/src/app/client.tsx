@@ -1,6 +1,6 @@
 // The app's data: the server's state over one WebSocket (lib/socket.ts), what this browser keeps for itself, and the
 // actions pages call. Failures of actions nobody awaits become toasts.
-import type { BranchMeta, BranchesState, CompactionOutcome, Effort, FileEntry, FilePreview, Memory, MemorySource, ModelInfo, Preferences, Project, ShareInfo, ShareSnapshot, ToolCallResult, TreeMeta, UploadedFile, UserInfo } from '@gense/protocol'
+import type { BranchMeta, BranchesState, CompactionOutcome, Effort, ExportInfo, FeedbackReason, FileEntry, FileKind, LibraryPage, FilePreview, Memory, MemorySource, ModelInfo, Preferences, Project, ShareInfo, ShareSnapshot, ToolCallResult, TreeMeta, UploadedFile, UserInfo } from '@gense/protocol'
 import { createContext, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { errorText, fileBase64, saveBlob, toBlob } from '../lib/format'
@@ -131,6 +131,18 @@ export class Client {
   updateShare = (token: string, snapshot: ShareSnapshot) => this.request<ShareInfo>({ t: 'share.update', token, snapshot })
   deleteShare = (token: string) => this.request({ t: 'share.delete', token })
 
+  // Roadmap-7 D: what used to stay in this browser.
+  setFeedback = (treeId: string, turnId: string, value: 'up' | 'down' | null, more: { reasons?: FeedbackReason[]; comment?: string } = {}) =>
+    this.request({ t: 'feedback.set', treeId, turnId, value, ...more })
+  markRead = (ids: string[]) => {
+    const known = new Set(this.socket.state.inboxRead ?? [])
+    const fresh = ids.filter((id) => !known.has(id))
+    if (fresh.length) void this.request({ t: 'inbox.read', ids: fresh }).catch(report)
+  }
+  listLibrary = (q: { query?: string; kind?: FileKind; cursor?: string; limit?: number }) => this.request<LibraryPage>({ t: 'library.list', ...q })
+  createExport = () => this.request<ExportInfo>({ t: 'export.create' })
+  deleteExport = (exportId: string) => void this.request({ t: 'export.delete', exportId }).catch(report)
+
   createProject = (project: { name: string; instructions?: string; color?: number }) => this.request<Project>({ t: 'project.create', ...project })
   updateProject = (projectId: string, patch: { name?: string; instructions?: string; color?: number }) =>
     void this.request<Project>({ t: 'project.update', projectId, ...patch }).catch(report)
@@ -143,7 +155,7 @@ export class Client {
   deleteProjectFile = (projectId: string, path: string) => this.request({ t: 'project.files.delete', projectId, path })
   async readProjectFile(projectId: string, path: string) {
     const file = await this.request<{ name: string; mimeType: string; base64: string }>({ t: 'project.files.read', projectId, path })
-    saveBlob(file.name, toBlob(file.base64, file.mimeType))
+    saveBlob(file.name, toBlob(file.mimeType, file.base64))
   }
 
   async upload(file: File): Promise<Attachment> {

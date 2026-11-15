@@ -1,7 +1,7 @@
-// The Inbox: what the assistant did while you were away. Scheduled runs and channel conversations are real; which
-// ones were read is remembered in this browser.
-import { CheckCheck, Inbox, Radio, Timer } from 'lucide-react'
+// The Inbox: what the assistant did while you were away. Read state is kept on the server (roadmap-7 D3).
+import { Archive, CheckCheck, Inbox, Radio, Timer } from 'lucide-react'
 import { useState } from 'react'
+import { useClient } from '../../app/client'
 import { Page } from '../../app/Shell'
 import { cn } from '../../lib/cn'
 import { formatTime } from '../../lib/format'
@@ -9,24 +9,26 @@ import { Link, navigate } from '../../lib/router'
 import { Button } from '../../ui/button'
 import { Empty } from '../../ui/feedback'
 import { Tabs, TabsList, TabsTrigger } from '../../ui/tabs'
-import { markRead, useInbox, type InboxItem } from './items'
+import { useInbox, type InboxItem } from './items'
 
 type Filter = 'all' | 'unread' | InboxItem['kind']
 
 const kinds = {
   schedule: { label: '定时任务', icon: Timer },
   channel: { label: '渠道', icon: Radio },
+  export: { label: '导出', icon: Archive },
 }
 
 export default function InboxPage() {
   const { items, unread } = useInbox()
+  const { markRead } = useClient()
   const [filter, setFilter] = useState<Filter>('all')
   const shown = items.filter((i) => filter === 'all' || (filter === 'unread' ? i.unread : i.kind === filter))
 
   return (
     <Page
       title="收件箱"
-      description="你不在的时候，Gense 做了什么：定时任务的结果、从飞书等渠道进来的对话，都汇在这里。"
+      description="你不在的时候，Gense 做了什么：定时任务的结果、从飞书等渠道进来的对话、打包好的导出，都汇在这里。"
       actions={
         <Button disabled={!unread} onClick={() => markRead(items.map((i) => i.id))}>
           <CheckCheck /> 全部已读
@@ -68,7 +70,8 @@ export default function InboxPage() {
                   type="button"
                   onClick={() => {
                     markRead([item.id])
-                    navigate({ name: 'chat', id: item.treeId })
+                    if (item.treeId) navigate({ name: 'chat', id: item.treeId })
+                    else if (item.href) location.assign(item.href)
                   }}
                   className="flex w-full items-start gap-3.5 px-4 py-3.5 text-left transition-colors hover:bg-hover"
                 >

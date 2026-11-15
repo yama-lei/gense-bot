@@ -71,7 +71,8 @@ export function UsageReport({ everyone }: { everyone?: boolean }) {
     const out = new Map<string, { label: string; source?: UsageSummary['source']; totals: Totals }>()
     for (const r of data?.models ?? []) {
       const key = by === 'user' ? r.userId : by === 'day' ? r.day : `${r.source}:${r.provider}:${r.model}`
-      const label = by === 'user' ? r.email : by === 'day' ? r.day : r.model
+      // `web-tools`: searches and page reads the web plugin ran outside a model call.
+      const label = by === 'user' ? r.email : by === 'day' ? r.day : r.model === 'web-tools' ? '联网工具' : r.model
       const g = out.get(key) ?? { label, ...(by === 'model' && { source: r.source }), totals: zero() }
       add(g.totals, r)
       out.set(key, g)

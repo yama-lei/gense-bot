@@ -296,7 +296,7 @@ function ProviderDialog({ provider, onClose, onSaved }: { provider: SharedProvid
     e.preventDefault()
     setBusy(true)
     setError(null)
-    const body: SharedProviderInput = { name: name.trim(), baseUrl: baseUrl.trim(), modelIds, ...(apiKey.trim() && { apiKey: apiKey.trim() }) }
+    const body: SharedProviderInput = { kind: provider?.kind ?? 'openai', name: name.trim(), baseUrl: baseUrl.trim(), modelIds, ...(apiKey.trim() && { apiKey: apiKey.trim() }) }
     try {
       await api<SharedProviderInfo>(provider ? `/api/admin/providers/${encodeURIComponent(provider.id)}` : '/api/admin/providers', { method: provider ? 'PUT' : 'POST', body })
       toast.success(provider ? '已保存' : `已添加 ${body.name}`)

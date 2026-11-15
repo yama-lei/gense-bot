@@ -84,7 +84,7 @@ export interface ExportInfo {
 }
 
 // ── D6 usage ──────────────────────────────────────────────────────────────────
-// GET /api/usage?from=YYYY-MM-DD&to=YYYY-MM-DD returns UsageSummary[] (accounts.ts) for the signed-in user only.
+// GET /api/usage?from=YYYY-MM-DD&to=YYYY-MM-DD returns a UsageReport (accounts.ts) for the signed-in user only.
 
 /** Inbox items the user has read, by the web client's item id; the newest 500 are kept. */
 export const INBOX_READ_KEPT = 500

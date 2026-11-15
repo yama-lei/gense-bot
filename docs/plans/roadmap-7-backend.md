@@ -64,6 +64,52 @@
 - 提示词快照加一个“临时对话”场景（应当没有 memory 一节）。
 - `docs/design/architecture.md` 补上 `shares` 表和临时对话的清理。
 
+## 阶段 C：DeepSeek App API
+
+先读调研 `docs/research/deepseek-app-api.md`（尤其 §5 pi-ai 审计、§7 风险）。协议见 `packages/protocol/src/deepseek.ts`、`accounts.ts` 的 `ProviderKind` / `UsageReport`、`index.ts` 的 `Preferences.deepseekSafety` 和 `native` 推送。提交消息用 `feat/r7-c-<slug>`。
+
+**没有真实 key。** 实现按官方文档，测试用录下来的 SSE 样本（按调研 §1.3 的块结构自拟，放 `test/fixtures/deepseek/`）走真实的解析、持久化和回放代码，不要只测 mock。真实 API 的验收（调研 §7.3）等用户提供 key 后由 Claude 另做，你在汇报里列出“未实测”的路径。
+
+### C-1 提供方
+
+- `shared_providers` 加 `kind`。`deepseek`：`baseUrl` 为空时用 `DEEPSEEK_BASE_URL`，`modelIds` 为空时用 `deepseek-flash`、`deepseek-v4-pro`。BYOK 的内置 deepseek 提供方同样换成 C-2 的实现（调研 §5.1 末段）。
+- App 扩展只给 `DEEPSEEK_APP_MODELS` 里的模型；其他 DeepSeek 模型照普通 Messages（或现有方式）走，不发 App 字段。按提供方类型判断，不要按 providerId 字符串（共享的是 `shared-<uuid>`）。
+
+### C-2 Messages 包装（`agent/deepseek.ts`）
+
+按调研 §5.2 的 1–7 实现，要点：
+- `onPayload`：`safety_check: { level: 'high' }`（共享提供方总是；BYOK 看 `prefs.deepseekSafety !== false`）；首轮且标题仍是默认值时 `title: { enabled: true }`；思考按 `effort`：未给 → 不发（服务器默认）、`low` → `thinking: enabled` + `output_config.effort: low`、`medium` → `high`、`high` → `max`。压缩、追问（D-2）等侧调用不加原生工具和标题。
+- 联网：本轮消息 @ 了 `web` 插件（网页端“联网搜索”开关就是这个）**或**该用户启用了 web 插件时，加 `deepseek_web_search` 和 `deepseek_read_url`；此时本轮**不**提供 web 插件自己的 search/fetch 工具，也不出现它的提示词指引，避免重复联网。用户消息里有链接而未开联网时，只加 `deepseek_read_url`（C3）。
+- 观察原生事件，组装 `NativeTrace`：每个 `server_tool_use` → `NativeStep`（running），对应结果块到达 → done/failed + results（`site_name`→`site`、`site_icon`→`icon`、`page_age`/`published_at`→`publishedAt`）；`citations_delta` → `citations`（按 URL 去重）。每次变化向 watch 该分支的连接推送 `native`（节流到 ≤ 4 次/秒）。
+- 助手消息保存后，紧接着写一条 `NATIVE_KIND` 条目（data = `NativeTrace`，模型看不到）；没有任何原生步骤和引用时不写。原生块原文（含 `signature`、`kind`）由你自己存（同一条目的额外字段或旁表都行），下一轮 `onPayload` 据此重建 assistant content，保证读过的链接还在上下文（调研 §7.2-1：覆盖第二轮、分支、重启、压缩、换模型）。
+- 拒答（C4）：`stop_reason: refusal` 时把已保存的助手消息清成空正文、无思考、无待执行的工具调用，`stopReason` 记为 `stop`（不是 error），`NativeTrace.refusal = true`。用量照记。飞书渠道：拒答时发一句固定说明“这个问题我没法回答。”而不是空消息。输入直接 400 `Content Exists Risk` 时同样按拒答处理。
+- 标题（C5）：`message_delta.title` 有值、且树标题仍是默认或首句截取（用户没改过）时，用它更新树标题并推送 `trees`。
+- 错误帧的用量（调研 §5.1 末段“重要例外”）：用 fetch 包装读出，记进 ledger。
+
+### C-3 附件解析（C6）
+
+- 发送时，附件若是模型读不了的类型（扫描版 PDF：本地解析出的文字过少；`.doc/.ppt` 等本地解析器不支持的 Office；图片而模型不支持图片输入），且服务器配置了 DeepSeek（任一共享 deepseek 提供方有 key），调用 `/v1/tools/ocr`（`text_recognition`）把文字写到 `<path>.txt`，附件说明里这一行写成 `<path> -> <path>.txt (ocr, N pages)`（本地解析成功的写 `(text)`，不带页数）。清掉 `<｜ref｜>`、`<｜box｜>` 标记和坐标。
+- 改 `notes.ts` 的 `attachmentsText` / `parseNote` 让这种行可往返（`parseNote` 返回 `ParsedAttachment`）——这是协议文件，**由我改**；你在汇报里说你需要的确切格式，先在 server 里用同样的规则写。
+- OCR 失败就照旧只给原文件路径，不阻塞发送。用量记 `ocr`，units = 成功页数。
+
+### C-4 听写与朗读（C7）
+
+- `GET /api/speech` → `SpeechCapabilities`（有共享 deepseek 提供方且有 key 即为 true）。`POST /api/speech/asr`、`POST /api/speech/tts` 见协议注释；都要登录，按用户限流（例如每分钟 20 次）。浏览器不直接连 DeepSeek。
+- TTS 用 HTTP 整段接口，`filter_markdown: true`，把 DeepSeek 的响应体流式转发给浏览器；文本超过 `TTS_MAX_CHARS` 报 413。
+- 用量：`asr` units = 秒（向上取整），`tts` units = 计费字符（汉字 ×2）。
+
+### C-5 记账（C8）
+
+- `usage` 表加 `searches`、`fetches`：从 `server_tool_use` 的 `tool_search + tool_image_search`、`tool_fetch` 取最终值（不是 `web_search_requests`）。web 插件调用独立 Search / Fetch 成功且非空时也记一次（provider 记为该共享 deepseek 提供方）。
+- 新表 `service_usage(userId, day, service, calls, units)`，对应 `ServiceUsageSummary`。
+- `GET /api/admin/usage` 改为返回 `UsageReport`；D-6 的 `GET /api/usage` 也返回 `UsageReport`（只含自己）。
+
+### C-6 收尾
+
+- 测试：原生块的解析 / 持久化 / 重启后回放（signature 回到第二轮请求里）、拒答清空、标题不覆盖用户重命名、联网时 web 插件工具不出现、OCR 失败不阻塞、speech 接口鉴权与超限、用量两组数字。
+- 提示词快照：DeepSeek 模型开联网时的工具列表场景。
+- `docs/design/architecture.md` 补 DeepSeek 一节。
+
 ## 阶段 D：其余预览功能
 
 协议见 `packages/protocol/src/activity.ts` 和 `index.ts` 里的 `feedback.*`、`inbox.read`、`library.list`、`export.*`、`Preferences.suggestions` 以及对应的推送。提交消息用 `feat/r7-d-<slug>`。
@@ -105,7 +151,7 @@
 
 ### D-6 用量
 
-- `GET /api/usage?from&to`：返回 `UsageSummary[]`，与 `/api/admin/usage` 同一查询，但只限当前登录用户；普通用户可访问。
+- `GET /api/usage?from&to`：返回 `UsageReport`（见 C-5），与 `/api/admin/usage` 同一查询，但只限当前登录用户；普通用户可访问。若先于 C 做，`services` 先返回空数组。
 
 ### D-7 收尾
 

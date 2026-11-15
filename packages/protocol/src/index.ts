@@ -15,9 +15,11 @@ export * from './discover.ts'
 export * from './memory.ts'
 export * from './share.ts'
 export * from './activity.ts'
+export * from './deepseek.ts'
 
 import type { Memory, MemorySource, Project } from './memory.ts'
 import type { ShareInfo, ShareSnapshot } from './share.ts'
+import type { NativeTrace } from './deepseek.ts'
 import type { ExportInfo, Feedback, FeedbackReason, FileKind, Suggestions } from './activity.ts'
 
 /** A conversation as the sidebar lists it: a tree of branches, titled by its main branch (roadmap-3 R35). */
@@ -59,6 +61,11 @@ export interface Preferences {
   memoryWrites?: 'auto' | 'explicit'
   /** Follow-up suggestions after each answer (roadmap-7 D2). Default true. */
   suggestions?: boolean
+  /**
+   * DeepSeek's safety check for the user's own DeepSeek key (Q6). Default true; shared DeepSeek providers always
+   * check, whatever this says.
+   */
+  deepseekSafety?: boolean
 }
 
 export type BranchRole = 'main' | 'user' | 'agent'
@@ -224,7 +231,7 @@ export type ClientRequest =
   | { t: 'share.delete'; id: number; token: string }
   /** Conversations whose title or messages match; resolves to TreeHit[], best first. */
   | { t: 'trees.search'; id: number; query: string; limit?: number }
-  | { t: 'prefs.set'; id: number; name?: string; instructions?: string; timeZone?: string; useMemory?: boolean; memoryWrites?: 'auto' | 'explicit'; suggestions?: boolean }
+  | { t: 'prefs.set'; id: number; name?: string; instructions?: string; timeZone?: string; useMemory?: boolean; memoryWrites?: 'auto' | 'explicit'; suggestions?: boolean; deepseekSafety?: boolean }
   /** Resolves to the new Memory. `source` defaults to `manual`; `saved` keeps an answer of `treeId`; `model` restores an entry the model wrote (undo). */
   | { t: 'memory.add'; id: number; text: string; source?: MemorySource; treeId?: string; projectId?: string | null; enabled?: boolean }
   /** Resolves to the changed Memory. */
@@ -369,6 +376,11 @@ export type ServerMessage =
   | { t: 'inboxRead'; ids: string[] }
   /** The user's exports, newest first (at most 3 kept); sent on connect and whenever one changes. */
   | { t: 'exports'; exports: ExportInfo[] }
+  /**
+   * DeepSeek's server-side steps while an answer streams on a watched branch (C2, C3): the whole trace so far, each
+   * time it changes. Superseded by the NATIVE_KIND entry once the assistant message is saved.
+   */
+  | { t: 'native'; treeId: string; branchId: string; trace: NativeTrace }
   | { t: 'schedules'; schedules: ScheduleInfo[] }
   /** `canCreate` is false when the host has no TOKEN_ENCRYPTION_KEY to seal a webhook's secret. */
   | { t: 'webhooks'; webhooks: WebhookInfo[]; canCreate: boolean }

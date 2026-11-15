@@ -188,6 +188,15 @@
 
 - C-1（2026-11-14）：共享提供方持久化 kind，DeepSeek 的空地址/模型列表使用官方默认；共享及 BYOK DeepSeek 改用 Messages 工厂，能力按模型白名单及提供方类型判断。新增真实 SQLite 重新打开、加密凭据、BYOK 登录及刷新测试，旧共享模型测试按新契约显式发送 kind。`npm run check:server` 通过。原生请求字段和流处理留在 C-2；未进行真实 DeepSeek 请求，无协议偏离。
 
+### B-1 分享链接（2026-11-14）
+
+- 从集成分支 `feat/r7-int`（`1f7a2db`）建立 `feat/r7-b-server`，工作区为 `/mnt/data/linux/repos/gense-wt/r7-b`。未修改 web 或 protocol。
+- 新模块 `platform/shares.ts` 在 `app.sqlite` 建立 shares 表和索引，保存前端快照，不解释正文、界面输入或结果语义。TypeBox 校验完整结构，检查 UTF-8 JSON 的 8 MB 上限、500 轮上限、图片 data URL 前缀，标题截断为 200 字符；token 为 16 字节随机数的 base64url。
+- `share.create/update/delete` 校验所属用户和对话，更新保持原 token；首次连接和修改后向该用户全部连接推送 shares。共享链接变更与删除对话共用按用户的队列，删除对话时撤销其全部链接，避免并发创建留下孤立链接。
+- 公开 `GET /api/share/:token` 在登录检查之前读取全局库，不解析 cookie，返回快照与 updatedAt；设置 noindex / no-store / JSON 头，按 socket IP 限制每分钟 60 次。`/s/:token` 返回网页入口并设置 noindex / no-referrer。
+- 验证：3 组 B1–B4 专项测试覆盖真实 SQLite / HTTP / 双用户及双设备 WebSocket、原样保存及后续消息不进入旧快照、更新/撤销/重启、删除对话撤销、全局库位置、无效 cookie、限流及伪造转发头、结构/UTF-8 大小/轮数/图片校验与精确 8 MB 边界。按要求用 `taskset -c 0` 并清除代理运行 `npm run check:server`，88 项全部通过，无跳过。
+- 无协议问题或设计偏离。临时对话的拒绝逻辑将在 B-2 接入 expiresAt。
+
 ## 协议问题
 
 - A-1：`memorySection` 的 8000 字符预算只计条目，不包含前导说明和标签。t4h 已明确接受，照用原文与现有预算，不修改。

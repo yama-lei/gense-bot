@@ -110,6 +110,7 @@ export async function updateTree(this: UserSpace, treeId: string, patch: { title
   }
 
 export async function deleteTree(this: UserSpace, treeId: string, ctx: Context = BACKGROUND_CONTEXT): Promise<void> {
+  const remove = async () => {
     await this.row(treeId)
     const branches = await this.db.all<BranchRow>(`SELECT ${BRANCH_COLUMNS} FROM branches WHERE treeId = ?`, treeId)
     for (const s of await this.db.all<ScheduleRow>(`SELECT ${SCHEDULE_COLUMNS} FROM schedules WHERE treeId = ?`, treeId)) await this.stopSchedule(s, ctx)
@@ -126,6 +127,8 @@ export async function deleteTree(this: UserSpace, treeId: string, ctx: Context =
     await this.db.run('DELETE FROM trees WHERE id = ?', treeId)
     await this.workspace.deleteTree(treeId, ctx)
     await this.changed()
+  }
+  return this.shares ? this.shares.deleteTree(treeId, remove) : remove()
   }
 
 export async function row(this: UserSpace, treeId: string): Promise<TreeRow> {
@@ -180,6 +183,7 @@ export async function watch(this: UserSpace, treeId: string, branchId?: string, 
 
 export async function close(this: UserSpace, ctx: Context = BACKGROUND_CONTEXT): Promise<void> {
     this.closed = true
+    await this.shares?.flush()
     this.listeners.clear()
     this.branchListeners.clear()
     this.automationListeners.clear()

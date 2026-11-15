@@ -95,9 +95,13 @@ export const ASR_MAX_SECONDS = 120
 
 // ── C8 usage of services that are not tokens ──────────────────────────────────
 
-export type ServiceKind = 'search' | 'fetch' | 'image-search' | 'ocr' | 'asr' | 'tts'
+/**
+ * Services billed outside a model call. Web searches and page reads, native or through the web plugin, are not here:
+ * they count once, in `UsageSummary.searches` / `fetches` of the provider that ran them.
+ */
+export type ServiceKind = 'ocr' | 'asr' | 'tts'
 
-/** Billable units: calls for search / fetch / image-search, pages for ocr, seconds for asr, characters for tts. */
+/** Billable units: pages for ocr, seconds for asr, characters for tts. */
 export interface ServiceUsageSummary {
   userId: string
   email: string

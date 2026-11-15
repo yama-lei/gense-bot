@@ -11,6 +11,7 @@ import { PreferenceStore } from './preferences.ts'
 import { FeedbackStore } from './feedback.ts'
 import { SuggestionStore } from './suggestions.ts'
 import { InboxReadStore } from './inbox.ts'
+import { Library } from './library.ts'
 import { MemoryStore, memoryExtension } from './memory.ts'
 import { ProjectStore, projectExtension } from './projects.ts'
 import type { UserShares } from '../platform/shares.ts'
@@ -93,6 +94,7 @@ export class UserSpace {
   readonly feedback: FeedbackStore
   readonly suggestions: SuggestionStore
   readonly inboxRead: InboxReadStore
+  readonly library: Library
   readonly memories: MemoryStore
   readonly projects: ProjectStore
   readonly shares: UserShares | undefined
@@ -126,6 +128,7 @@ export class UserSpace {
     this.inboxRead = new InboxReadStore(db, () => this.now())
     this.memories = new MemoryStore(db, () => this.now())
     this.projects = new ProjectStore(this)
+    this.library = new Library(this)
     this.accounts = accounts
     this.options = options
     if (options.shares && !options.userId) throw new Error('分享存储需要用户 id')

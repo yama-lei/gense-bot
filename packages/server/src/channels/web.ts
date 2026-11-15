@@ -253,6 +253,8 @@ export class Connection {
         return space.feedback.set(r.treeId, r)
       case 'inbox.read':
         return space.inboxRead.read(r.ids)
+      case 'library.list':
+        return space.library.list(r)
       case 'plugin.set':
         return space.plugins.set(r.pluginId, {
           ...(r.enabled !== undefined && { enabled: r.enabled }),

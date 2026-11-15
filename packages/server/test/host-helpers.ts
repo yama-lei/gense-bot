@@ -365,8 +365,8 @@ export async function skillsScenario(client: Client) {
   const user = client.views.get(tree.id)!.entries.filter((e) => e.kind === 'pi.user')[4]!
   const blocks = (user.model![0]!.content as { type: string; text: string }[]).map((b) => b.text)
   assert.deepEqual(blocks.slice(1).map((b) => parseNote(b)), [
-    { attachments: [], command: { id: command.id, label: command.label }, mentions: [] },
-    { attachments: [], mentions: [...mentions] },
+    { attachments: [], parsedAttachments: [], command: { id: command.id, label: command.label }, mentions: [] },
+    { attachments: [], parsedAttachments: [], mentions: [...mentions] },
   ])
   assert.match(blocks[1]!, /用户要求总结会话。/)
   assert.match(blocks[2]!, /本轮优先使用这个插件的工具[\s\S]*没有开启[\s\S]*用 read 读取 [\s\S]*用户：旧会话里的话\n\n助手：收到：旧会话里的话/)

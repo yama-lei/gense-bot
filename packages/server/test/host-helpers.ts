@@ -2,7 +2,7 @@
 import { applyImmutable, decoder, type Decoder } from '@earendil-works/chord/delta'
 import type { PluginInfo as PluginState } from '@gense/protocol'
 import { parseNote } from '@gense/protocol/notes'
-import { EVENT_KIND, type BranchesState, type BranchMeta, type ClientRequest, type EventData, type FileEntry, type LoginPrompt, type Memory, type ModelInfo, type Preferences, type Project, type ProviderState, type ScheduleInfo, type ServerMessage, type ShareInfo, type SkillInfo, type TreeMeta, type UploadedFile, type WebhookInfo } from '@gense/protocol'
+import { EVENT_KIND, type BranchesState, type BranchMeta, type ClientRequest, type EventData, type ExportInfo, type FileEntry, type LoginPrompt, type Memory, type ModelInfo, type Preferences, type Project, type ProviderState, type ScheduleInfo, type ServerMessage, type ShareInfo, type SkillInfo, type TreeMeta, type UploadedFile, type WebhookInfo } from '@gense/protocol'
 import assert from 'node:assert/strict'
 import { mkdtemp } from 'node:fs/promises'
 import { createServer } from 'node:http'
@@ -44,6 +44,7 @@ export class Client {
   memories: Memory[] = []
   projects: Project[] = []
   shares: ShareInfo[] = []
+  exports: ExportInfo[] = []
   prefs: Preferences | undefined
   plugins: PluginState[] = []
   skills: SkillInfo[] = []
@@ -84,6 +85,7 @@ export class Client {
     if (m.t === 'memories') this.memories = m.memories
     if (m.t === 'projects') this.projects = m.projects
     if (m.t === 'shares') this.shares = m.shares
+    if (m.t === 'exports') this.exports = m.exports
     if (m.t === 'prefs') this.prefs = m.prefs
     if (m.t === 'plugins') this.plugins = m.plugins
     if (m.t === 'skills') this.skills = m.skills

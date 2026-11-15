@@ -15,6 +15,8 @@ services:
       DATA_DIR: ${GENSE_DATA:?set GENSE_DATA in .env to an absolute path on this machine}
       HOST: 0.0.0.0
       PORT: "8787"
+      # Caddy appends the client IP as the rightmost X-Forwarded-For hop; the app has no public port.
+      GENSE_TRUST_PROXY: "1"
     volumes:
       - ${GENSE_DATA}:${GENSE_DATA}
       # Lets the server start sandbox containers. Whoever controls this process controls Docker on this machine.

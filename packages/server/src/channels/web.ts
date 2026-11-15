@@ -58,7 +58,11 @@ export class Connection {
     }
     this.#unsubscribe.push(
       space.accounts.subscribe(() => void accounts()),
-      space.subscribeTrees((trees) => this.#send({ t: 'trees', trees })),
+      space.subscribeTrees((trees) => {
+        this.#send({ t: 'trees', trees })
+        const ids = new Set(trees.map(tree => tree.id))
+        for (const treeId of this.#watches.keys()) if (!ids.has(treeId)) void this.#unwatch(treeId).catch(() => {})
+      }),
       space.plugins.subscribe(() => this.#send({ t: 'plugins', plugins: space.plugins.list() })),
       space.skills.subscribe(() => this.#send({ t: 'skills', skills: space.skills.list(), canInstall: space.skills.canInstall })),
       space.subscribeBranches((treeId) => {
@@ -103,7 +107,7 @@ export class Connection {
     const { space } = this.#o
     switch (r.t) {
       case 'tree.create':
-        return space.createTree(r.projectId)
+        return space.createTree(r.projectId, undefined, r.temporary)
       case 'tree.update':
         return space.updateTree(r.treeId, { ...(r.title !== undefined && { title: r.title }), ...(r.pinned !== undefined && { pinned: r.pinned }), ...(r.projectId !== undefined && { projectId: r.projectId }) })
       case 'tree.delete':
@@ -324,6 +328,7 @@ export class Connection {
     }
     compactions(watch.value)
     watch.start(async (value, ops) => {
+      if (this.#watches.get(treeId) !== watch) return
       this.#send({ t: 'ops', treeId, ops: enc.encode(ops) })
       compactions(value)
     })

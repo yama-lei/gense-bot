@@ -4,6 +4,7 @@ import { accountApi, Auth, Connection, json, sameOrigin, signedIn } from '../ind
 import { readFile, stat } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { isIP } from 'node:net'
 import { extname, join, normalize, sep } from 'node:path'
 import { WebSocket, WebSocketServer } from 'ws'
 import { startBackups } from './backup.ts'
@@ -28,6 +29,14 @@ const TYPES: Record<string, string> = {
   '.ico': 'image/x-icon',
   '.json': 'application/json',
   '.woff2': 'font/woff2',
+}
+
+function clientIp(request: IncomingMessage, trustProxy: boolean | undefined) {
+  const socket = request.socket.remoteAddress ?? 'unknown'
+  if (!trustProxy) return socket
+  const forwarded = request.headers['x-forwarded-for']
+  const last = (Array.isArray(forwarded) ? forwarded.join(',') : forwarded)?.split(',').at(-1)?.trim()
+  return last && isIP(last) ? last : socket
 }
 
 export const DB_FILE = 'app.sqlite'
@@ -189,7 +198,7 @@ async function openServer(config: HostConfig, unlock: () => Promise<void>) {
     const server = createServer((req, res) => {
       const path = new URL(req.url ?? '/', 'http://x').pathname
       const handled = path.startsWith('/api/') || path.startsWith('/hooks/')
-        ? toRequest(req).then(request => api(request, req.socket.remoteAddress ?? 'unknown')).then(r => send(res, r))
+        ? toRequest(req).then(request => api(request, clientIp(req, config.trustProxy))).then(r => send(res, r))
         : staticFile(res, path)
       handled.catch((error) => {
         if (!res.headersSent) void send(res, json((error as { status?: number })?.status === 413 ? 413 : 500, { error: error instanceof Error ? error.message : String(error) }))

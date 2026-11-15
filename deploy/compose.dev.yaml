@@ -2,3 +2,5 @@
 services:
   app:
     ports: ["127.0.0.1:8787:8787"]
+    environment:
+      GENSE_TRUST_PROXY: "0"

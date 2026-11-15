@@ -10,6 +10,8 @@ export interface HostConfig {
   dataDir: string
   port: number
   host: string
+  /** Only enable behind a proxy that appends the actual client IP to X-Forwarded-For. */
+  trustProxy?: boolean
   /** Built front end; missing in dev, where Vite serves it. */
   webDir: string
   /** Development/test providers. Production shared models are registered in app.sqlite. */
@@ -32,6 +34,7 @@ export function configFromEnv(env = process.env): HostConfig {
     dataDir: resolve(root, env.DATA_DIR ?? 'data'),
     port: Number(env.PORT ?? 8787),
     host: env.HOST ?? '127.0.0.1',
+    trustProxy: env.GENSE_TRUST_PROXY === '1',
     webDir: resolve(root, 'packages/web/dist'),
     models: env.GENSE_FAUX === '1' ? fauxModels : () => ({ providers: [], options: [], defaultModel: null }),
     plugins: { defaults: pluginDefaultsFromEnv(env) },

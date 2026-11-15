@@ -53,9 +53,6 @@ const add = (t: Totals, r: Totals) => {
 }
 
 const services: Record<ServiceKind, { label: string; unit: string }> = {
-  search: { label: '网页搜索', unit: '次' },
-  fetch: { label: '读取网页', unit: '次' },
-  'image-search': { label: '图片搜索', unit: '次' },
   ocr: { label: '文件识别（OCR）', unit: '页' },
   asr: { label: '语音听写', unit: '秒' },
   tts: { label: '朗读', unit: '字符' },

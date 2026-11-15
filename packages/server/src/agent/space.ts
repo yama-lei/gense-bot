@@ -8,6 +8,11 @@ import { McpHost } from '../plugins/mcp/host.ts'
 import { createToolSearchExtension } from '@earendil-works/pi-durable/tool-search'
 import { defineExtension, section } from '@earendil-works/pi-durable'
 import { PreferenceStore } from './preferences.ts'
+import { FeedbackStore } from './feedback.ts'
+import { SuggestionStore } from './suggestions.ts'
+import { InboxReadStore } from './inbox.ts'
+import { Library } from './library.ts'
+import { ExportStore } from './exports.ts'
 import { MemoryStore, memoryExtension } from './memory.ts'
 import { ProjectStore, projectExtension } from './projects.ts'
 import type { UserShares } from '../platform/shares.ts'
@@ -87,6 +92,11 @@ export class UserSpace {
   readonly channelWatches = new Set<ConversationWatch>()
   readonly mcp: McpHost
   readonly preferences: PreferenceStore
+  readonly feedback: FeedbackStore
+  readonly suggestions: SuggestionStore
+  readonly inboxRead: InboxReadStore
+  readonly library: Library
+  readonly exports: ExportStore
   readonly memories: MemoryStore
   readonly projects: ProjectStore
   readonly shares: UserShares | undefined
@@ -115,8 +125,13 @@ export class UserSpace {
     this.outbox = outbox
     this.mcp = mcp
     this.preferences = preferences
+    this.feedback = new FeedbackStore(this)
+    this.suggestions = new SuggestionStore(this)
+    this.inboxRead = new InboxReadStore(db, () => this.now())
     this.memories = new MemoryStore(db, () => this.now())
     this.projects = new ProjectStore(this)
+    this.library = new Library(this)
+    this.exports = new ExportStore(this)
     this.accounts = accounts
     this.options = options
     if (options.shares && !options.userId) throw new Error('分享存储需要用户 id')
@@ -209,6 +224,7 @@ export class UserSpace {
     space = new UserSpace(db, harness, workspace, plugins, skills, accounts, options, preferences, mcp, channels, triggers, outbox)
     space.schedule = events.schedule
     space.agentTask = events.agent
+    await space.exports.initialize()
     await space.cleanupTemporary()
     channels.register(feishuDefinition(space, options.feishu))
     for (const definition of options.channels ?? []) channels.register(definition)

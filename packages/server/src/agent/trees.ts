@@ -123,6 +123,7 @@ export async function updateTree(this: UserSpace, treeId: string, patch: { title
 export async function deleteTree(this: UserSpace, treeId: string, ctx: Context = BACKGROUND_CONTEXT): Promise<void> {
   const remove = async () => {
     await this.row(treeId)
+    this.suggestions.clear(treeId)
     const branches = await this.db.all<BranchRow>(`SELECT ${BRANCH_COLUMNS} FROM branches WHERE treeId = ?`, treeId)
     for (const s of await this.db.all<ScheduleRow>(`SELECT ${SCHEDULE_COLUMNS} FROM schedules WHERE treeId = ?`, treeId)) await this.stopSchedule(s, ctx)
     await this.db.run('DELETE FROM schedules WHERE treeId = ?', treeId)
@@ -137,6 +138,7 @@ export async function deleteTree(this: UserSpace, treeId: string, ctx: Context =
     for (const b of branches) nativeState(this).traces.delete(b.id)
     await this.db.run('DELETE FROM deepseek_titles WHERE treeId = ?', treeId)
     await this.db.run('DELETE FROM attachment_parses WHERE path LIKE ?', treeDir(treeId) + '/%')
+    await this.db.run('DELETE FROM feedback WHERE treeId = ?', treeId)
     await this.db.run('DELETE FROM branches WHERE treeId = ?', treeId)
     await this.db.run('DELETE FROM trees WHERE id = ?', treeId)
     await this.workspace.deleteTree(treeId, ctx)
@@ -199,6 +201,10 @@ export async function close(this: UserSpace, ctx: Context = BACKGROUND_CONTEXT):
     this.closed = true
     await this.stopTemporaryCleanup()
     await this.shares?.flush()
+    await this.feedback.close()
+    await this.suggestions.close()
+    await this.inboxRead.close()
+    await this.exports.close()
     this.listeners.clear()
     this.branchListeners.clear()
     this.automationListeners.clear()

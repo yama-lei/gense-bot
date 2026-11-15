@@ -2,7 +2,7 @@
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context'
 import { openNodeSqliteDatabase } from '@earendil-works/chord/sqlite/node'
 import type { Message } from '@earendil-works/pi-ai'
-import { SHARE_LIMITS, TEMPORARY_TTL_MS, type ClientRequest, type ExportInfo, type FileEntry, type LibraryPage, type ShareInfo, type SharedPage, type ShareSnapshot, type TreeMeta, type UserInfo } from '@gense/protocol'
+import { SHARE_LIMITS, TEMPORARY_TTL_MS, type ExportInfo, type FileEntry, type LibraryPage, type ShareInfo, type SharedPage, type ShareSnapshot, type TreeMeta, type UserInfo } from '@gense/protocol'
 import { unzipSync } from 'fflate'
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
@@ -217,12 +217,6 @@ test('B5: temporary metadata synchronizes, stays out of search and rejects proje
   await assert.rejects(first.request({ t: 'webhook.create', treeId: temporary.id }), /临时对话不能创建 Webhook/)
 })
 
-type WithoutId<T> = T extends unknown ? Omit<T, 'id'> : never
-async function optionalActivity<T>(client: Client, request: WithoutId<ClientRequest>) {
-  try { return await client.request<T>(request) }
-  catch (error) { assert.match(String(error), /未知请求/); return undefined }
-}
-
 test('B5/B6: deletion and expiry make temporary content unreachable through content lists, files, shares and memory', async t => {
   const root = await tempDir(), host = await startServer(config(root)); t.after(() => host.close())
   const owner = await register(host, 'a@example.com'), client = await Client.connect(host.url, owner.cookie), second = await Client.connect(host.url, owner.cookie)
@@ -240,22 +234,19 @@ test('B5/B6: deletion and expiry make temporary content unreachable through cont
     await client.request({ t: 'send', treeId: tree.id, text: '[工具 write] ' + JSON.stringify({ path: marker + '.txt', content: marker }), requestId: String(++n) }); await space.harness.waitForIdle(ctx)
     const path = (await client.request<FileEntry[]>({ t: 'files.list', treeId: tree.id })).find(file => !file.readOnly && file.path.includes(marker))!.path
     const activity = async () => {
-      const page = await optionalActivity<LibraryPage>(client, { t: 'library.list', limit: 200 })
-      if (page) { assert.ok(!page.items.some(item => item.treeId === tree.id)); assert.ok(!JSON.stringify(page).includes(marker)) }
-      else t.diagnostic('D library.list is not implemented on this baseline; it exposes no content. This probe checks real results once available.')
-      const exported = await optionalActivity<ExportInfo>(client, { t: 'export.create' })
-      if (exported) {
-        const done = exported.status === 'running' ? await client.until(() => client.exports.find(item => item.id === exported.id && item.status !== 'running'), 60_000, 'export completion') : exported
-        assert.equal(done.status, 'ready', done.error)
-        const response = await fetch(host.url + '/api/exports/' + done.id, { headers: { cookie: owner.cookie } })
-        assert.equal(response.status, 200)
-        for (const [name, bytes] of Object.entries(unzipSync(new Uint8Array(await response.arrayBuffer())))) {
-          assert.ok(!name.includes(marker)); assert.ok(!Buffer.from(bytes).includes(Buffer.from(marker)), name)
-        }
-        await client.request({ t: 'export.delete', exportId: done.id })
-      } else t.diagnostic('D export.create is not implemented on this baseline; it exposes no content. This probe checks real archives once available.')
+      const page = await client.request<LibraryPage>({ t: 'library.list', limit: 200 })
+      assert.ok(!page.items.some(item => item.treeId === tree.id)); assert.ok(!JSON.stringify(page).includes(marker))
+      const exported = await client.request<ExportInfo>({ t: 'export.create' })
+      const done = exported.status === 'running' ? await client.until(() => client.exports.find(item => item.id === exported.id && item.status !== 'running'), 60_000, 'export completion') : exported
+      assert.equal(done.status, 'ready', done.error)
+      const response = await fetch(host.url + '/api/exports/' + done.id, { headers: { cookie: owner.cookie } })
+      assert.equal(response.status, 200)
+      for (const [name, bytes] of Object.entries(unzipSync(new Uint8Array(await response.arrayBuffer())))) {
+        assert.ok(!name.includes(marker)); assert.ok(!Buffer.from(bytes).includes(Buffer.from(marker)), name)
+      }
+      await client.request({ t: 'export.delete', exportId: done.id })
     }
-    await activity() // Also catches future D implementations that accidentally enumerate live temporary trees.
+    await activity() // Check the real library and archive while the temporary tree is still alive.
     const token = randomBytes(16).toString('base64url')
     const stale: ShareSnapshot = { title: marker, turns: [{ question: marker, answer: [], createdAt: Date.now() }] }
     // An invalid legacy/direct-database share must be revoked too; the public creation API already refuses it.

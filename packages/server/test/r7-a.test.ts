@@ -11,6 +11,7 @@ import { test } from 'node:test'
 import { fauxModels, UserSpace } from '../src/index.ts'
 import { MEMORY_AUTO, MEMORY_EXPLICIT_ONLY, memorySection } from '../src/agent/memory-prompt.ts'
 import { MAX_UPLOAD } from '../src/agent/workspace.ts'
+import { SUGGEST_SYSTEM } from '../src/agent/suggest-prompt.ts'
 import { configFromEnv } from '../src/platform/config.ts'
 import { startServer } from '../src/platform/server.ts'
 import { diskEnv } from './fixtures.ts'
@@ -35,6 +36,7 @@ function capturedModels() {
   for (const key of ['stream', 'streamSimple'] as const) {
     const original = provider[key].bind(provider)
     provider[key] = (model, context, options) => {
+      if (context.messages.some(message => message.role === 'system' && message.content === SUGGEST_SYSTEM)) return original(model, context, options)
       const sections: Record<string, string> = {}, tools = new Map<string, { description?: string }>()
       for (const message of context.messages) {
         if (message.role !== 'system') continue

@@ -30,6 +30,7 @@ test('C8/D6: usage reports expose billed native counts, not display counts, and 
   const provider = await host.app.putProvider({ kind: 'deepseek', name: 'Native', baseUrl: remote.url, modelIds: [], apiKey: 'dummy' })
   for (const user of [a, b]) {
     const space = (await host.spaces.sync(user.id))!, tree = await space.createTree()
+    await space.preferences.set({ suggestions: false })
     await space.send(tree.id, { text: 'Read https://example.com/a', requestId: 'native:' + user.id }); await space.harness.waitForIdle(ctx)
   }
   await host.app.recordService(a.id, 'ocr', 2); await host.app.recordService(b.id, 'tts', 7)
@@ -77,6 +78,7 @@ test('C8: real standalone web functions and agent tools meter only successful no
   const space = await UserSpace.open(await openNodeSqliteDatabase(':memory:'), { models: fauxModels(), env: await diskEnv(), plugins: { defaults: { web: { deepseekKey: 'key', deepseekUrl: url } } }, webUsage: service => app.recordWeb(user.id, service) })
   t.after(() => space.close())
   const tree = await space.createTree()
+    await space.preferences.set({ suggestions: false })
   await space.send(tree.id, { text: '[工具 web_search] {"query":"from actual tool"}', requestId: 'tool' }); await space.harness.waitForIdle(ctx)
   report = await app.usage()
   const selected = report.models.find(m => m.provider === shared.id)!

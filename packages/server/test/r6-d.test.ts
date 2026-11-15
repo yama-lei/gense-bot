@@ -240,6 +240,7 @@ test('D3/D4/D5: shared-provider changes refresh every picker; real calls use sea
   const provider = await created.json() as SharedProviderInfo
   assert.equal(provider.hasKey, true); assert.ok(!JSON.stringify(provider).includes('team-private-key'))
   const chosen = await bc.until(() => bc.models.find(m => m.provider === provider.id))
+  await bc.request({ t: 'prefs.set', suggestions: false })
   assert.equal(chosen.source, 'shared'); await ac.until(() => ac.models.some(m => m.provider === provider.id))
   const tree = await bc.request<TreeMeta>({ t: 'tree.create' }); await bc.request({ t: 'watch', treeId: tree.id })
   await bc.request({ t: 'send', treeId: tree.id, text: 'shared call', requestId: 'shared', model: chosen })

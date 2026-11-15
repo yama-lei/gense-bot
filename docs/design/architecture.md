@@ -1,7 +1,6 @@
 # Design：单机自部署的个人助手
 
-状态：补充至路线图 7 阶段 A、C，2026-11-14。多用户数据边界以 [ADR-0006](../adr/0006-multi-user.md) 为准，路线图 7 功能见 [roadmap-7](../plans/roadmap-7.md)。其余路线图 5 设计及验证保留，见 [roadmap-5](../plans/roadmap-5.md) 和 [backend notes](../plans/roadmap-5-backend-notes.md)。旧单用户布局不自动迁移，可用一次性 `npm run user:import-owner <email>` 导入。
-状态：补充至路线图 7 阶段 A / B，2026-11-14。多用户数据边界以 [ADR-0006](../adr/0006-multi-user.md) 为准，记忆、项目、公开分享与临时对话见 [roadmap-7](../plans/roadmap-7.md)。其余路线图 5 设计及验证保留，见 [roadmap-5](../plans/roadmap-5.md) 和 [backend notes](../plans/roadmap-5-backend-notes.md)。旧单用户布局不自动迁移，可用一次性 `npm run user:import-owner <email>` 导入。
+状态：补充至路线图 7 阶段 A / B / C / D，2026-11-15。多用户数据边界以 [ADR-0006](../adr/0006-multi-user.md) 为准，路线图 7 功能见 [roadmap-7](../plans/roadmap-7.md)。其余路线图 5 设计及验证保留，见 [roadmap-5](../plans/roadmap-5.md) 和 [backend notes](../plans/roadmap-5-backend-notes.md)。旧单用户布局不自动迁移，可用一次性 `npm run user:import-owner <email>` 导入。
 
 ## 结构与运行
 
@@ -10,7 +9,7 @@ Node 24 直接运行 TypeScript。`packages/protocol` 是浏览器与后端的�
 ```text
 packages/server/src/
   platform/         配置、SQLite、登录、HTTP、分享快照、备份、Docker sandbox、文件挂载
-  agent/            UserSpace 组装；trees、branches/send、subagents、workspace、ledger、models、credentials、preferences、memory、projects
+  agent/            UserSpace 组装；trees、branches/send、subagents、workspace、ledger、models、credentials、preferences、memory、projects、feedback、suggestions、inbox、library、exports
   events/           自动任务定义、Trigger 存储与恢复、outbox
   channels/         Channel 接口、渠道设置/准入/配对、web Connection、feishu
   plugins/          definePlugin、注册表与设置、builtin/*、mcp/*、skills/*
@@ -39,14 +38,15 @@ packages/server/src/
 
 ```text
 <DATA_DIR>/
-  app.sqlite                       账号、登录会话、共享模型、用量、公开分享快照
+  app.sqlite                       账号、登录会话、共享模型、用量、公开分享快照、无正文的反馈统计
   users/<userId>/
-    space.sqlite                   会话索引、Triggers、threads、outbox、设置、Skills、记忆、项目、pi-durable
+    space.sqlite                   会话索引、Triggers、threads、outbox、设置、Skills、记忆、项目、反馈、已读、导出记录、pi-durable
     files/                         仅此用户的文件；该用户的 agent 看到 /data
       sessions/<treeId>/           对话工作区；同树分叉共用
       skills/                      该用户共享的 Skills，agent 只读
       uploads/                     上传暂存区
       projects/<projectId>/        项目资料，agent 只读
+      exports/<id>.zip             账号导出；生成期间为 <id>.zip.tmp，保留最近三份
     skill-tmp/                     Git 安装临时目录，完成/失败后移除
   backups/app/                     app.sqlite 的每日副本
   backups/users/<userId>/          该用户 space.sqlite 的每日副本（包含停用用户）
@@ -93,7 +93,32 @@ GenerationTask 的事务包装在 `pi.assistant` 后紧接着保存 `app.native`
 
 临时对话在用户 `space.sqlite` 的 `trees.expiresAt` 中记录创建时间加 24 小时。`trees` 推送仍包含 `temporary: { expiresAt }` 以便客户端打开，网页负责在导航等列表中隐藏，服务端搜索排除。它不能放进项目、分享、创建定时任务或 Webhook，也不能作为记忆写入的来源。`agent/temporary.ts` 在创建根对话和空分支时持久化禁用 memory 工具，普通分叉继承；memoryContext 不生成记忆节。
 
-网页离开时请求 tree.delete；服务器还在启动恢复前及每 10 分钟清理一次到期树。清理会中止运行、移除业务索引和工作区、撤销链接、推送列表并停止现有 watch。**删除语义的已知缺口：普通与临时 tree.delete 均未物理擦除 pi-durable 的底层 pi_* 对话和条目；它们仍可能保留在 space.sqlite 及其备份中。** 本轮采用现有删除语义，不直接修改活动 Harness 的内部表；业务内容接口在删除后不能再访问该树，用量计数保留。资料库与导出的回归探测在这些接口上线后会检查实际列表及 ZIP，不包含临时内容。
+网页离开时请求 tree.delete；服务器还在启动恢复前及每 10 分钟清理一次到期树。清理会中止运行、移除业务索引和工作区、撤销链接、推送列表并停止现有 watch。**删除语义的已知缺口：普通与临时 tree.delete 均未物理擦除 pi-durable 的底层 pi_* 对话和条目；它们仍可能保留在 space.sqlite 及其备份中。** 本轮采用现有删除语义，不直接修改活动 Harness 的内部表；业务内容接口在删除后不能再访问该树，用量计数保留。资料库与导出只从仍存在且 expiresAt 为空的 trees 枚举工作区，不直接扫描 pi_*；真实回归检查临时树存活时、删除后与到期后的列表及 ZIP 均无临时内容。
+
+
+## 反馈、追问与已读
+
+`space.sqlite` 的迁移 v7 增加 `feedback(treeId, turnId, value, reasons, comment, model, updatedAt)`，以 treeId + turnId 为主键。反馈先校验所属树，模型取该轮真实助手的 provider:model；只有 down 保存理由和最多 500 字备注，null 删除。watch 必发完整列表，修改后向该用户全部连接推送；删除树清除本地反馈。
+
+`app.sqlite.feedback_stats(userId, treeId, turnId, day, model, value, reasons)` 以用户、树和轮次唯一，只保存 UTC 日和统计字段，不包含问答及备注。改值覆盖、清除删除，删树后可保留统计。`GET /api/admin/feedback?from&to` 只允许管理员，按日和模型汇总投票及理由。
+
+`agent/suggestions.ts` 在网页主线回答成功结束、追问偏好开启时后台侧调用同一个模型与凭据，直接使用 `suggest-prompt.ts` 的系统文字、输入格式及解析函数。调用不带对话历史、工具或动态提示词节；约 300 token，不指定 pi-ai 的 reasoning 等级以关闭思考，20 秒取消。它经过已有模型凭据解析、DeepSeek Messages 包装与用量计账；DeepSeek 不加原生工具或标题。失败或空结果不推送，也不写入对话历史。
+
+每树只在内存保留最新结果，生成后推送该用户全部连接，watch 时重发；新轮次、关闭偏好、删树和关闭空间都会取消旧调用，迟到结果不会覆盖新轮次。临时对话正常生成；飞书渠道调用不生成，在网页继续飞书来源的树时按网页调用处理。
+
+迁移 v8 增加 `inbox_read(id, readAt)`。id 为客户端不透明值，单次取前 500 个、每个截到 200 字符；合并并刷新时间，只留最新 500 条。连接建立和修改后向该用户全部连接推送。服务器存已读集合，网页根据已有动态计算未读数。
+
+## 资料库与账号导出
+
+`agent/library.ts` 从本用户当前的非临时 trees 和 projects 建立文件根，排除已删树、Skills/上传暂存/导出目录、隐藏条目、node_modules、__pycache__ 和符号链接。请求按协议 fileKind、文件名子串筛选，按 mtime 降序、路径打破同时间并列；默认 50、最多 200 条，以 mtime + 路径编码为不透明游标。
+
+每个根缓存列表两秒，每次请求检查各目录 mtime，目录变化立即重新枚举；未变化的目录复用条目，文件元数据最多两秒刷新一次，避免分页重复扫描全部文件。每次返回前重新核对数据库中的活跃根，缓存不能让临时或已删树重新可见。
+
+迁移 v9 增加 `exports(id, status, size, error, createdAt, finishedAt)`。同用户串行准入，同一时刻最多一个 running；后台以 512 KiB 分块读取真实文件、增量写入 ZIP 临时文件，成功改名后推送 ready，失败清除文件并推送 failed。重启时未完成的任务标记失败、清理临时文件。只保留最近三条记录及对应文件，可单独删除或取消正在进行的导出。
+
+ZIP 只读取指定的数据：`conversations/<UTC 日期>-<标题>/conversation.md` 为主分支完整历史中的用户文字、助手正文和一行工具名，不含思考、工具参数/结果及原生跟踪；同目录 files 放工作区。`projects/<名字>/project.json` 和 files 保存项目元数据/资料，另有 memories.json 与允许的 preferences.json 字段。重名目录加序号，文件名中的路径特殊字符转义；不复制数据库、模型/插件凭据或服务端 API key。临时树和已删树始终排除，打包中树/项目消失则整次失败，不发布含已移除树的包。
+
+`GET /api/exports/:id` 从当前登录用户自己的记录查找 ready 文件，流式下载，设置 attachment、日期文件名及 no-store；其他用户或不存在的导出均为 404。增量 ZIP 使用存储模式，避免压缩大文件占用内存；当前 ZIP32 上限为 4 GiB / 65535 个文件，超限明确失败并清理，不发布损坏文件。完成状态直接由网页纳入收件箱，不另写服务端收件箱消息。
 
 ## 飞书 / Lark
 

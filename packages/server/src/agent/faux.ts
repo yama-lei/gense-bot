@@ -11,6 +11,7 @@ import type { Message } from '@earendil-works/pi-ai'
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, type FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux'
 import type { ModelSetup } from './models.ts'
 import { SUMMARIZE_PROMPT } from '../events/tasks.ts'
+import { SUGGEST_SYSTEM } from './suggest-prompt.ts'
 
 export const LONG_REPLY = Array.from({ length: 300 }, (_, i) => `第 ${i + 1} 句。`).join('')
 
@@ -26,6 +27,7 @@ export function fauxModels(): ModelSetup {
   const faux = fauxProvider({ models: [{ id: 'faux-1', name: 'Faux' }], tokensPerSecond: 200 })
   const reply: FauxResponseFactory = (context) => {
     faux.appendResponses([reply])
+    if (context.messages.some(m => m.role === 'system' && m.content === SUGGEST_SYSTEM)) return fauxAssistantMessage([fauxText('{"items":[]}')])
     // A tool may change a dynamic prompt section (memory, projects), adding a system patch after its result.
     const last = context.messages.findLast(m => m.role !== 'system')
     if (last?.role === 'toolResult') {

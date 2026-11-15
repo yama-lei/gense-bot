@@ -209,7 +209,9 @@ export async function submit(this: UserSpace,
       : undefined
     const thinkingLevel = input.effort && agent.thinkingLevel !== input.effort ? input.effort : undefined
     if (model || thinkingLevel) await conv.configure({ ...(model && { model }), ...(thinkingLevel && { thinkingLevel }) }, ctx)
+    const version = this.suggestions.begin(tree.id)
     const submission = await conv.submit({ type: 'input', content, requestId: input.requestId }, ctx)
+    this.suggestions.follow(tree, branch, conv, submission, version)
     await this.answered(tree, branch, conv, submission, named, ctx)
     return submission.id
   }

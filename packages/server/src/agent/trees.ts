@@ -26,6 +26,7 @@ import { BRANCH_COLUMNS,type BranchRow,COLUMNS,DEFAULT_TITLE,SCHEDULE_COLUMNS,ty
 
 import type { UserSpace } from './space.ts'
 import { historyWatch } from './history.ts'
+import { deepseekTitleEdited } from './deepseek.ts'
 export function now(this: UserSpace): number {
     return (this.options.now ?? Date.now)()
   }
@@ -102,7 +103,10 @@ export async function updateTree(this: UserSpace, treeId: string, patch: { title
   return this.projects.serial(async () => {
     await this.row(treeId)
     if (patch.projectId !== undefined && patch.projectId !== null) await this.projects.get(patch.projectId)
-    if (patch.title !== undefined) await this.db.run('UPDATE trees SET title = ? WHERE id = ?', patch.title.trim() || DEFAULT_TITLE, treeId)
+    if (patch.title !== undefined) {
+      await deepseekTitleEdited(this, treeId)
+      await this.db.run('UPDATE trees SET title = ? WHERE id = ?', patch.title.trim() || DEFAULT_TITLE, treeId)
+    }
     if (patch.pinned !== undefined) await this.db.run('UPDATE trees SET pinned = ? WHERE id = ?', patch.pinned ? 1 : 0, treeId)
     if (patch.projectId !== undefined) await this.db.run('UPDATE trees SET projectId = ?, updatedAt = ? WHERE id = ?', patch.projectId, this.now(), treeId)
     await this.changed()

@@ -13,7 +13,7 @@ import type { Attachment, Outgoing, Turn } from '../lib/types'
 export const MAX_UPLOAD = 20 * 1024 * 1024
 
 /** Choices that stay in this browser. `model` is `provider:id`; empty follows the server's default. */
-export const localPrefs = localStore('gense.prefs', { model: '', effort: 'medium' as Effort, sidebar: true })
+export const localPrefs = localStore('gense.prefs', { model: '', effort: 'medium' as Effort, sidebar: true, nav: true })
 export const useLocalPrefs = () => useLocal(localPrefs)
 
 /** View state (an edited draft, a filled form) per call, keyed `treeId:callId`; kept in this browser. */

@@ -1,66 +1,92 @@
-// Settings: how the assistant addresses the owner, model accounts, appearance, and the owner's password.
+// Settings: how the assistant addresses the owner, model accounts, appearance, shortcuts, local data, usage and the
+// owner's password. A section list on the left, one section on the right.
 import type { LoginPrompt, ProviderState } from '@gense/protocol'
-import { ExternalLink, LogOut, Monitor, Moon, Sun } from 'lucide-react'
+import { Check, Cpu, Database, Download, ExternalLink, Gauge, Keyboard, LogOut, Monitor, Moon, Palette, ShieldCheck, Sun, UserRound } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { report, useClient, useHost, useUser } from '../../app/client'
 import { Page } from '../../app/Shell'
 import { cn } from '../../lib/cn'
-import { errorText } from '../../lib/format'
-import { navigate, type SettingsSection } from '../../lib/router'
+import { errorText, saveBlob } from '../../lib/format'
+import { modKey } from '../../lib/hooks'
+import { lab, useLab, useMemories, useProjects } from '../../lib/lab'
+import { Link, type SettingsSection } from '../../lib/router'
 import type { LoginHandlers } from '../../lib/socket'
-import { themePref, useThemePref, type ThemePref } from '../../lib/theme'
-import { Badge } from '../../ui/badge'
+import { accentPref, accents, themePref, useAccent, useThemePref, type ThemePref } from '../../lib/theme'
+import { Badge, PreviewBadge } from '../../ui/badge'
 import { Button } from '../../ui/button'
+import { ConfirmDialog } from '../../ui/dialog'
 import { Notice, Skeleton, Spinner } from '../../ui/feedback'
 import { Field, Input, Textarea } from '../../ui/input'
 import { Select } from '../../ui/select'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../ui/tabs'
+import { Switch } from '../../ui/switch'
 
-const sections: { id: SettingsSection; label: string }[] = [
-  { id: 'personal', label: '个性化' },
-  { id: 'models', label: '模型' },
-  { id: 'appearance', label: '外观' },
-  { id: 'account', label: '账户' },
+const sections: { id: SettingsSection; label: string; icon: ReactNode }[] = [
+  { id: 'personal', label: '个性化', icon: <UserRound /> },
+  { id: 'models', label: '模型', icon: <Cpu /> },
+  { id: 'appearance', label: '外观', icon: <Palette /> },
+  { id: 'shortcuts', label: '快捷键', icon: <Keyboard /> },
+  { id: 'data', label: '数据', icon: <Database /> },
+  { id: 'plan', label: '用量', icon: <Gauge /> },
+  { id: 'account', label: '账户', icon: <ShieldCheck /> },
 ]
 
+const panels: Record<SettingsSection, () => ReactNode> = { personal: Personal, models: Models, appearance: Appearance, shortcuts: Shortcuts, data: Data, plan: Plan, account: Account }
+
 export default function SettingsPage({ section = 'personal' }: { section?: SettingsSection }) {
+  const Panel = panels[section]
   return (
-    <Page title="设置">
-      <Tabs value={section} onValueChange={(v) => navigate({ name: 'settings', section: v as SettingsSection }, { replace: true })}>
-        <TabsList className="mb-6">
+    <Page title="设置" wide>
+      <div className="flex flex-col gap-6 md:flex-row md:gap-10">
+        <nav aria-label="设置" className="-mx-1 flex shrink-0 gap-0.5 overflow-x-auto px-1 md:sticky md:top-0 md:w-44 md:flex-col md:self-start md:overflow-visible">
           {sections.map((s) => (
-            <TabsTrigger key={s.id} value={s.id}>
-              {s.label}
-            </TabsTrigger>
+            <Link
+              key={s.id}
+              to={{ name: 'settings', section: s.id }}
+              replace
+              aria-current={section === s.id ? 'page' : undefined}
+              className={cn(
+                'flex h-9 shrink-0 items-center gap-2.5 rounded-lg px-3 text-sm text-muted-foreground transition-colors hover:bg-hover hover:text-foreground [&_svg]:size-4',
+                section === s.id && 'bg-muted font-medium text-foreground hover:bg-muted',
+              )}
+            >
+              {s.icon} {s.label}
+            </Link>
           ))}
-        </TabsList>
-        <TabsContent value="personal">
-          <Personal />
-        </TabsContent>
-        <TabsContent value="models">
-          <Models />
-        </TabsContent>
-        <TabsContent value="appearance">
-          <Appearance />
-        </TabsContent>
-        <TabsContent value="account">
-          <Account />
-        </TabsContent>
-      </Tabs>
+        </nav>
+        <div key={section} className="min-w-0 flex-1 animate-rise">
+          <Panel />
+        </div>
+      </div>
     </Page>
   )
 }
 
-function Section({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
+function Section({ title, description, badge, children }: { title: string; description?: ReactNode; badge?: ReactNode; children: ReactNode }) {
   return (
     <section className="mb-10 last:mb-0">
-      <h2 className="text-base font-semibold">{title}</h2>
+      <h2 className="flex items-center gap-2 text-base font-semibold tracking-tight">
+        {title} {badge}
+      </h2>
       {description && <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>}
       <div className="mt-4">{children}</div>
     </section>
   )
 }
+
+/** One setting: what it is on the left, its control on the right. */
+function Row({ title, description, children }: { title: ReactNode; description?: ReactNode; children: ReactNode }) {
+  return (
+    <div className="flex items-center gap-4 px-4 py-3.5">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium">{title}</div>
+        {description && <div className="mt-0.5 text-sm text-muted-foreground">{description}</div>}
+      </div>
+      <div className="shrink-0">{children}</div>
+    </div>
+  )
+}
+const rowsClass = 'flex flex-col divide-y overflow-hidden rounded-2xl border bg-card'
 
 // ── Personal ───────────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -335,27 +361,251 @@ const themes: { id: ThemePref; label: string; icon: ReactNode }[] = [
 
 function Appearance() {
   const pref = useThemePref()
+  const accent = useAccent()
+  const { wide, suggestions } = useLab()
   return (
-    <Section title="主题" description="只对这个浏览器生效。">
-      <div role="radiogroup" aria-label="主题" className="grid max-w-md grid-cols-3 gap-2">
-        {themes.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            role="radio"
-            aria-checked={pref === t.id}
-            onClick={() => themePref.set(t.id)}
-            className={cn(
-              'flex flex-col items-center gap-2 rounded-xl border px-3 py-4 text-sm transition-colors [&_svg]:size-5',
-              pref === t.id ? 'border-foreground bg-card font-medium' : 'text-muted-foreground hover:bg-hover',
-            )}
-          >
-            {t.icon}
-            {t.label}
-          </button>
-        ))}
-      </div>
-    </Section>
+    <>
+      <Section title="主题" description="只对这个浏览器生效。">
+        <div role="radiogroup" aria-label="主题" className="grid max-w-md grid-cols-3 gap-2">
+          {themes.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              role="radio"
+              aria-checked={pref === t.id}
+              onClick={() => themePref.set(t.id)}
+              className={cn(
+                'flex flex-col items-center gap-2 rounded-xl border px-3 py-4 text-sm transition-colors [&_svg]:size-5',
+                pref === t.id ? 'border-accent bg-accent-soft font-medium text-accent' : 'text-muted-foreground hover:bg-hover',
+              )}
+            >
+              {t.icon}
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </Section>
+      <Section title="强调色" description="按钮、链接和高亮使用的颜色。">
+        <div role="radiogroup" aria-label="强调色" className="flex flex-wrap gap-2">
+          {accents.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              role="radio"
+              aria-checked={accent === a.id}
+              onClick={() => accentPref.set(a.id)}
+              className={cn('flex h-9 items-center gap-2 rounded-full border pr-3.5 pl-2 text-sm transition-colors', accent === a.id ? 'border-foreground bg-card font-medium' : 'text-muted-foreground hover:bg-hover')}
+            >
+              <span className="grid size-5 place-items-center rounded-full text-white" style={{ background: a.swatch }}>
+                {accent === a.id && <Check className="size-3" strokeWidth={3} />}
+              </span>
+              {a.label}
+            </button>
+          ))}
+        </div>
+      </Section>
+      <Section title="对话">
+        <div className={rowsClass}>
+          <Row title="宽版布局" description="让对话区域占用更多横向空间，适合大屏幕和长代码。">
+            <Switch checked={wide} onCheckedChange={(v) => lab.set((l) => ({ ...l, wide: v }))} aria-label="宽版布局" />
+          </Row>
+          <Row title="追问建议" description="在最新的回答下面给出几个可以继续问的方向。">
+            <Switch checked={suggestions} onCheckedChange={(v) => lab.set((l) => ({ ...l, suggestions: v }))} aria-label="追问建议" />
+          </Row>
+        </div>
+      </Section>
+    </>
+  )
+}
+
+// ── Shortcuts ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+const shortcuts: { group: string; items: { label: string; keys: string[] }[] }[] = [
+  {
+    group: '全局',
+    items: [
+      { label: '搜索与命令', keys: [modKey, 'K'] },
+      { label: '新对话', keys: [modKey, 'Shift', 'O'] },
+      { label: '收起或展开侧栏', keys: [modKey, 'B'] },
+      { label: '打开设置', keys: [modKey, ','] },
+      { label: '查看快捷键', keys: [modKey, '/'] },
+    ],
+  },
+  {
+    group: '输入框',
+    items: [
+      { label: '换行', keys: ['Shift', 'Enter'] },
+      { label: '发送（任何时候）', keys: [modKey, 'Enter'] },
+      { label: '提及插件、Skill 或文件', keys: ['@'] },
+      { label: '使用命令', keys: ['/'] },
+      { label: '移除最后一个附件或提及', keys: ['Backspace'] },
+    ],
+  },
+]
+
+function Keys({ keys }: { keys: string[] }) {
+  return (
+    <span className="flex gap-1">
+      {keys.map((k) => (
+        <kbd key={k} className="grid h-6 min-w-6 place-items-center rounded-md border bg-muted px-1.5 font-sans text-xs text-muted-foreground">
+          {k}
+        </kbd>
+      ))}
+    </span>
+  )
+}
+
+function Shortcuts() {
+  const { sendKey } = useLab()
+  return (
+    <>
+      <Section title="发送消息" description="选择按哪个键发送。另一个组合键用来换行。">
+        <div role="radiogroup" aria-label="发送键" className="grid max-w-md grid-cols-2 gap-2">
+          {(
+            [
+              { id: 'enter', keys: ['Enter'], help: 'Shift + Enter 换行' },
+              { id: 'mod-enter', keys: [modKey, 'Enter'], help: 'Enter 换行' },
+            ] as const
+          ).map((o) => (
+            <button
+              key={o.id}
+              type="button"
+              role="radio"
+              aria-checked={sendKey === o.id}
+              onClick={() => lab.set((l) => ({ ...l, sendKey: o.id }))}
+              className={cn('flex flex-col items-start gap-2 rounded-xl border p-3.5 text-left text-sm transition-colors', sendKey === o.id ? 'border-accent bg-accent-soft' : 'hover:bg-hover')}
+            >
+              <Keys keys={[...o.keys]} />
+              <span className="text-muted-foreground">{o.help}</span>
+            </button>
+          ))}
+        </div>
+      </Section>
+      {shortcuts.map((g) => (
+        <Section key={g.group} title={g.group}>
+          <ul className={rowsClass}>
+            {g.items.map((i) => (
+              <li key={i.label} className="flex items-center justify-between gap-4 px-4 py-2.5 text-sm">
+                {i.label} <Keys keys={i.keys} />
+              </li>
+            ))}
+          </ul>
+        </Section>
+      ))}
+    </>
+  )
+}
+
+// ── Data ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/** Everything this browser keeps for the interface, by localStorage key. */
+const localKeys = () => Object.keys(localStorage).filter((k) => k.startsWith('gense.'))
+
+function Data() {
+  const { memory } = useLab()
+  const projects = useProjects()
+  const memories = useMemories()
+  const [clearing, setClearing] = useState(false)
+
+  const exportLocal = () => {
+    const data = Object.fromEntries(localKeys().map((k) => [k, JSON.parse(localStorage.getItem(k) ?? 'null') as unknown]))
+    saveBlob(`gense-local-${new Date().toISOString().slice(0, 10)}.json`, new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }))
+  }
+
+  return (
+    <>
+      <Section title="数据控制">
+        <div className={rowsClass}>
+          <Row title="在对话中参考记忆" description={<>记忆在「<Link to={{ name: 'memory' }} className="text-accent underline-offset-4 hover:underline">记忆</Link>」页管理，共 {memories.length} 条。</>}>
+            <Switch checked={memory} onCheckedChange={(v) => lab.set((l) => ({ ...l, memory: v }))} aria-label="在对话中参考记忆" />
+          </Row>
+          <Row title={<span className="flex items-center gap-2">临时对话 <PreviewBadge /></span>} description="不保存到历史、不写入记忆的对话。">
+            <Switch disabled aria-label="临时对话" />
+          </Row>
+          <Row title={<span className="flex items-center gap-2">导出全部对话 <PreviewBadge /></span>} description="把所有对话和文件打包下载。现在可以在每个对话的「分享」里导出 Markdown。">
+            <Button disabled>
+              <Download /> 导出
+            </Button>
+          </Row>
+        </div>
+      </Section>
+      <Section title="这个浏览器里的数据" description={`项目（${projects.length} 个）、记忆、回答反馈、草稿和界面偏好保存在这个浏览器里，不会同步到其他设备。`}>
+        <div className={rowsClass}>
+          <Row title="导出本地数据" description="下载为一个 JSON 文件。">
+            <Button onClick={exportLocal}>
+              <Download /> 导出
+            </Button>
+          </Row>
+          <Row title="清除本地数据" description="删除项目、记忆、反馈、草稿和界面偏好。对话本身不受影响。">
+            <Button variant="destructive" onClick={() => setClearing(true)}>
+              清除
+            </Button>
+          </Row>
+        </div>
+      </Section>
+      <ConfirmDialog
+        open={clearing}
+        onOpenChange={setClearing}
+        title="清除这个浏览器里的数据？"
+        confirm="清除并刷新"
+        onConfirm={() => {
+          for (const k of localKeys()) localStorage.removeItem(k)
+          location.reload()
+        }}
+      >
+        项目、记忆、反馈、草稿和界面偏好都会删除，无法恢复。服务器上的对话、文件和设置不受影响。
+      </ConfirmDialog>
+    </>
+  )
+}
+
+// ── Plan ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+function Plan() {
+  const { trees, schedules, models, providers } = useHost()
+  const stats = [
+    { label: '对话', value: trees?.length ?? '–' },
+    { label: '定时任务', value: schedules.length },
+    { label: '可用模型', value: models.length },
+    { label: '模型账户', value: providers.filter((p) => p.configured).length },
+  ]
+  return (
+    <>
+      <Section title="当前方案">
+        <div className="relative overflow-hidden rounded-2xl border bg-card p-5">
+          <div aria-hidden className="aura pointer-events-none absolute inset-0 opacity-70" />
+          <div className="relative flex flex-wrap items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 text-lg font-semibold tracking-tight">
+                自托管 <Badge variant="accent">无限制</Badge>
+              </div>
+              <p className="mt-0.5 text-sm text-muted-foreground">Gense 运行在你自己的服务器上，用你自己的模型账户，没有消息条数限制。</p>
+            </div>
+            <Button asChild>
+              <Link to={{ name: 'settings', section: 'models' }}>管理模型账户</Link>
+            </Button>
+          </div>
+        </div>
+      </Section>
+      <Section title="概览">
+        <dl className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+          {stats.map((s) => (
+            <div key={s.label} className="rounded-2xl border bg-card p-4">
+              <dt className="text-xs text-muted-foreground">{s.label}</dt>
+              <dd className="mt-1 text-2xl font-semibold tracking-tight tabular-nums">{s.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </Section>
+      <Section title="用量明细" badge={<PreviewBadge />} description="按模型和日期统计的 Token 用量与花费，以及每月预算提醒。">
+        <div className="flex h-32 items-end gap-1.5 rounded-2xl border border-dashed p-4" aria-hidden>
+          {[28, 44, 36, 62, 50, 78, 58, 40, 66, 84, 52, 70, 46, 60].map((h, i) => (
+            <span key={i} className="flex-1 rounded-t-sm bg-accent/25" style={{ height: `${h}%` }} />
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground">示意图，尚未连接真实数据。</p>
+      </Section>
+    </>
   )
 }
 

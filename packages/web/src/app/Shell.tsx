@@ -1,14 +1,14 @@
-import { PanelLeft, WifiOff } from 'lucide-react'
+import { Menu, WifiOff } from 'lucide-react'
 import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ChatPage } from '../features/chat/ChatPage'
 import { HomePage } from '../features/chat/HomePage'
 import { cn } from '../lib/cn'
 import { useMediaQuery, useSettled } from '../lib/hooks'
+import { useProjects } from '../lib/lab'
 import { Link, navigate, useRoute } from '../lib/router'
 import { Button } from '../ui/button'
 import { Drawer } from '../ui/dialog'
 import { Empty, Spinner } from '../ui/feedback'
-import { Tooltip } from '../ui/tooltip'
 import { localPrefs, useClient, useHost, useLocalPrefs, useUser } from './client'
 import { CommandPalette } from './CommandPalette'
 import { phoneQuery, ShellContext, useShell, type ShellApi } from './shell-context'
@@ -19,33 +19,54 @@ const AutomationsPage = lazy(() => import('../features/automations/AutomationsPa
 const ChannelsPage = lazy(() => import('../features/channels/ChannelsPage'))
 const SettingsPage = lazy(() => import('../features/settings/SettingsPage'))
 const AdminPage = lazy(() => import('../features/admin/AdminPage'))
+const InboxPage = lazy(() => import('../features/inbox/InboxPage'))
+const ProjectsPage = lazy(() => import('../features/projects/ProjectsPage'))
+const LibraryPage = lazy(() => import('../features/library/LibraryPage'))
+const MemoryPage = lazy(() => import('../features/memory/MemoryPage'))
 
-/** The button that brings the sidebar back; pages put it at the start of their header. */
+/** Opens the sidebar drawer on a phone; a desktop always has the sidebar or its rail. Pages put it first in their header. */
 export function SidebarToggle({ className }: { className?: string }) {
   const { sidebarHidden, showSidebar } = useShell()
   if (!sidebarHidden) return null
   return (
-    <Tooltip label="打开侧边栏">
-      <Button variant="ghost" size="icon" aria-label="打开侧边栏" onClick={showSidebar} className={cn('text-muted-foreground', className)}>
-        <PanelLeft className="size-5!" />
-      </Button>
-    </Tooltip>
+    <Button variant="ghost" size="icon" aria-label="打开侧边栏" onClick={showSidebar} className={cn('text-muted-foreground', className)}>
+      <Menu className="size-5!" />
+    </Button>
   )
 }
 
-/** A settings-style page: a header with the title, and a centred column that scrolls. */
-export function Page({ title, description, actions, children }: { title: string; description?: ReactNode; actions?: ReactNode; children: ReactNode }) {
+/**
+ * A page that is not a conversation: a slim bar, then a centred column that scrolls. `wide` gives lists and grids
+ * more room; `eyebrow` is the small line above the title (a section name, a badge).
+ */
+export function Page({
+  title,
+  description,
+  actions,
+  eyebrow,
+  wide,
+  children,
+}: {
+  title: string
+  description?: ReactNode
+  actions?: ReactNode
+  eyebrow?: ReactNode
+  wide?: boolean
+  children: ReactNode
+}) {
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-13 shrink-0 items-center gap-1 px-2 md:px-3">
+      <header className="flex h-12 shrink-0 items-center gap-1 px-2 md:hidden">
         <SidebarToggle />
+        <span className="truncate text-sm font-medium">{title}</span>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-3xl px-4 pt-2 pb-16 md:px-8">
-          <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+      <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+        <div className={cn('mx-auto w-full animate-rise px-4 pt-3 pb-20 md:px-10 md:pt-12', wide ? 'max-w-5xl' : 'max-w-3xl')}>
+          <div className="mb-8 flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
             <div className="min-w-0">
-              <h1 className="font-serif text-2xl md:text-[1.75rem]">{title}</h1>
-              {description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}
+              {eyebrow && <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">{eyebrow}</div>}
+              <h1 className="text-[1.65rem] leading-tight font-semibold tracking-tight md:text-[1.9rem]">{title}</h1>
+              {description && <p className="mt-2 max-w-xl text-sm text-muted-foreground">{description}</p>}
             </div>
             {actions && <div className="flex shrink-0 gap-2">{actions}</div>}
           </div>
@@ -62,6 +83,18 @@ const loading = (
   </div>
 )
 
+const titles: Record<string, string> = {
+  plugins: '插件与 Skill',
+  automations: '自动化',
+  channels: '渠道',
+  settings: '设置',
+  admin: '管理后台',
+  inbox: '收件箱',
+  projects: '项目',
+  library: '资料库',
+  memory: '记忆',
+}
+
 export function Shell() {
   const route = useRoute()
   const host = useHost()
@@ -69,6 +102,7 @@ export function Shell() {
   const user = useUser()
   const phone = useMediaQuery(phoneQuery)
   const { sidebar } = useLocalPrefs()
+  const projects = useProjects()
   const [drawer, setDrawer] = useState(false)
   const [palette, setPalette] = useState(false)
 
@@ -77,10 +111,10 @@ export function Shell() {
   useEffect(() => client.socket.watch(chatId ? [chatId] : []), [client, chatId])
 
   useEffect(() => {
-    const titles: Record<string, string> = { plugins: '插件与 Skill', automations: '自动化', channels: '机器人渠道', settings: '设置', admin: '管理后台' }
-    const title = route.name === 'chat' ? host.trees?.find((t) => t.id === route.id)?.title : titles[route.name]
-    document.title = title ? `${title} · GenseBot` : 'GenseBot'
-  }, [route, host.trees])
+    const title =
+      route.name === 'chat' ? host.trees?.find((t) => t.id === route.id)?.title : route.name === 'projects' && route.id ? projects.find((p) => p.id === route.id)?.name : titles[route.name]
+    document.title = title ? `${title} · Gense` : 'Gense'
+  }, [route, host.trees, projects])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -92,23 +126,31 @@ export function Shell() {
       } else if (key === 'o' && e.shiftKey) {
         e.preventDefault()
         navigate({ name: 'home' })
+      } else if (key === 'b' && !e.shiftKey) {
+        e.preventDefault()
+        localPrefs.set((p) => ({ ...p, sidebar: !p.sidebar }))
+      } else if (key === ',' && !e.shiftKey) {
+        e.preventDefault()
+        navigate({ name: 'settings' })
+      } else if (key === '/' && !e.shiftKey) {
+        e.preventDefault()
+        navigate({ name: 'settings', section: 'shortcuts' })
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const hidden = phone || !sidebar
   const api = useMemo<ShellApi>(
     () => ({
-      sidebarHidden: hidden,
-      showSidebar: () => (phone ? setDrawer(true) : localPrefs.set((p) => ({ ...p, sidebar: true }))),
+      sidebarHidden: phone,
+      showSidebar: () => setDrawer(true),
       openPalette: () => {
         setDrawer(false)
         setPalette(true)
       },
     }),
-    [hidden, phone],
+    [phone],
   )
 
   // A reconnect within a couple of seconds is not worth a banner.
@@ -138,6 +180,18 @@ export function Shell() {
     case 'channels':
       page = <ChannelsPage />
       break
+    case 'inbox':
+      page = <InboxPage />
+      break
+    case 'projects':
+      page = <ProjectsPage id={route.id} />
+      break
+    case 'library':
+      page = <LibraryPage />
+      break
+    case 'memory':
+      page = <MemoryPage />
+      break
     case 'settings':
       page = <SettingsPage section={route.section ?? 'personal'} />
       break
@@ -150,12 +204,11 @@ export function Shell() {
 
   return (
     <ShellContext.Provider value={api}>
-      <div className="flex h-dvh overflow-hidden">
+      {/* The chrome is the sidebar's colour; the page sits on it as a canvas with rounded corners. */}
+      <div className="flex h-dvh overflow-hidden bg-sidebar">
         {!phone && (
-          <aside className={cn('shrink-0 overflow-hidden border-r transition-[width] duration-200', sidebar ? 'w-68' : 'w-0 border-r-0')} inert={!sidebar}>
-            <div className="h-full w-68">
-              <Sidebar onNavigate={() => {}} onCollapse={() => localPrefs.set((p) => ({ ...p, sidebar: false }))} />
-            </div>
+          <aside className={cn('shrink-0 overflow-hidden transition-[width] duration-200 ease-out', sidebar ? 'w-70' : 'w-14')}>
+            <Sidebar rail={!sidebar} onNavigate={() => {}} onToggle={() => localPrefs.set((p) => ({ ...p, sidebar: !p.sidebar }))} />
           </aside>
         )}
         {phone && (
@@ -163,7 +216,7 @@ export function Shell() {
             <Sidebar onNavigate={() => setDrawer(false)} />
           </Drawer>
         )}
-        <main className="relative flex min-w-0 flex-1 flex-col pt-[env(safe-area-inset-top)]">
+        <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background pt-[env(safe-area-inset-top)] md:my-2 md:mr-2 md:rounded-2xl md:shadow-canvas">
           {offline && (
             <div role="status" className="flex shrink-0 items-center justify-center gap-2 bg-warning-soft px-3 py-1.5 text-sm text-warning">
               <WifiOff className="size-4" /> 与服务器的连接已断开，正在重连…
@@ -182,7 +235,7 @@ export function Shell() {
 function Missing({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-13 shrink-0 items-center px-2 md:px-3">
+      <header className="flex h-12 shrink-0 items-center px-2">
         <SidebarToggle />
       </header>
       <div className="grid flex-1 place-items-center px-4">

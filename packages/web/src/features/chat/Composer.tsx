@@ -1,21 +1,48 @@
 import type { Effort, Mention } from '@gense/protocol'
-import { ArrowUp, AtSign, Brain, Check, ChevronDown, CircleAlert, FileText, FolderOpen, MessageSquare, Paperclip, Puzzle, Slash, Square, X } from 'lucide-react'
+import {
+  ArrowUp,
+  AtSign,
+  Brain,
+  ChevronDown,
+  CircleAlert,
+  FileText,
+  FolderOpen,
+  Gauge,
+  Globe,
+  MessageSquare,
+  Mic,
+  Paperclip,
+  Plus,
+  Puzzle,
+  Rabbit,
+  Settings2,
+  Slash,
+  SlidersHorizontal,
+  Sparkles,
+  Square,
+  Telescope,
+  X,
+} from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { localPrefs, modelKey, useClient, useHost, useLocalPrefs } from '../../app/client'
 import { cn } from '../../lib/cn'
 import { availableCommands, localSkillNames, toOutgoingCommand, type Command } from '../../lib/commands'
 import { baseName, errorText } from '../../lib/format'
-import { Link } from '../../lib/router'
+import { modKey } from '../../lib/hooks'
+import { drafts, lab, useLab } from '../../lib/lab'
+import { Link, navigate } from '../../lib/router'
 import type { Attachment, Outgoing } from '../../lib/types'
-import { Badge } from '../../ui/badge'
+import { Badge, PreviewBadge } from '../../ui/badge'
 import { Spinner } from '../../ui/feedback'
 import { DropdownMenu, DropdownMenuCheckItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '../../ui/menu'
 import { Tooltip } from '../../ui/tooltip'
+import { useDictation } from './speech'
 
 /** Reasoning effort, named by how hard the model thinks. */
 export const effortLabel: Record<Effort, string> = { low: '快速', medium: '标准', high: '深度思考' }
 const effortHint: Record<Effort, string> = { low: '少想一点，回答更快', medium: '多数问题够用', high: '难题多想一会儿' }
+const effortIcon: Record<Effort, ReactNode> = { low: <Rabbit />, medium: <Gauge />, high: <Brain /> }
 
 /** A file being attached: uploading, uploaded, or failed. */
 interface Pending {
@@ -30,7 +57,7 @@ type MenuItem = { kind: 'command'; command: Command } | { kind: 'mention'; optio
 
 /** Items per group in the `@` menu. */
 const GROUP_SIZE = 5
-const MAX_HEIGHT = 240
+const MAX_HEIGHT = 260
 const mentionGroups: [Mention['kind'], string][] = [
   ['plugin', '插件'],
   ['workspace', '本会话的文件'],
@@ -94,12 +121,24 @@ interface Props {
   autoFocus?: boolean
   /** Text to start with, and a key that changes when it should be put in again. */
   seed?: { text: string; key: number }
+  /** Chips shown before the composer's own (the project a new conversation starts in). */
+  lead?: ReactNode
+  /** Where the unsent text is kept; defaults to the conversation, or `home`. */
+  draftKey?: string
 }
 
-export function Composer({ treeId, placeholder, onSend, busy, onStop, autoFocus, seed }: Props) {
+const saveDraft = (key: string, text: string) =>
+  drafts.set((all) => {
+    if ((all[key] ?? '') === text) return all
+    const { [key]: _, ...rest } = all
+    return text ? { ...rest, [key]: text } : rest
+  })
+
+export function Composer({ treeId, placeholder, onSend, busy, onStop, autoFocus, seed, lead, draftKey = treeId ?? 'home' }: Props) {
   const client = useClient()
   const suggest = useSuggestions(treeId)
-  const [text, setText] = useState('')
+  const { sendKey } = useLab()
+  const [text, setText] = useState(() => drafts.get()[draftKey] ?? '')
   const [files, setFiles] = useState<Pending[]>([])
   const [command, setCommand] = useState<Command | null>(null)
   const [mentions, setMentions] = useState<Mention[]>([])
@@ -128,10 +167,22 @@ export function Composer({ treeId, placeholder, onSend, busy, onStop, autoFocus,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seed?.key])
 
+  // What is typed and not sent survives a reload or a visit to another conversation. Saved a moment after typing
+  // stops, and at once when the box goes away, so neither a sent message nor the last few keys are left behind.
+  const latest = useRef(text)
+  latest.current = text
+  useEffect(() => {
+    const timer = setTimeout(() => saveDraft(draftKey, text), 300)
+    return () => clearTimeout(timer)
+  }, [text, draftKey])
+  useEffect(() => () => saveDraft(draftKey, latest.current), [draftKey])
+
   // `@` offers this conversation's files; ask for them when the menu first needs them.
   useEffect(() => {
     if (treeId && focused && !client.files(treeId)) void client.refreshFiles(treeId).catch(() => {})
   }, [client, treeId, focused])
+
+  const dictation = useDictation((spoken) => setText((t) => (t && !/\s$/.test(t) ? `${t} ${spoken}` : t + spoken)))
 
   const trigger = focused ? triggerAt(text, caret, !!command) : null
   const triggerKey = trigger && `${trigger.start}:${text.slice(0, caret)}`
@@ -151,7 +202,10 @@ export function Composer({ treeId, placeholder, onSend, busy, onStop, autoFocus,
     setCaret(trigger.start)
     setActive(0)
     if (item.kind === 'command') return setCommand(item.command)
-    const { kind, id, label } = item.option
+    addMention(item.option)
+  }
+
+  const addMention = ({ kind, id, label }: Mention) => {
     if (!mentions.some((m) => m.kind === kind && m.id === id)) setMentions((ms) => [...ms, { kind, id, label }])
   }
 
@@ -172,6 +226,7 @@ export function Composer({ treeId, placeholder, onSend, busy, onStop, autoFocus,
 
   const send = () => {
     if (!canSend) return
+    dictation.stop()
     onSend({
       text: text.trim(),
       ...(ready.length && { attachments: ready }),
@@ -179,6 +234,7 @@ export function Composer({ treeId, placeholder, onSend, busy, onStop, autoFocus,
       ...(mentions.length && { mentions }),
     })
     setText('')
+    saveDraft(draftKey, '')
     setFiles([])
     setCommand(null)
     setMentions([])
@@ -208,8 +264,10 @@ export function Composer({ treeId, placeholder, onSend, busy, onStop, autoFocus,
       else if (command) setCommand(null)
       return
     }
-    // A phone's Enter is a new line; its send key is the button.
-    if (e.key === 'Enter' && !e.shiftKey && !matchMedia('(pointer: coarse)').matches) {
+    if (e.key !== 'Enter' || e.shiftKey) return
+    const mod = e.metaKey || e.ctrlKey
+    // A phone's Enter is a new line; its send key is the button. ⌘/Ctrl+Enter always sends.
+    if (mod || (sendKey === 'enter' && !matchMedia('(pointer: coarse)').matches)) {
       e.preventDefault()
       send()
     }
@@ -235,6 +293,11 @@ export function Composer({ treeId, placeholder, onSend, busy, onStop, autoFocus,
     el.setSelectionRange(pos, pos)
     setCaret(pos)
   }
+
+  const research = suggest.commands.find((c) => c.id === 'research')
+  const web = suggest.mentions.find((m) => m.kind === 'plugin' && m.id === 'web')
+  const webOn = mentions.some((m) => m.kind === 'plugin' && m.id === 'web')
+  const toolsOn = (command ? 1 : 0) + (webOn ? 1 : 0)
 
   let group = ''
   return (
@@ -272,13 +335,19 @@ export function Composer({ treeId, placeholder, onSend, busy, onStop, autoFocus,
               </div>
             )
           })}
+          <div className="flex gap-3 border-t px-2.5 pt-1.5 pb-1 text-[11px] text-muted-foreground">
+            <span>↑↓ 选择</span>
+            <span>↵ 确认</span>
+            <span>Esc 关闭</span>
+          </div>
         </div>
       )}
 
       <div
         className={cn(
-          'rounded-3xl border border-input bg-card shadow-float transition-[border-color,box-shadow] focus-within:border-ring/60 focus-within:ring-3 focus-within:ring-ring/15',
-          dragging && 'border-ring ring-3 ring-ring/25',
+          'relative rounded-[1.75rem] bg-card shadow-float ring-1 ring-input transition-shadow focus-within:shadow-pop focus-within:ring-ring/45',
+          dragging && 'ring-2 ring-accent',
+          dictation.listening && 'ring-2 ring-accent/60',
         )}
         onDragOver={(e) => {
           if (!e.dataTransfer.types.includes('Files')) return
@@ -292,13 +361,19 @@ export function Composer({ treeId, placeholder, onSend, busy, onStop, autoFocus,
           attach(e.dataTransfer.files)
         }}
       >
-        {(files.length > 0 || command || mentions.length > 0) && (
+        {dragging && (
+          <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center rounded-[1.75rem] bg-accent-soft/90 text-sm font-medium text-accent">
+            <span className="flex items-center gap-2">
+              <Paperclip className="size-4" /> 松手即可添加文件
+            </span>
+          </div>
+        )}
+        {(lead || files.length > 0 || command || mentions.length > 0) && (
           <div className="flex flex-wrap gap-1.5 px-3.5 pt-3">
-            {command && (
-              <Chip tone="accent" icon={<Slash />} onRemove={() => setCommand(null)} label={command.label} title={command.hint} />
-            )}
+            {lead}
+            {command && <Chip tone="accent" icon={command.id === 'research' ? <Telescope /> : <Slash />} onRemove={() => setCommand(null)} label={command.label} title={command.hint} />}
             {mentions.map((m) => {
-              const Icon = mentionIcon[m.kind]
+              const Icon = m.kind === 'plugin' && m.id === 'web' ? Globe : mentionIcon[m.kind]
               return <Chip key={m.kind + m.id} icon={<Icon />} label={m.label} onRemove={() => setMentions((ms) => ms.filter((x) => x !== m))} />
             })}
             {files.map((f) => (
@@ -319,8 +394,8 @@ export function Composer({ treeId, placeholder, onSend, busy, onStop, autoFocus,
           value={text}
           autoFocus={autoFocus}
           aria-label="消息"
-          placeholder={placeholder}
-          className="block w-full resize-none bg-transparent px-4.5 pt-3.5 pb-1 text-[15px] leading-relaxed outline-none placeholder:text-muted-foreground"
+          placeholder={dictation.listening ? '正在听…说完点一下麦克风' : placeholder}
+          className="block w-full resize-none bg-transparent px-5 pt-4 pb-1 text-base leading-relaxed outline-none placeholder:text-muted-foreground"
           onChange={(e) => {
             setText(e.target.value)
             setCaret(e.target.selectionStart)
@@ -333,7 +408,7 @@ export function Composer({ treeId, placeholder, onSend, busy, onStop, autoFocus,
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
         />
-        <div className="flex items-center gap-0.5 px-2 pt-1 pb-2">
+        <div className="flex items-center gap-0.5 px-2.5 pt-1.5 pb-2.5">
           <input
             ref={picker}
             type="file"
@@ -344,38 +419,96 @@ export function Composer({ treeId, placeholder, onSend, busy, onStop, autoFocus,
               e.target.value = ''
             }}
           />
-          <ToolButton label="添加文件（最大 20 MB）" onClick={() => picker.current?.click()}>
-            <Paperclip />
-          </ToolButton>
-          <ToolButton label="命令" onClick={() => insert('/')} disabled={!!command || text !== ''}>
-            <Slash />
-          </ToolButton>
-          <ToolButton label="提及插件、文件或对话" onClick={() => insert('@')}>
-            <AtSign />
-          </ToolButton>
+          <DropdownMenu>
+            <Tooltip label="添加文件、提及或命令" side="top">
+              <DropdownMenuTrigger aria-label="添加" className={toolButton}>
+                <Plus />
+              </DropdownMenuTrigger>
+            </Tooltip>
+            <DropdownMenuContent align="start" side="top" className="w-60" onCloseAutoFocus={(e) => e.preventDefault()}>
+              <DropdownMenuItem onSelect={() => picker.current?.click()}>
+                <Paperclip /> 上传文件
+                <span className="ml-auto text-xs text-muted-foreground">最大 20 MB</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setTimeout(() => insert('@'))}>
+                <AtSign /> 提及插件、文件或对话
+                <kbd className="ml-auto text-xs text-muted-foreground">@</kbd>
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={!!command || text !== ''} onSelect={() => setTimeout(() => insert('/'))}>
+                <Slash /> 命令与 Skill
+                <kbd className="ml-auto text-xs text-muted-foreground">/</kbd>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => navigate({ name: 'library' })}>
+                <FolderOpen /> 浏览资料库
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger className={cn(toolButton, 'w-auto gap-1.5 px-2.5 text-sm', toolsOn > 0 && 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent')}>
+              <SlidersHorizontal />
+              <span className="max-sm:hidden">工具</span>
+              {toolsOn > 0 && <span className="text-xs font-semibold tabular-nums">{toolsOn}</span>}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" side="top" className="w-72" onCloseAutoFocus={(e) => e.preventDefault()}>
+              <DropdownMenuLabel>这条消息使用</DropdownMenuLabel>
+              <ToolToggle
+                icon={<Telescope />}
+                label="深度研究"
+                hint={research ? '多方检索、交叉核对，带来源' : '需要先启用「网页」插件'}
+                disabled={!research}
+                checked={command?.id === 'research'}
+                onToggle={() => setCommand(command?.id === 'research' ? null : research!)}
+              />
+              <ToolToggle
+                icon={<Globe />}
+                label="联网搜索"
+                hint={web ? '回答前先查网页' : '需要先启用「网页」插件'}
+                disabled={!web}
+                checked={webOn}
+                onToggle={() => (webOn ? setMentions((ms) => ms.filter((m) => !(m.kind === 'plugin' && m.id === 'web'))) : addMention(web!))}
+              />
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="flex items-center gap-1.5">
+                始终生效 <PreviewBadge />
+              </DropdownMenuLabel>
+              <LabToggle icon={<Brain />} label="参考记忆" hint="回答时带上你让它记住的事" field="memory" />
+              <LabToggle icon={<Sparkles />} label="追问建议" hint="每个回答后给出可点的后续问题" field="suggestions" />
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => navigate({ name: 'plugins' })}>
+                <Settings2 /> 管理插件与 Skill
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
           <div className="min-w-0 flex-1" />
           <ModelPicker />
+          {dictation.supported && (
+            <Tooltip label={dictation.listening ? '停止听写' : '语音输入'} side="top">
+              <button type="button" aria-label="语音输入" aria-pressed={dictation.listening} onClick={dictation.toggle} className={cn(toolButton, dictation.listening && 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent')}>
+                {dictation.listening ? <Wave /> : <Mic />}
+              </button>
+            </Tooltip>
+          )}
           {busy ? (
-            <Tooltip label="停止">
-              <button
-                type="button"
-                aria-label="停止"
-                onClick={onStop}
-                className="ml-1 grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground transition-colors hover:bg-primary/85"
-              >
+            <Tooltip label="停止生成" side="top">
+              <button type="button" aria-label="停止" onClick={onStop} className="ml-1 grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground transition-colors hover:bg-primary/85">
                 <Square className="size-3.5 fill-current" />
               </button>
             </Tooltip>
           ) : (
-            <button
-              type="button"
-              aria-label="发送"
-              disabled={!canSend}
-              onClick={send}
-              className="ml-1 grid size-9 shrink-0 place-items-center rounded-full bg-accent text-accent-foreground transition-colors hover:bg-accent/88 disabled:bg-muted disabled:text-muted-foreground"
-            >
-              {uploading ? <Spinner className="text-current" /> : <ArrowUp className="size-5" />}
-            </button>
+            <Tooltip label={sendKey === 'enter' ? '发送 · ↵' : `发送 · ${modKey} ↵`} side="top">
+              <button
+                type="button"
+                aria-label="发送"
+                disabled={!canSend}
+                onClick={send}
+                className="ml-1 grid size-9 shrink-0 place-items-center rounded-full bg-accent text-accent-foreground transition-[background-color,transform] hover:bg-accent/88 active:scale-95 disabled:bg-muted disabled:text-muted-foreground"
+              >
+                {uploading ? <Spinner className="text-current" /> : <ArrowUp className="size-5" />}
+              </button>
+            </Tooltip>
           )}
         </div>
       </div>
@@ -383,19 +516,47 @@ export function Composer({ treeId, placeholder, onSend, busy, onStop, autoFocus,
   )
 }
 
-function ToolButton({ label, children, ...props }: { label: string; children: ReactNode; onClick: () => void; disabled?: boolean }) {
+const toolButton =
+  'inline-flex size-9 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-offset-[-2px] transition-colors hover:bg-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-40 data-[state=open]:bg-hover data-[state=open]:text-foreground [&_svg]:size-4.5 [&_svg]:shrink-0'
+
+/** Three bars that move while the microphone listens. */
+function Wave() {
   return (
-    <Tooltip label={label} side="top">
-      <button
-        type="button"
-        aria-label={label}
-        className="grid size-9 shrink-0 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-40 [&_svg]:size-4.5"
-        {...props}
-      >
-        {children}
-      </button>
-    </Tooltip>
+    <span aria-hidden className="flex h-4 items-center gap-0.5">
+      {[0, 0.15, 0.3].map((d) => (
+        <span key={d} className="h-full w-0.5 origin-center animate-wave rounded-full bg-current" style={{ animationDelay: `${d}s` }} />
+      ))}
+    </span>
   )
+}
+
+function ToolToggle({ icon, label, hint, checked, disabled, onToggle }: { icon: ReactNode; label: string; hint: string; checked: boolean; disabled?: boolean; onToggle: () => void }) {
+  return (
+    <DropdownMenuItem
+      role="menuitemcheckbox"
+      aria-checked={checked}
+      disabled={disabled}
+      onSelect={(e) => {
+        e.preventDefault()
+        onToggle()
+      }}
+      className="items-start py-2"
+    >
+      <span className={cn('mt-0.5', checked && 'text-accent')}>{icon}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block">{label}</span>
+        <span className="block text-xs text-muted-foreground">{hint}</span>
+      </span>
+      <span className={cn('mt-1 h-4 w-7 shrink-0 rounded-full bg-input p-0.5 transition-colors', checked && 'bg-accent')}>
+        <span className={cn('block size-3 rounded-full bg-card transition-transform', checked && 'translate-x-3')} />
+      </span>
+    </DropdownMenuItem>
+  )
+}
+
+function LabToggle({ field, ...props }: { icon: ReactNode; label: string; hint: string; field: 'memory' | 'suggestions' }) {
+  const value = useLab()[field]
+  return <ToolToggle {...props} checked={value} onToggle={() => lab.set((l) => ({ ...l, [field]: !l[field] }))} />
 }
 
 function Chip({ icon, label, title, tone, onRemove }: { icon: ReactNode; label: string; title?: string; tone?: 'accent' | 'error'; onRemove: () => void }) {
@@ -403,14 +564,14 @@ function Chip({ icon, label, title, tone, onRemove }: { icon: ReactNode; label: 
     <span
       title={title}
       className={cn(
-        'inline-flex h-7 max-w-56 items-center gap-1.5 rounded-lg bg-muted pr-1 pl-2 text-sm [&_svg]:size-3.5 [&_svg]:shrink-0',
+        'inline-flex h-7 max-w-56 items-center gap-1.5 rounded-full bg-muted pr-1 pl-2.5 text-sm [&_svg]:size-3.5 [&_svg]:shrink-0',
         tone === 'accent' && 'bg-accent-soft text-accent',
         tone === 'error' && 'bg-destructive-soft text-destructive',
       )}
     >
       {icon}
       <span className="truncate">{label}</span>
-      <button type="button" aria-label={`移除 ${label}`} onClick={onRemove} className="grid size-5 place-items-center rounded-md opacity-60 hover:bg-hover hover:opacity-100">
+      <button type="button" aria-label={`移除 ${label}`} onClick={onRemove} className="grid size-5 place-items-center rounded-full opacity-60 hover:bg-hover hover:opacity-100">
         <X />
       </button>
     </span>
@@ -432,12 +593,31 @@ function ModelPicker() {
   const groups = Map.groupBy(models, (m) => m.provider)
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger className="inline-flex h-9 min-w-0 items-center gap-1 rounded-full px-3 text-sm text-muted-foreground outline-none transition-colors hover:bg-hover hover:text-foreground data-[state=open]:bg-hover">
+      <DropdownMenuTrigger className="inline-flex h-9 min-w-0 items-center gap-1 rounded-full px-3 text-sm text-muted-foreground outline-offset-[-2px] transition-colors hover:bg-hover hover:text-foreground data-[state=open]:bg-hover data-[state=open]:text-foreground">
         <span className="truncate">{model?.name ?? '选择模型'}</span>
         {prefs.effort !== 'medium' && <span className="hidden shrink-0 text-xs opacity-75 sm:inline">· {effortLabel[prefs.effort]}</span>}
         <ChevronDown className="size-3.5 shrink-0" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" side="top" className="w-72">
+      <DropdownMenuContent align="end" side="top" className="w-80" onCloseAutoFocus={(e) => e.preventDefault()}>
+        <DropdownMenuLabel>思考程度</DropdownMenuLabel>
+        <div role="radiogroup" aria-label="思考程度" className="mx-1.5 mb-1 grid grid-cols-3 gap-0.5 rounded-xl bg-muted p-0.5">
+          {(Object.keys(effortLabel) as Effort[]).map((e) => (
+            <button
+              key={e}
+              type="button"
+              role="radio"
+              aria-checked={prefs.effort === e}
+              title={effortHint[e]}
+              onClick={() => localPrefs.set((p) => ({ ...p, effort: e }))}
+              className={cn('flex h-8 items-center justify-center gap-1.5 rounded-[10px] text-xs text-muted-foreground [&_svg]:size-3.5', prefs.effort === e && 'bg-card font-medium text-foreground shadow-float')}
+            >
+              {effortIcon[e]}
+              {effortLabel[e]}
+            </button>
+          ))}
+        </div>
+        <p className="px-2.5 pb-1.5 text-xs text-muted-foreground">{effortHint[prefs.effort]}</p>
+        <DropdownMenuSeparator />
         {[...groups].map(([provider, list]) => (
           <div key={provider}>
             <DropdownMenuLabel className="flex items-center gap-1.5">
@@ -450,23 +630,20 @@ function ModelPicker() {
                 checked={!!model && modelKey(model) === modelKey(m)}
                 onSelect={() => localPrefs.set((p) => ({ ...p, model: defaultModel && modelKey(defaultModel) === modelKey(m) ? '' : modelKey(m) }))}
               >
-                {m.name}
+                <span className="flex items-center gap-2">
+                  <span className="truncate">{m.name}</span>
+                  {defaultModel && modelKey(defaultModel) === modelKey(m) && <span className="shrink-0 text-xs text-muted-foreground">默认</span>}
+                </span>
               </DropdownMenuCheckItem>
             ))}
           </div>
         ))}
         <DropdownMenuSeparator />
-        <DropdownMenuLabel className="flex items-center gap-1.5">
-          <Brain className="size-3.5" /> 思考程度
-        </DropdownMenuLabel>
-        {(Object.keys(effortLabel) as Effort[]).map((e) => (
-          <DropdownMenuItem key={e} onSelect={() => localPrefs.set((p) => ({ ...p, effort: e }))}>
-            <span className="w-16 shrink-0">{effortLabel[e]}</span>
-            <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{effortHint[e]}</span>
-            {prefs.effort === e && <Check className="text-accent" />}
-          </DropdownMenuItem>
-        ))}
+        <DropdownMenuItem onSelect={() => navigate({ name: 'settings', section: 'models' })}>
+          <Settings2 /> 管理模型
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   )
 }
+

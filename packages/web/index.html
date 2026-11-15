@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
-    <meta name="theme-color" content="#faf9f5" />
-    <title>GenseBot</title>
+    <meta name="theme-color" content="#f3f4f2" />
+    <title>Gense</title>
     <script>
       // Before the first paint, so the page never flashes the other theme (src/lib/theme.ts keeps it in step).
       ;(function () {
@@ -15,7 +15,10 @@
         } catch (e) {}
         var dark = pref === 'dark' || (pref !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)
         document.documentElement.dataset.theme = dark ? 'dark' : 'light'
-        document.querySelector('meta[name=theme-color]').content = dark ? '#262624' : '#faf9f5'
+        try {
+          document.documentElement.dataset.accent = JSON.parse(localStorage.getItem('gense.accent') || '"jade"')
+        } catch (e) {}
+        document.querySelector('meta[name=theme-color]').content = dark ? '#0d0f10' : '#f3f4f2'
       })()
     </script>
   </head>

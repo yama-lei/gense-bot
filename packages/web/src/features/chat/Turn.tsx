@@ -1,8 +1,10 @@
 import type { EventData, ModelInfo } from '@gense/protocol'
 import {
+  BookmarkPlus,
   Bot,
   Brain,
   Check,
+  CornerDownRight,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -19,15 +21,21 @@ import {
   Radio,
   RefreshCw,
   Slash,
+  Square,
+  ThumbsDown,
+  ThumbsUp,
+  Volume2,
   Webhook,
   Wrench,
   X,
 } from 'lucide-react'
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { toast } from 'sonner'
 import { modelKey } from '../../app/client'
 import { cn } from '../../lib/cn'
 import { copyText, formatBytes, formatDuration, formatTime } from '../../lib/format'
 import { useFlash } from '../../lib/hooks'
+import { feedback, memories, useFeedback, useLab } from '../../lib/lab'
 import type { ToolIndex, ToolMeta } from '../../lib/tools'
 import type { ToolCall, Turn, TurnBlock, Versions, WebSource } from '../../lib/types'
 import type { DisplayMode } from '../../plugins/types'
@@ -35,10 +43,11 @@ import { Badge } from '../../ui/badge'
 import { Button } from '../../ui/button'
 import { Notice, Spinner } from '../../ui/feedback'
 import { Textarea } from '../../ui/input'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, Popover, PopoverContent, PopoverTrigger } from '../../ui/menu'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Popover, PopoverContent, PopoverTrigger } from '../../ui/menu'
 import { Tooltip } from '../../ui/tooltip'
 import { CompactionDivider } from './Compaction'
 import { Markdown } from './Markdown'
+import { canSpeak, useSpeech } from './speech'
 import { hasView, ViewSlot } from './ViewSlot'
 
 export interface TurnContext {
@@ -82,7 +91,11 @@ function segments(blocks: TurnBlock[], tools: ToolIndex): Segment[] {
   return out
 }
 
-export function TurnView({ turn, ctx }: { turn: Turn; ctx: TurnContext }) {
+const followUps = ['展开讲讲', '更简洁一点', '举个例子', '换个角度']
+
+/** `last` is the newest turn of the conversation: it alone offers follow-ups. */
+export function TurnView({ turn, ctx, last: newest }: { turn: Turn; ctx: TurnContext; last?: boolean }) {
+  const { suggestions } = useLab()
   const active = turn.status === 'queued' || turn.status === 'running'
   // An Event or a brief is not the user's message: it has no versions to edit or ask again.
   const own = !turn.event && turn.brief === undefined
@@ -93,7 +106,7 @@ export function TurnView({ turn, ctx }: { turn: Turn; ctx: TurnContext }) {
   const model = turn.model ? (ctx.models.find((m) => modelKey(m) === turn.model)?.name ?? turn.model.slice(turn.model.indexOf(':') + 1)) : ''
 
   return (
-    <section className="flex flex-col gap-4" data-turn={turn.id}>
+    <section className="flex scroll-mt-4 flex-col gap-5" data-turn={turn.id}>
       {turn.event ? (
         <EventCard event={turn.event} queued={turn.status === 'queued'} />
       ) : turn.brief !== undefined ? (
@@ -162,8 +175,10 @@ export function TurnView({ turn, ctx }: { turn: Turn; ctx: TurnContext }) {
           )}
 
           {!active && (
-            <div className="-ml-1.5 flex items-center gap-0.5 text-muted-foreground">
+            <div className="-ml-1.5 flex flex-wrap items-center gap-0.5 text-muted-foreground">
               {turn.assistantMessage && <CopyButton text={turn.assistantMessage} />}
+              {turn.assistantMessage && <Feedback id={`${ctx.treeId}:${turn.id}`} />}
+              {turn.assistantMessage && canSpeak && <ReadAloud id={turn.id} text={turn.assistantMessage} />}
               {canChange && (
                 <Tooltip label="重新回答">
                   <Button variant="ghost" size="icon-sm" aria-label="重新回答" onClick={() => ctx.onRegenerate(turn)}>
@@ -171,30 +186,103 @@ export function TurnView({ turn, ctx }: { turn: Turn; ctx: TurnContext }) {
                   </Button>
                 </Tooltip>
               )}
-              {turn.lastEntryId !== undefined && (
-                <DropdownMenu>
-                  <Tooltip label="更多">
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon-sm" aria-label="更多">
-                        <Ellipsis />
-                      </Button>
-                    </DropdownMenuTrigger>
-                  </Tooltip>
-                  <DropdownMenuContent align="start">
+              <DropdownMenu>
+                <Tooltip label="更多">
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon-sm" aria-label="更多">
+                      <Ellipsis />
+                    </Button>
+                  </DropdownMenuTrigger>
+                </Tooltip>
+                <DropdownMenuContent align="start" className="w-52">
+                  {turn.lastEntryId !== undefined && (
                     <DropdownMenuItem disabled={ctx.busy} onSelect={() => ctx.onFork(turn)}>
                       <GitBranch /> 从这里分叉
                     </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
+                  )}
+                  {turn.assistantMessage && (
+                    <DropdownMenuItem onSelect={() => remember(turn.assistantMessage)}>
+                      <BookmarkPlus /> 存入记忆
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuSeparator />
+                  <div className="px-2.5 py-1.5 text-xs text-muted-foreground">
+                    {model && <div className="truncate">{model}</div>}
+                    <div>{new Date(turn.createdAt).toLocaleString()}</div>
+                  </div>
+                </DropdownMenuContent>
+              </DropdownMenu>
               {turn.sources.length > 0 && <Sources sources={turn.sources} />}
               {model && <span className="ml-2 truncate text-xs opacity-80">{model}</span>}
+            </div>
+          )}
+
+          {newest && suggestions && turn.status === 'succeeded' && turn.assistantMessage && !ctx.busy && (
+            <div className="flex animate-rise flex-wrap gap-1.5 pt-1">
+              {followUps.map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => ctx.onSend(f)}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-sm text-muted-foreground transition-colors hover:border-input hover:bg-hover hover:text-foreground"
+                >
+                  <CornerDownRight className="size-3.5" /> {f}
+                </button>
+              ))}
             </div>
           )}
         </div>
       )}
       {turn.compactions?.map((c) => <CompactionDivider key={c.id} compaction={c} />)}
     </section>
+  )
+}
+
+/** Keeps a passage of an answer as a memory (kept in this browser until the server has memories). */
+function remember(text: string) {
+  const short = text.trim().replace(/\s+/g, ' ').slice(0, 280)
+  memories.set((all) => [{ id: crypto.randomUUID(), text: short, source: 'chat', enabled: true, createdAt: Date.now() }, ...all])
+  toast.success('已存入记忆', { description: '可以在「记忆」里修改或删除。' })
+}
+
+/** 👍 / 👎 on an answer. */
+function Feedback({ id }: { id: string }) {
+  const value = useFeedback()[id]
+  const set = (next: 'up' | 'down') => {
+    feedback.set((all) => {
+      const { [id]: _, ...rest } = all
+      return value === next ? rest : { ...rest, [id]: next }
+    })
+    if (value !== next) toast(next === 'up' ? '谢谢，已记下这个回答有帮助' : '已记下，下次会注意', { duration: 1800 })
+  }
+  return (
+    <>
+      {value !== 'down' && (
+        <Tooltip label="有帮助">
+          <Button variant="ghost" size="icon-sm" aria-label="有帮助" aria-pressed={value === 'up'} onClick={() => set('up')} className={cn(value === 'up' && 'text-accent')}>
+            <ThumbsUp className={cn(value === 'up' && 'fill-current')} />
+          </Button>
+        </Tooltip>
+      )}
+      {value !== 'up' && (
+        <Tooltip label="没帮助">
+          <Button variant="ghost" size="icon-sm" aria-label="没帮助" aria-pressed={value === 'down'} onClick={() => set('down')} className={cn(value === 'down' && 'text-foreground')}>
+            <ThumbsDown className={cn(value === 'down' && 'fill-current')} />
+          </Button>
+        </Tooltip>
+      )}
+    </>
+  )
+}
+
+function ReadAloud({ id, text }: { id: string; text: string }) {
+  const speech = useSpeech(id)
+  return (
+    <Tooltip label={speech.speaking ? '停止朗读' : '朗读'}>
+      <Button variant="ghost" size="icon-sm" aria-label="朗读" aria-pressed={speech.speaking} onClick={() => speech.toggle(text)} className={cn(speech.speaking && 'text-accent')}>
+        {speech.speaking ? <Square className="size-3.5! fill-current" /> : <Volume2 />}
+      </Button>
+    </Tooltip>
   )
 }
 
@@ -237,15 +325,16 @@ function Steps({ steps, tools, live }: { steps: Step[]; tools: ToolIndex; live: 
         type="button"
         aria-expanded={open}
         onClick={() => setOpen(!open)}
-        className="group -ml-1.5 flex max-w-full items-center gap-1.5 rounded-lg px-1.5 py-1 text-left text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
+        className="group flex max-w-full items-center gap-1.5 rounded-full border py-1 pr-2 pl-2.5 text-left text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
       >
+        {live ? <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-accent" /> : <Check className="size-3.5 shrink-0" />}
         {live ? <span className="shimmer-text shrink-0">{current}</span> : <span className="shrink-0">{summary}</span>}
         {detail && <span className="min-w-0 truncate opacity-70">{detail}</span>}
         {!live && failed > 0 && <span className="shrink-0 text-warning">· {failed} 次失败</span>}
         <ChevronRight className={cn('size-3.5 shrink-0 transition-transform', open && 'rotate-90')} />
       </button>
       {open && (
-        <ol className="mt-1.5 ml-0.5 flex flex-col gap-0.5 border-l pl-3">
+        <ol className="mt-2 ml-3 flex animate-rise flex-col gap-0.5 border-l pl-4">
           {steps.map((s, i) => (
             <li key={s.kind === 'tool' ? s.call.id : `t${i}`}>{s.kind === 'thinking' ? <ThinkingStep text={s.text} /> : <ToolStep call={s.call} meta={tools.get(s.call.name)} />}</li>
           ))}
@@ -348,7 +437,7 @@ function VersionNav({ versions, onShow, disabled }: { versions: Versions; onShow
 }
 
 const mentionIcon = { plugin: Puzzle, workspace: FolderOpen, chat: MessageSquare }
-const chip = 'inline-flex h-7 max-w-64 items-center gap-1.5 rounded-lg border bg-card px-2 text-sm [&_svg]:size-3.5 [&_svg]:shrink-0 [&_svg]:text-muted-foreground'
+const chip = 'inline-flex h-7 max-w-64 items-center gap-1.5 rounded-full border bg-card px-2.5 text-sm [&_svg]:size-3.5 [&_svg]:shrink-0 [&_svg]:text-muted-foreground'
 
 function UserMessage({
   turn,
@@ -433,7 +522,7 @@ function UserMessage({
     <div className="group/user flex flex-col items-end gap-1.5">
       {refs}
       {text && (
-        <div className="max-w-[85%] rounded-3xl rounded-br-lg bg-bubble px-4.5 py-2.5">
+        <div className="max-w-[85%] rounded-3xl rounded-br-md bg-bubble px-4.5 py-2.5 leading-relaxed">
           <div ref={ref} className={cn('break-words whitespace-pre-wrap', overflow && !expanded && 'max-h-75 overflow-hidden mask-b-from-70%')}>
             {text}
           </div>
@@ -481,7 +570,7 @@ function EventCard({ event, queued }: { event: EventData; queued: boolean }) {
   const source = eventSource[event.source.kind] ?? eventSource.system
   const Icon = source.icon
   return (
-    <div className="overflow-hidden rounded-xl border bg-card text-sm">
+    <div className="overflow-hidden rounded-2xl border bg-card text-sm">
       <button type="button" aria-expanded={open} disabled={!event.body} onClick={() => setOpen(!open)} className="flex w-full min-w-0 items-center gap-2 px-3 py-2.5 text-left enabled:hover:bg-hover">
         <Icon className="size-4 shrink-0 text-muted-foreground" />
         <span className="shrink-0 text-muted-foreground">{source.named && event.source.label ? `${source.label}「${event.source.label}」` : source.label}</span>

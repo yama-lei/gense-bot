@@ -2,7 +2,7 @@
 // unknown path with index.html, so a reload or a shared link lands on the same page.
 import { useSyncExternalStore, type ComponentProps, type MouseEvent } from 'react'
 
-export const settingsSections = ['personal', 'models', 'appearance', 'account'] as const
+export const settingsSections = ['personal', 'models', 'appearance', 'shortcuts', 'data', 'plan', 'account'] as const
 export type SettingsSection = (typeof settingsSections)[number]
 
 export const adminSections = ['users', 'models', 'usage'] as const
@@ -14,6 +14,10 @@ export type Route =
   | { name: 'plugins'; tab?: 'skills' }
   | { name: 'automations' }
   | { name: 'channels' }
+  | { name: 'inbox' }
+  | { name: 'projects'; id?: string }
+  | { name: 'library' }
+  | { name: 'memory' }
   | { name: 'settings'; section?: SettingsSection }
   | { name: 'admin'; section?: AdminSection }
   | { name: 'missing' }
@@ -36,6 +40,14 @@ export function parse(pathname: string): Route {
       return { name: 'automations' }
     case 'channels':
       return { name: 'channels' }
+    case 'inbox':
+      return { name: 'inbox' }
+    case 'library':
+      return { name: 'library' }
+    case 'memory':
+      return { name: 'memory' }
+    case 'projects':
+      return parts[1] ? { name: 'projects', id: parts[1] } : { name: 'projects' }
     case 'settings': {
       const section = settingsSections.find((s) => s === parts[1])
       return section ? { name: 'settings', section } : { name: 'settings' }
@@ -56,6 +68,8 @@ export function href(route: Route): string {
       return '/'
     case 'chat':
       return `/c/${encodeURIComponent(route.id)}`
+    case 'projects':
+      return route.id ? `/projects/${encodeURIComponent(route.id)}` : '/projects'
     case 'plugins':
       return route.tab ? '/plugins/skills' : '/plugins'
     case 'settings':

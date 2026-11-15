@@ -215,6 +215,15 @@
 - **已知缺口（t4h 明确接受并将告知用户）：不做 pi_* 底层记录的物理擦除。** 临时删除/到期和普通 tree.delete 一样只移除业务可达性与工作区，底层对话和条目仍可能保留在 space.sqlite 及其备份中。当前 pi-durable 1.4 没有公开的 deleteConversation API，本轮不直接修改活动 Harness 的内部表。
 - 验证：8 组专项测试全过；`taskset -c 0` 加清除代理的 `npm run check:server` 在 `3b5c33c` 基线上通过，102 项全过，无跳过，包含 C-2/C-3/C-4。未改 protocol 或模型提示词原文。另显式消费精确 8 MB 测试的响应体，适配 C-4 的 pipeline 流式收尾。
 
+### B-3 收尾（2026-11-14）
+
+- 按 t4h 最新要求直接快进到 `a79caa8`（A、B-1/B-2、C-1…C-5 及对应前端）。保留该集成分支的全部代码和汇报，未新增自己的集成合并提交。
+- 提示词快照增加临时对话场景：真实 SQLite 中已有全局记忆，实际模型请求仍无 memory 节和 memory 工具；测试逐项比较其余完整节和工具定义与基础场景一致，快照展示实际提供的名称列表。模型提示词原文未改。
+- B1–B6 回归补充：拒绝超限 share.update 后原公开快照保持不变；启动清理到期未完成运行时，保留未到期临时树及普通树。已有测试覆盖公开读取、更新/撤销/权限/限额/限流、临时对话隔离及删除后内容不可访问。
+- `docs/design/architecture.md` 补全 app.sqlite 的 shares 表、快照边界、公开路由和头、代理 IP 选择、临时树标记与禁用能力、启动/每 10 分钟清理、watch 释放，以及已确认的 pi_* 物理保留缺口。
+- 验证：提示词快照单测通过；`taskset -c 0 env -u https_proxy -u http_proxy -u all_proxy -u HTTPS_PROXY -u HTTP_PROXY -u ALL_PROXY npm run check:server` 在 `a79caa8` 基线上通过，104 项全部通过，无跳过，包含真实 Docker、本地飞书平台及 C-5 用量回归。最终日志 `/tmp/r7-b3-check.log`。
+- 未改 web 或 protocol，无新的协议问题。资料库和导出仍沿用 B-2 已说明的验证边界。阶段 B 完成，汇报后停下。
+
 ## 协议问题
 
 

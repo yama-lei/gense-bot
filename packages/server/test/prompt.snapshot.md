@@ -709,3 +709,36 @@ The project's files are in /data/projects/project-research/ (read-only; copy one
 - reference.md (19 B)
 </project>
 ````
+
+# Temporary conversation prompt
+
+A temporary conversation with a global memory stored. It has no memory section or memory tool. Every remaining section and tool is identical to the first-turn baseline above (checked by the test).
+
+## Sections offered
+
+- assistant
+- workspace
+- skills
+- preferences
+- events
+- ui
+- web
+- sandbox
+
+## Tools offered
+
+- read
+- write
+- edit
+- delete
+- tool_search
+- report
+- agent_spawn
+- artifact_create
+- email_draft
+- ui_render
+- web_search
+- web_fetch
+- deep_search
+- image_generate
+- bash

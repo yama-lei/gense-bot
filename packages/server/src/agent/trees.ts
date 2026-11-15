@@ -26,7 +26,7 @@ import { BRANCH_COLUMNS,type BranchRow,COLUMNS,DEFAULT_TITLE,SCHEDULE_COLUMNS,ty
 
 import type { UserSpace } from './space.ts'
 import { historyWatch } from './history.ts'
-import { deepseekTitleEdited } from './deepseek.ts'
+import { deepseekTitleEdited, nativeState } from './deepseek.ts'
 import { TEMPORARY_TTL_MS } from '@gense/protocol'
 import { temporaryInit } from './temporary.ts'
 export function now(this: UserSpace): number {
@@ -134,6 +134,9 @@ export async function deleteTree(this: UserSpace, treeId: string, ctx: Context =
     // The main branch first, with its background work: a subagent's anchor then does not report into a removed tree.
     for (const b of branches.sort((a, b) => Number(b.role === 'main') - Number(a.role === 'main')))
       await (await this.harness.conversation(b.conversationId as ConversationId, ctx))?.abort(ctx, { background: b.role === 'main' })
+    for (const b of branches) nativeState(this).traces.delete(b.id)
+    await this.db.run('DELETE FROM deepseek_titles WHERE treeId = ?', treeId)
+    await this.db.run('DELETE FROM attachment_parses WHERE path LIKE ?', treeDir(treeId) + '/%')
     await this.db.run('DELETE FROM branches WHERE treeId = ?', treeId)
     await this.db.run('DELETE FROM trees WHERE id = ?', treeId)
     await this.workspace.deleteTree(treeId, ctx)

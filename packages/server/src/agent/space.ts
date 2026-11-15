@@ -55,6 +55,7 @@ import * as trees from './trees.ts'
 import * as webhooks from './webhooks.ts'
 import { compact, compactionPolicy, compactionRegistry } from './compaction.ts'
 import { deepseekRegistry, initializeDeepseek } from './deepseek.ts'
+import { initializeAttachments } from './attachments.ts'
 import { webExtension } from '../plugins/web.ts'
 export type { SpaceOptions } from './shared.ts'
 export class UserSpace {
@@ -137,6 +138,7 @@ export class UserSpace {
   static async open(db: SqliteDatabase, options: SpaceOptions, ctx: Context = BACKGROUND_CONTEXT) {
     await applySqliteMigrations(db, migrations, { table: 'app_migrations' })
     await initializeDeepseek(db)
+    await initializeAttachments(db)
     const triggers = await TriggerStore.open(db)
     const channels = await ChannelHub.open(db, options.secretKey)
     const outbox = new Outbox(db, item => channels.deliver(item), options.outboxRetryMs)

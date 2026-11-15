@@ -215,6 +215,16 @@
 - **已知缺口（t4h 明确接受并将告知用户）：不做 pi_* 底层记录的物理擦除。** 临时删除/到期和普通 tree.delete 一样只移除业务可达性与工作区，底层对话和条目仍可能保留在 space.sqlite 及其备份中。当前 pi-durable 1.4 没有公开的 deleteConversation API，本轮不直接修改活动 Harness 的内部表。
 - 验证：8 组专项测试全过；`taskset -c 0` 加清除代理的 `npm run check:server` 在 `3b5c33c` 基线上通过，102 项全过，无跳过，包含 C-2/C-3/C-4。未改 protocol 或模型提示词原文。另显式消费精确 8 MB 测试的响应体，适配 C-4 的 pipeline 流式收尾。
 
+### C-6 收尾（2026-11-14）
+
+- 基于集成分支 `a79caa8`（包含 B-2 临时对话）完成，保留 projects/memory、shares 和 temporary 的集成逻辑。已按 t4h 确认修正分叉边界：内部继承助手后相邻的 app.native，对外 forkEntryId 和 versions 分组仍是助手 id；编辑、重生成和切换版本均验证相邻配对。
+- 新增自拟 search/plain SSE，经真实 SDK、HTTP/WebSocket、SQLite 与本地飞书平台验证：搜索/抓取成功和失败、来源字段和引用、分支范围推送与跨响应 250 ms 节流、历史签名仅回到相同提供方/API/模型、压缩后的主线不复活旧签名而旧分叉仍可用、飞书不发布最终被拒答的临时正文。补上仅附件首轮的标题、删对话后解析索引/标题标记清理，并将图片样本换为有效 PNG。
+- 快照追加 DeepSeek 联网的实际 Messages 工具列表，断言普通 web 工具和其提示词节移除，其余工具仍在；未改模型提示词原文。架构文档增加 DeepSeek 提供方、原生事务/回放、附件缓存、语音与两类账务。
+- 验证：清代理并使用 `taskset -c 0-3 npm run check:server`，最终 108/108 通过，无失败、取消或跳过；最终节流调整前的完整检查同样 108/108 通过。定向 4 项及快照也已通过；完整检查覆盖先前 C-1…C-5 的解析/重启/拒答/标题竞争/OCR 失败/speech 限额/用量，以及 A/B 集成。
+- 实现取舍：通过 GenerationTask 的局部 registry/事务包装保证助手与 app.native 同事务落库；fetch 流包装单独读取 SDK 在事件观察前抛出的 error 用量。原生结果不伪装为客户端工具，也不修改 node_modules。OCR 仍在 send 内同步执行（最长 180 秒），t4h 已接受，是否异步化等待真实延迟数据。
+- 无 protocol/web 的本地改动；附件格式仍为 `path -> path.txt (text)` / `path -> path.txt (ocr, N pages)`，parseNote 的 attachments 保留原路径数组，parsedAttachments 提供解析元数据。没有新增协议问题。
+- **未实测**：没有真实 DeepSeek key。`/anthropic/v1/messages` 的线上 App 参数组合、搜索/读链接及签名接受、真实拒答/错误用量/标题时机、`/v1/tools/ocr` 的质量与延迟、`/v1/tools/asr` / `tts` 的识别/音色/流与费用、独立 `/v1/tools/search` / `fetch` 的线上返回和账单均未验证。Responses、Chat Completions、Files API、WS TTS 不在本轮实现范围，也未实测；自拟 SSE 与本地平台结果不代表线上 API 验收。
+
 ## 协议问题
 
 

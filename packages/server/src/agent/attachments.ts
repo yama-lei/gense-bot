@@ -1,5 +1,6 @@
 // C6: prepare model-readable text alongside attachments; failed optional OCR never prevents a message.
 import type { Context } from '@earendil-works/chord/context'
+import type { SqliteDatabase } from '@earendil-works/chord/sqlite'
 import type { Model } from '@earendil-works/pi-ai'
 import type { ParsedAttachment } from '@gense/protocol'
 import { createHash } from 'node:crypto'
@@ -12,6 +13,10 @@ type Attached = { path: string; mimeType: string; bytes: Uint8Array }
 const unwrap = <T>(r: { ok: true; value: T } | { ok: false; error: Error }) => { if (!r.ok) throw r.error; return r.value }
 const locks = new WeakMap<UserSpace, Map<string, Promise<unknown>>>()
 
+export async function initializeAttachments(db: SqliteDatabase) {
+  await db.run('CREATE TABLE IF NOT EXISTS attachment_parses (path TEXT PRIMARY KEY, digest TEXT NOT NULL, how TEXT NOT NULL, pages INTEGER)')
+}
+
 async function serial<T>(space: UserSpace, path: string, work: () => Promise<T>): Promise<T> {
   let queue = locks.get(space)
   if (!queue) { queue = new Map(); locks.set(space, queue) }
@@ -22,7 +27,6 @@ async function serial<T>(space: UserSpace, path: string, work: () => Promise<T>)
 
 export async function parsedAttachments(space: UserSpace, treeId: string, files: Attached[], model: Model<any> | undefined, ctx: Context): Promise<(string | ParsedAttachment)[]> {
   if (!model) return files.map(file => file.path)
-  await space.db.run('CREATE TABLE IF NOT EXISTS attachment_parses (path TEXT PRIMARY KEY, digest TEXT NOT NULL, how TEXT NOT NULL, pages INTEGER)')
   const env = await space.workspace.env(treeDir(treeId))
   return Promise.all(files.map(file => serial(space, file.path, async () => {
     const ext = file.path.split('.').at(-1)?.toLowerCase() ?? ''

@@ -35,6 +35,7 @@ import type { UserSpace } from './space.ts'
 import { parsedAttachments } from './attachments.ts'
 import { historyEntries } from './history.ts'
 import { temporaryInit } from './temporary.ts'
+import { deepseekForkBoundary } from './deepseek.ts'
 export async function branches(this: UserSpace, treeId: string, ctx: Context = BACKGROUND_CONTEXT): Promise<BranchesState> {
     const tree = await this.row(treeId)
     const rows = await this.db.all<BranchRow>(`SELECT ${BRANCH_COLUMNS} FROM branches WHERE treeId = ? ORDER BY createdAt, rowid`, treeId)
@@ -74,19 +75,21 @@ export async function continuing(this: UserSpace, rows: BranchRow[], fork: Branc
     const entry = conv && (await conv.entries({ minEntryId: at as EntryId, maxEntryId: at as EntryId }, 1, undefined, ctx)).items[0]
     const owner = entry && rows.find((r) => r.conversationId === entry.conversationId)
     if (!owner) return undefined
-    const next = (await (await this.open(owner, ctx)).entries({ minEntryId: (at + 1) as EntryId, order: 'ascending' }, 1, undefined, ctx)).items[0]
+    const parent = await this.open(owner, ctx), { through } = await deepseekForkBoundary(parent, at, ctx)
+    const next = (await parent.entries({ minEntryId: (through + 1) as EntryId, order: 'ascending' }, 1, undefined, ctx)).items[0]
     return next?.kind === UserEntry.kind ? owner : undefined
   }
 
 export async function addBranch(this: UserSpace, tree: TreeRow, from: BranchRow, at: number | null, ctx: Context): Promise<{ branch: BranchRow; conv: Conversation; }> {
     const parent = await this.open(from, ctx)
-    const conv = at === null ? await this.emptyLike(tree.id, parent, ctx) : await parent.fork(at as EntryId, { ownership: { kind: 'ownerless' } }, ctx)
+    const boundary = at === null ? undefined : await deepseekForkBoundary(parent, at, ctx)
+    const conv = boundary ? await parent.fork(boundary.through, { ownership: { kind: 'ownerless' } }, ctx) : await this.emptyLike(tree.id, parent, ctx)
     const branch: BranchRow = {
       id: crypto.randomUUID(),
       treeId: tree.id,
       conversationId: conv.id,
       parentId: from.id,
-      forkEntryId: at,
+      forkEntryId: boundary?.at ?? null,
       role: 'user',
       mode: at === null ? 'new' : 'fork',
       title: '',

@@ -64,7 +64,7 @@ test('C6/C8: OCR uses shared credentials, removes location wrappers, caches acro
   conv = await space.open((await space.branchRow(tree.id)).branch, ctx)
   await space.send(tree.id, { text: 'Cached', requestId: 'cached', attachments: [scan.id] }); await space.harness.waitForIdle(ctx)
   assert.equal(requests.length, 1)
-  const image = await space.workspace.upload('photo.png', Buffer.from('image fixture'))
+  const image = await space.workspace.upload('photo.png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j5mQAAAAASUVORK5CYII=', 'base64'))
   await space.send(tree.id, { text: 'No vision', requestId: 'image', attachments: [image.id] }); await space.harness.waitForIdle(ctx)
   const lastUser = (await conv.context(ctx)).messages.filter(m => m.role === 'user').at(-1)!
   assert.ok(Array.isArray(lastUser.content) && !lastUser.content.some(b => b.type === 'image'))

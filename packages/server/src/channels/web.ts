@@ -46,6 +46,8 @@ export class Connection {
     this.#send({ t: 'prefs', prefs: space.preferences.get() })
     this.#unsubscribe.push(space.inboxRead.subscribe(ids => this.#send({ t: 'inboxRead', ids })))
     this.#send({ t: 'inboxRead', ids: await space.inboxRead.list() })
+    this.#unsubscribe.push(space.exports.subscribe(exports => this.#send({ t: 'exports', exports })))
+    this.#send({ t: 'exports', exports: await space.exports.list() })
     this.#unsubscribe.push(space.feedback.subscribe((treeId, feedback) => this.#send({ t: 'feedback', treeId, feedback })))
     this.#unsubscribe.push(space.suggestions.subscribe((treeId, suggestions) => this.#send({ t: 'suggestions', treeId, ...suggestions })))
     this.#unsubscribe.push(space.preferences.subscribe(() => this.#send({ t: 'prefs', prefs: space.preferences.get() })))
@@ -255,6 +257,10 @@ export class Connection {
         return space.inboxRead.read(r.ids)
       case 'library.list':
         return space.library.list(r)
+      case 'export.create':
+        return space.exports.create()
+      case 'export.delete':
+        return space.exports.remove(r.exportId)
       case 'plugin.set':
         return space.plugins.set(r.pluginId, {
           ...(r.enabled !== undefined && { enabled: r.enabled }),

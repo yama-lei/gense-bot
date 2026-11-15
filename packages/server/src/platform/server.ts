@@ -133,6 +133,12 @@ async function openServer(config: HostConfig, unlock: () => Promise<void>) {
         try { return json(200, await app.usage(url.searchParams.get('from') ?? undefined, url.searchParams.get('to') ?? undefined, user.id)) }
         catch (error) { return json(400, { error: error instanceof Error ? error.message : String(error) }) }
       }
+      const exported = /^\/api\/exports\/([^/]+)$/.exec(path)
+      if (exported && request.method === 'GET') {
+        if (!user) return json(401, { error: '未登录' })
+        const space = await spaces.sync(user.id)
+        return space ? space.exports.download(exported[1]!) : json(403, { error: '账号已停用' })
+      }
       // Webhook secrets authenticate external callers. A browser session may only target its own space.
       if (hook) {
         if (user && user.id !== hook[1]) return json(403, { error: '无权访问' })

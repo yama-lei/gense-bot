@@ -111,6 +111,10 @@ export const migrations = [
     version: 8,
     statements: ['CREATE TABLE inbox_read (id TEXT PRIMARY KEY, readAt INTEGER NOT NULL)'],
   },
+  {
+    version: 9,
+    statements: ['CREATE TABLE exports (id TEXT PRIMARY KEY, status TEXT NOT NULL, size INTEGER, error TEXT, createdAt INTEGER NOT NULL, finishedAt INTEGER)'],
+  },
 ]
 
 /** Who the assistant is and how it answers (roadmap-6 A10). Only the date changes, once a day, so the prompt cache holds. */

@@ -204,6 +204,7 @@ export async function close(this: UserSpace, ctx: Context = BACKGROUND_CONTEXT):
     await this.feedback.close()
     await this.suggestions.close()
     await this.inboxRead.close()
+    await this.exports.close()
     this.listeners.clear()
     this.branchListeners.clear()
     this.automationListeners.clear()

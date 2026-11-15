@@ -276,7 +276,7 @@ function MemoryChip({ details }: { details: MemoryToolDetails }) {
         ? client.request({ t: 'memory.remove', memoryId: memory.id })
         : action === 'update' && previous
           ? client.request({ t: 'memory.update', memoryId: memory.id, text: previous.text, enabled: previous.enabled, projectId: previous.projectId })
-          : client.addMemory({ text: (previous ?? memory).text, treeId: memory.treeId ?? undefined, projectId: (previous ?? memory).projectId })
+          : client.addMemory({ text: (previous ?? memory).text, source: (previous ?? memory).source, treeId: memory.treeId ?? undefined, projectId: (previous ?? memory).projectId })
     reverse.then(
       () => setState('undone'),
       (e: unknown) => {

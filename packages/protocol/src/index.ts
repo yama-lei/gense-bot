@@ -15,7 +15,7 @@ export * from './discover.ts'
 export * from './memory.ts'
 export * from './share.ts'
 
-import type { Memory, Project } from './memory.ts'
+import type { Memory, MemorySource, Project } from './memory.ts'
 import type { ShareInfo, ShareSnapshot } from './share.ts'
 
 /** A conversation as the sidebar lists it: a tree of branches, titled by its main branch (roadmap-3 R35). */
@@ -221,8 +221,8 @@ export type ClientRequest =
   /** Conversations whose title or messages match; resolves to TreeHit[], best first. */
   | { t: 'trees.search'; id: number; query: string; limit?: number }
   | { t: 'prefs.set'; id: number; name?: string; instructions?: string; timeZone?: string; useMemory?: boolean; memoryWrites?: 'auto' | 'explicit' }
-  /** Resolves to the new Memory. `source` is `manual` unless it is `saved` from an answer of `treeId`. */
-  | { t: 'memory.add'; id: number; text: string; source?: 'manual' | 'saved'; treeId?: string; projectId?: string | null; enabled?: boolean }
+  /** Resolves to the new Memory. `source` defaults to `manual`; `saved` keeps an answer of `treeId`; `model` restores an entry the model wrote (undo). */
+  | { t: 'memory.add'; id: number; text: string; source?: MemorySource; treeId?: string; projectId?: string | null; enabled?: boolean }
   /** Resolves to the changed Memory. */
   | { t: 'memory.update'; id: number; memoryId: string; text?: string; enabled?: boolean; projectId?: string | null }
   | { t: 'memory.remove'; id: number; memoryId: string }

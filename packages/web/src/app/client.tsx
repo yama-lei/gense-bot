@@ -1,6 +1,6 @@
 // The app's data: the server's state over one WebSocket (lib/socket.ts), what this browser keeps for itself, and the
 // actions pages call. Failures of actions nobody awaits become toasts.
-import type { BranchMeta, BranchesState, CompactionOutcome, Effort, FileEntry, FilePreview, Memory, ModelInfo, Preferences, Project, ToolCallResult, TreeMeta, UploadedFile, UserInfo } from '@gense/protocol'
+import type { BranchMeta, BranchesState, CompactionOutcome, Effort, FileEntry, FilePreview, Memory, MemorySource, ModelInfo, Preferences, Project, ToolCallResult, TreeMeta, UploadedFile, UserInfo } from '@gense/protocol'
 import { createContext, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { errorText, fileBase64, saveBlob, toBlob } from '../lib/format'
@@ -121,7 +121,7 @@ export class Client {
   setPrefs = (patch: Partial<Omit<Preferences, 'timeZone'>>) => void this.request({ t: 'prefs.set', ...patch }).catch(report)
 
   // Memory and projects (roadmap-7 A): the server pushes `memories` / `projects` after each change.
-  addMemory = (memory: { text: string; source?: 'manual' | 'saved'; treeId?: string; projectId?: string | null; enabled?: boolean }) =>
+  addMemory = (memory: { text: string; source?: MemorySource; treeId?: string; projectId?: string | null; enabled?: boolean }) =>
     this.request<Memory>({ t: 'memory.add', ...memory })
   updateMemory = (memoryId: string, patch: { text?: string; enabled?: boolean; projectId?: string | null }) =>
     void this.request<Memory>({ t: 'memory.update', memoryId, ...patch }).catch(report)

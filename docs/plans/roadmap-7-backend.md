@@ -37,6 +37,33 @@
 - 提示词快照：加一个“项目里的对话、有 2 条记忆、有 1 个项目文件”的场景。
 - `docs/design/architecture.md` 补上记忆和项目的数据位置。
 
+## 阶段 B：公开分享与临时对话
+
+协议见 `packages/protocol/src/share.ts` 和 `index.ts` 里的 `share.*`、`shares`、`TreeMeta.temporary`、`tree.create { temporary }`。提交消息用 `feat/r7-b-<slug>`。
+
+### B-1 分享链接
+
+- 快照由网页端构造（它已经有渲染模型），服务器**原样保存、不解析内容语义**，只做校验：TypeBox 校验 `ShareSnapshot` 结构；JSON 大小 ≤ `SHARE_LIMITS.bytes`、轮数 ≤ `turns`、标题截断到 `title`；`image.src` 必须以 `data:image/(png|jpeg|webp|gif);base64,` 开头。不合格就拒绝并说明原因。
+- `app.sqlite` 新表 `shares(token PRIMARY KEY, userId, treeId, title, snapshot TEXT, turns, createdAt, updatedAt)`——放全局库，这样未登录请求按 token 一次查到。token 用 `crypto.randomBytes(16)` 的 base64url（B4，128 bit）。
+- `share.create`：树必须属于该用户且不是临时对话，返回 `ShareInfo`。`share.update`：只能改自己的 token，换快照、更新 `updatedAt`，token 不变。`share.delete`：删除。三者之后向该用户全部连接推送 `shares`；连接建立时推送一次。删除对话（`tree.delete`，包括临时对话到期）时一并删除它的链接。
+- `GET /api/share/:token` → `SharedPage`（`{ ...snapshot, updatedAt }`）；不存在返回 404。**不读 cookie、不需要登录**；响应头 `X-Robots-Tag: noindex`、`Cache-Control: no-store`、`Content-Type: application/json`。按 IP 简单限流即可（例如每分钟 60 次）。
+- 页面 `GET /s/:token`：返回 `index.html`（网页端自己渲染），同样加 `X-Robots-Tag: noindex` 和 `Referrer-Policy: no-referrer`。
+
+### B-2 临时对话
+
+- `tree.create { temporary: true }`：在 `trees` 表记 `expiresAt = now + TEMPORARY_TTL_MS`，`TreeMeta.temporary = { expiresAt }`。同时带 `projectId` 报错“临时对话不能放进项目”。
+- 照常出现在推送的 `trees` 里（网页端负责隐藏）；`trees.search` 不返回它。
+- 提示词与工具：临时对话里没有 `memory` 一节，也不提供 `memory` 工具（A-1 留的判断位置）。
+- 拒绝：`tree.update { projectId }`、`share.create`、`schedule.create`、`webhook.create` 作用于临时对话时报错。
+- 寿命（B6）：网页离开临时对话时会发 `tree.delete`；服务器另外每 10 分钟（以及启动时）删除所有 `expiresAt` 已过的临时对话，连同工作区和分享（应当没有），并推送 `trees`。删除时若正在运行，先中止。
+- 飞书渠道不会产生临时对话，不用管。
+
+### B-3 收尾
+
+- 测试按 B1–B6：真实 SQLite 和 HTTP（未登录访问 `/api/share/:token`、撤销后 404、他人 token 不能 update/delete、超限拒绝、临时对话不进搜索、没有记忆一节、到期清理）。
+- 提示词快照加一个“临时对话”场景（应当没有 memory 一节）。
+- `docs/design/architecture.md` 补上 `shares` 表和临时对话的清理。
+
 ## 汇报
 
 （在这里按阶段追加：做了什么、测试结果、偏离之处）

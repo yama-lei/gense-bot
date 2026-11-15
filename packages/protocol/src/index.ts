@@ -13,8 +13,10 @@ export * from './notes.ts'
 export * from './plugins.ts'
 export * from './discover.ts'
 export * from './memory.ts'
+export * from './share.ts'
 
 import type { Memory, Project } from './memory.ts'
+import type { ShareInfo, ShareSnapshot } from './share.ts'
 
 /** A conversation as the sidebar lists it: a tree of branches, titled by its main branch (roadmap-3 R35). */
 export interface TreeMeta {
@@ -25,6 +27,12 @@ export interface TreeMeta {
   source?: { kind: string; label: string }
   /** The project it belongs to (roadmap-7 A7); a conversation is in at most one. */
   projectId?: string
+  /**
+   * A temporary chat (roadmap-7 B5): listed only so the client can open it; the web hides it everywhere else. The
+   * server leaves it out of search, gives it no memory, refuses to share, schedule or move it, and deletes it with its
+   * workspace at `expiresAt` (B6).
+   */
+  temporary?: { expiresAt: number }
   createdAt: number
   updatedAt: number
 }
@@ -199,11 +207,17 @@ export interface WebhookInfo {
 
 /** Requests carry an `id`; the host answers each with one `reply`. */
 export type ClientRequest =
-  /** Resolves to the new TreeMeta; with `projectId` it starts in that project. */
-  | { t: 'tree.create'; id: number; projectId?: string }
+  /** Resolves to the new TreeMeta; with `projectId` it starts in that project; `temporary` cannot be in a project. */
+  | { t: 'tree.create'; id: number; projectId?: string; temporary?: boolean }
   /** `projectId: null` takes it out of its project. */
   | { t: 'tree.update'; id: number; treeId: string; title?: string; pinned?: boolean; projectId?: string | null }
   | { t: 'tree.delete'; id: number; treeId: string }
+  /** Resolves to the ShareInfo of a new link to this snapshot of `treeId` (B1); refused for a temporary chat. */
+  | { t: 'share.create'; id: number; treeId: string; snapshot: ShareSnapshot }
+  /** Replaces the snapshot behind an existing link; the link stays the same (B3, Q4). */
+  | { t: 'share.update'; id: number; token: string; snapshot: ShareSnapshot }
+  /** Stops sharing: the link answers 404 from now on. */
+  | { t: 'share.delete'; id: number; token: string }
   /** Conversations whose title or messages match; resolves to TreeHit[], best first. */
   | { t: 'trees.search'; id: number; query: string; limit?: number }
   | { t: 'prefs.set'; id: number; name?: string; instructions?: string; timeZone?: string; useMemory?: boolean; memoryWrites?: 'auto' | 'explicit' }
@@ -332,6 +346,8 @@ export type ServerMessage =
   | { t: 'memories'; memories: Memory[] }
   /** All of the user's projects, newest first; sent on connect and after every change. */
   | { t: 'projects'; projects: Project[] }
+  /** All of the user's share links, newest first; sent on connect and after every change. */
+  | { t: 'shares'; shares: ShareInfo[] }
   | { t: 'schedules'; schedules: ScheduleInfo[] }
   /** `canCreate` is false when the host has no TOKEN_ENCRYPTION_KEY to seal a webhook's secret. */
   | { t: 'webhooks'; webhooks: WebhookInfo[]; canCreate: boolean }

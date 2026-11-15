@@ -159,6 +159,8 @@ export interface SpaceOptions {
   /** Host-only tenant identity and model metering, installed before work resumes. */
   userId?: string
   meterModels?: (models: import('@earendil-works/pi-ai').MutableModels, source: (provider: string) => import('@gense/protocol').ModelSource) => void
+  deepseekService?: () => Promise<import('./deepseek-services.ts').DeepSeekService | undefined>
+  serviceUsage?: (service: import('@gense/protocol').ServiceKind, units: number) => Promise<void>
   /** Seals the user's plugin secrets and model credentials. */
   secretKey?: string
   /** The user's files (roadmap-3 D6): an environment for a virtual working directory under /data. */

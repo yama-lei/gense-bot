@@ -5,6 +5,8 @@ import { DEEPSEEK_BASE_URL, type ModelSource, type SharedProviderInfo, type Shar
 import { relayModels, type ModelSetup } from '../agent/models.ts'
 import { deepseekModels, DEEPSEEK_MODELS } from '../agent/deepseek.ts'
 import { Sealer } from '../plugins/store.ts'
+import type { DeepSeekService } from '../agent/deepseek-services.ts'
+import { initializeServiceUsage, recordServiceUsage } from './service-usage.ts'
 
 const migrations = [{ version: 1, statements: [
   'CREATE TABLE shared_providers (id TEXT PRIMARY KEY, name TEXT NOT NULL, baseUrl TEXT NOT NULL, modelIds TEXT NOT NULL, sealed TEXT NOT NULL)',
@@ -24,11 +26,19 @@ export class AppStore {
   private constructor(db: SqliteDatabase, key?: string) { this.#db = db; this.#sealer = key ? new Sealer(key) : undefined }
   static async open(db: SqliteDatabase, key?: string) {
     await applySqliteMigrations(db, migrations, { table: 'host_migrations' })
+    await initializeServiceUsage(db)
     const store = new AppStore(db, key)
     await store.#reload()
     return store
   }
   models = () => this.#models
+  /** Standalone OCR/speech use a shared provider, never a user's ambient credentials. */
+  async deepseekService(): Promise<DeepSeekService | undefined> {
+    if (!this.#sealer) return undefined
+    const row = await this.#db.get<ProviderRow>("SELECT * FROM shared_providers WHERE kind = 'deepseek' AND sealed != '' ORDER BY id LIMIT 1")
+    return row ? { provider: row.id, baseUrl: row.baseUrl, key: await this.#sealer.open(row.sealed) } : undefined
+  }
+  recordService(userId: string, service: import('@gense/protocol').ServiceKind, units: number) { return recordServiceUsage(this.#db, userId, service, units) }
   subscribe(fn: () => Promise<void>) { this.#listeners.add(fn); return () => { this.#listeners.delete(fn) } }
   async providers() { return (await this.#db.all<ProviderRow>('SELECT * FROM shared_providers ORDER BY id')).map(publicProvider) }
   async #reload() {

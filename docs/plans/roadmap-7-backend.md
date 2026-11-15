@@ -190,7 +190,10 @@
 
 - C-2（2026-11-14）：已基于 `feat/r7-int` 集成 A。Messages 包装保留原生块、引用与签名，按提供方/模型/上下文回放；`app.native` 与助手条目同事务相邻保存，提供分支范围的节流推送。共享安全强制 high、BYOK 可关；拒答清空正文/思考/客户端调用并正常结束，飞书等待终态后使用固定拒答说明；手动改标题有持久标记。SSE error 和输入 400 的用量从 fetch 包装补齐。原生 5 项测试覆盖本地 HTTP→真实 SDK→SQLite、重启、分叉、两种拒答、错误用量、标题竞争和侧调用。清除代理并用 `taskset -c 0` 跑 `npm run check:server`，90 项全部通过；先前一次高负载运行仅旧 V6 短等待超时，未改测试。无真实 API 验证；压缩/跨模型及协议推送的额外验收留 C-6。
 
+- C-3（2026-11-14）：已基于 `19feb91` 集成版本接通发送前附件解析。本地支持的 Office/PDF 写相邻 `.txt`；PDF 有效文字少于 32 字符、旧 DOC/PPT 或非视觉模型的图片，使用共享 DeepSeek 的独立 OCR，去除 ref/box 与坐标；失败保留原路径继续发送。按原件哈希在 `space.sqlite.attachment_parses` 缓存，重启复用，不重复收费；OCR 成功页数写 `app.sqlite.service_usage`。因此服务用量的基础表/写入先在 C-3 落地，C-5 再补全统计接口与联网计账。附件协议直接使用 t4h 的 `9e08e9f`：`path -> path.txt (text)` / `path -> path.txt (ocr, N pages)`；未修改 protocol。新增真实文件、SQLite 重开和 multipart HTTP 测试，OCR 错误、无视觉图片、页数和缓存均覆盖。清代理且 `taskset -c 0-3 npm run check:server`，92 项全部通过。未实测真实 OCR 的识别质量、延迟或计费；Files API 不用于跨模型文本提取，与 C0 结论一致。
+
 ## 协议问题
+
 
 
 - A-1：`memorySection` 的 8000 字符预算只计条目，不包含前导说明和标签。t4h 已明确接受，照用原文与现有预算，不修改。

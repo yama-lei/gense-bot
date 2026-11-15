@@ -203,6 +203,8 @@
 - 验证：3 组 B1–B4 专项测试覆盖真实 SQLite / HTTP / 双用户及双设备 WebSocket、原样保存及后续消息不进入旧快照、更新/撤销/重启、删除对话撤销、全局库位置、无效 cookie、限流及伪造转发头、结构/UTF-8 大小/轮数/图片校验与精确 8 MB 边界。按要求用 `taskset -c 0` 并清除代理运行 `npm run check:server`，88 项全部通过，无跳过。
 - 无协议问题或设计偏离。临时对话的拒绝逻辑将在 B-2 接入 expiresAt。
 
+- C-5（2026-11-14）：已合入 `3b5c33c`。模型账务增加 searches/fetches，使用最终 `tool_search + tool_image_search` / `tool_fetch`，包括 SSE error 的收费用量；独立 web Search/Fetch 成功且非空才计数，记在共享 DeepSeek 提供方的 `web-tools` 行，calls 为 0。仅有插件 key 时使用 `deepseek-tools` / BYOK 行。按 t4h 的口径，service_usage 仅记 OCR/ASR/TTS，不重复记联网。管理员与当前用户接口统一返回 UsageReport，两组数据均按 UTC 日期筛选，普通用户只见自己。真实本地 HTTP、SDK 与 SQLite 测试覆盖显示数/计费数不同、错误用量、空结果/失败不计账、无额外模型调用、双用户隔离；清代理并用 `taskset -c 0-3` 跑 `check:server`，99 项全部通过。未实测真实 DeepSeek 账单；无协议修改。
+
 ## 协议问题
 
 

@@ -1,4 +1,4 @@
-import type { TreeMeta } from '@gense/protocol'
+import type { Project, TreeMeta } from '@gense/protocol'
 import {
   Blocks,
   BookMarked,
@@ -32,7 +32,7 @@ import { useInbox } from '../features/inbox/items'
 import { cn } from '../lib/cn'
 import { dayGroup } from '../lib/format'
 import { modKey } from '../lib/hooks'
-import { moveToProject, projectColors, projectOf, useProjects, type Project } from '../lib/lab'
+import { projectColors } from '../lib/lab'
 import { Link, navigate, useRoute, type Route } from '../lib/router'
 import { themePref, useThemePref, type ThemePref } from '../lib/theme'
 import { Avatar } from '../ui/avatar'
@@ -42,7 +42,7 @@ import { Skeleton } from '../ui/feedback'
 import { Logo } from '../ui/logo'
 import { DropdownMenu, DropdownMenuCheckItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '../ui/menu'
 import { Tooltip } from '../ui/tooltip'
-import { localPrefs, report, useClient, useHost, useLocalPrefs, useUser } from './client'
+import { localPrefs, report, useClient, useHost, useLocalPrefs, useUser, projectOf, useProjects } from './client'
 import { useShell } from './shell-context'
 
 const row = 'flex h-8.5 items-center gap-2.5 rounded-lg px-2.5 text-sm outline-offset-[-2px] transition-colors hover:bg-hover'
@@ -157,7 +157,7 @@ function ConversationItem({ tree, active, project, projects, onNavigate }: { tre
                 <FolderInput className="size-3.5" /> 移到项目
               </DropdownMenuLabel>
               {projects.map((p) => (
-                <DropdownMenuCheckItem key={p.id} checked={project?.id === p.id} onSelect={() => moveToProject(tree.id, project?.id === p.id ? null : p.id)}>
+                <DropdownMenuCheckItem key={p.id} checked={project?.id === p.id} onSelect={() => client.moveToProject(tree.id, project?.id === p.id ? null : p.id)}>
                   <span className="flex items-center gap-2">
                     <span className="size-2 rounded-full" style={{ background: projectColors[p.color] }} />
                     <span className="truncate">{p.name}</span>
@@ -179,7 +179,6 @@ function ConversationItem({ tree, active, project, projects, onNavigate }: { tre
         confirm="删除"
         onConfirm={() => {
           if (active) navigate({ name: 'home' }, { replace: true })
-          moveToProject(tree.id, null)
           client.request({ t: 'tree.delete', treeId: tree.id }).catch(report)
         }}
       >
@@ -308,7 +307,7 @@ export function Sidebar({ rail, onNavigate, onToggle }: { rail?: boolean; onNavi
   const host = useHost()
   const { openPalette } = useShell()
   const { nav } = useLocalPrefs()
-  const projects = useProjects()
+  const projects = useProjects() ?? []
   const { unread } = useInbox()
   const groups = useMemo(() => grouped(host.trees ?? []), [host.trees])
 
@@ -401,7 +400,7 @@ export function Sidebar({ rail, onNavigate, onToggle }: { rail?: boolean; onNavi
               </h2>
               <div className="flex flex-col gap-px">
                 {g.items.map((t) => (
-                  <ConversationItem key={t.id} tree={t} active={route.name === 'chat' && route.id === t.id} project={projectOf(projects, t.id)} projects={projects} onNavigate={onNavigate} />
+                  <ConversationItem key={t.id} tree={t} active={route.name === 'chat' && route.id === t.id} project={projectOf(projects, t)} projects={projects} onNavigate={onNavigate} />
                 ))}
               </div>
             </section>

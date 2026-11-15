@@ -4,12 +4,12 @@ import type { LoginPrompt, ProviderState } from '@gense/protocol'
 import { Check, Cpu, Database, Download, ExternalLink, Gauge, Keyboard, LogOut, Monitor, Moon, Palette, ShieldCheck, Sun, UserRound } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { report, useClient, useHost, useUser } from '../../app/client'
+import { report, useClient, useHost, useMemories, useUser } from '../../app/client'
 import { Page } from '../../app/Shell'
 import { cn } from '../../lib/cn'
 import { errorText, saveBlob } from '../../lib/format'
 import { modKey } from '../../lib/hooks'
-import { lab, useLab, useMemories, useProjects } from '../../lib/lab'
+import { lab, useLab } from '../../lib/lab'
 import { Link, type SettingsSection } from '../../lib/router'
 import type { LoginHandlers } from '../../lib/socket'
 import { accentPref, accents, themePref, useAccent, useThemePref, type ThemePref } from '../../lib/theme'
@@ -502,8 +502,8 @@ function Shortcuts() {
 const localKeys = () => Object.keys(localStorage).filter((k) => k.startsWith('gense.'))
 
 function Data() {
-  const { memory } = useLab()
-  const projects = useProjects()
+  const { prefs } = useHost()
+  const client = useClient()
   const memories = useMemories()
   const [clearing, setClearing] = useState(false)
 
@@ -516,8 +516,8 @@ function Data() {
     <>
       <Section title="数据控制">
         <div className={rowsClass}>
-          <Row title="在对话中参考记忆" description={<>记忆在「<Link to={{ name: 'memory' }} className="text-accent underline-offset-4 hover:underline">记忆</Link>」页管理，共 {memories.length} 条。</>}>
-            <Switch checked={memory} onCheckedChange={(v) => lab.set((l) => ({ ...l, memory: v }))} aria-label="在对话中参考记忆" />
+          <Row title="在对话中参考记忆" description={<>记忆在「<Link to={{ name: 'memory' }} className="text-accent underline-offset-4 hover:underline">记忆</Link>」页管理，共 {memories?.length ?? 0} 条，网页和飞书里的对话都会参考。</>}>
+            <Switch checked={prefs?.useMemory ?? true} disabled={!prefs} onCheckedChange={(v) => client.setPrefs({ useMemory: v })} aria-label="在对话中参考记忆" />
           </Row>
           <Row title={<span className="flex items-center gap-2">临时对话 <PreviewBadge /></span>} description="不保存到历史、不写入记忆的对话。">
             <Switch disabled aria-label="临时对话" />
@@ -529,14 +529,14 @@ function Data() {
           </Row>
         </div>
       </Section>
-      <Section title="这个浏览器里的数据" description={`项目（${projects.length} 个）、记忆、回答反馈、草稿和界面偏好保存在这个浏览器里，不会同步到其他设备。`}>
+      <Section title="这个浏览器里的数据" description="回答反馈、草稿和界面偏好保存在这个浏览器里，不会同步到其他设备。项目和记忆在你的账户里。">
         <div className={rowsClass}>
           <Row title="导出本地数据" description="下载为一个 JSON 文件。">
             <Button onClick={exportLocal}>
               <Download /> 导出
             </Button>
           </Row>
-          <Row title="清除本地数据" description="删除项目、记忆、反馈、草稿和界面偏好。对话本身不受影响。">
+          <Row title="清除本地数据" description="删除反馈、草稿和界面偏好。对话、项目和记忆不受影响。">
             <Button variant="destructive" onClick={() => setClearing(true)}>
               清除
             </Button>
@@ -553,7 +553,7 @@ function Data() {
           location.reload()
         }}
       >
-        项目、记忆、反馈、草稿和界面偏好都会删除，无法恢复。服务器上的对话、文件和设置不受影响。
+        反馈、草稿和界面偏好都会删除，无法恢复。服务器上的对话、项目、记忆、文件和设置不受影响。
       </ConfirmDialog>
     </>
   )

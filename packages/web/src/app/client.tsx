@@ -1,9 +1,10 @@
 // The app's data: the server's state over one WebSocket (lib/socket.ts), what this browser keeps for itself, and the
 // actions pages call. Failures of actions nobody awaits become toasts.
-import type { BranchMeta, BranchesState, CompactionOutcome, Effort, FileEntry, FilePreview, ModelInfo, ToolCallResult, UploadedFile, UserInfo } from '@gense/protocol'
+import type { BranchMeta, BranchesState, CompactionOutcome, Effort, FileEntry, FilePreview, Memory, ModelInfo, Preferences, Project, ToolCallResult, TreeMeta, UploadedFile, UserInfo } from '@gense/protocol'
 import { createContext, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { errorText, fileBase64, saveBlob, toBlob } from '../lib/format'
+import { importLocal } from './importLocal'
 import { localStore, useLocal } from '../lib/local'
 import { HostSocket, type SocketState } from '../lib/socket'
 import { toolIndex } from '../lib/tools'
@@ -61,9 +62,9 @@ export class Client {
     })
   }
 
-  /** A new conversation with its first message; resolves to its id. */
-  async start(message: Outgoing) {
-    const tree = await this.request<{ id: string }>({ t: 'tree.create' })
+  /** A new conversation with its first message, in `projectId` when given; resolves to its id. */
+  async start(message: Outgoing, projectId?: string) {
+    const tree = await this.request<{ id: string }>({ t: 'tree.create', ...(projectId && { projectId }) })
     await this.#send(tree.id, message)
     return tree.id
   }
@@ -115,6 +116,30 @@ export class Client {
   stop = (treeId: string) => {
     const branchId = this.socket.state.shown[treeId]
     void this.request({ t: 'abort', treeId, ...(branchId && { branchId }) }).catch(report)
+  }
+
+  setPrefs = (patch: Partial<Omit<Preferences, 'timeZone'>>) => void this.request({ t: 'prefs.set', ...patch }).catch(report)
+
+  // Memory and projects (roadmap-7 A): the server pushes `memories` / `projects` after each change.
+  addMemory = (memory: { text: string; source?: 'manual' | 'saved'; treeId?: string; projectId?: string | null; enabled?: boolean }) =>
+    this.request<Memory>({ t: 'memory.add', ...memory })
+  updateMemory = (memoryId: string, patch: { text?: string; enabled?: boolean; projectId?: string | null }) =>
+    void this.request<Memory>({ t: 'memory.update', memoryId, ...patch }).catch(report)
+  removeMemory = (memoryId: string) => void this.request({ t: 'memory.remove', memoryId }).catch(report)
+
+  createProject = (project: { name: string; instructions?: string; color?: number }) => this.request<Project>({ t: 'project.create', ...project })
+  updateProject = (projectId: string, patch: { name?: string; instructions?: string; color?: number }) =>
+    void this.request<Project>({ t: 'project.update', projectId, ...patch }).catch(report)
+  deleteProject = (projectId: string, deleteChats: boolean) => this.request({ t: 'project.delete', projectId, deleteChats })
+  /** Puts a conversation in one project, or none. */
+  moveToProject = (treeId: string, projectId: string | null) => void this.request({ t: 'tree.update', treeId, projectId }).catch(report)
+
+  projectFiles = (projectId: string) => this.request<FileEntry[]>({ t: 'project.files.list', projectId })
+  addProjectFiles = (projectId: string, uploads: string[]) => this.request<FileEntry[]>({ t: 'project.files.add', projectId, uploads })
+  deleteProjectFile = (projectId: string, path: string) => this.request({ t: 'project.files.delete', projectId, path })
+  async readProjectFile(projectId: string, path: string) {
+    const file = await this.request<{ name: string; mimeType: string; base64: string }>({ t: 'project.files.read', projectId, path })
+    saveBlob(file.name, toBlob(file.base64, file.mimeType))
   }
 
   async upload(file: File): Promise<Attachment> {
@@ -184,7 +209,11 @@ export function AppProvider({ user, onUnauthorized, children }: { user: UserInfo
   useEffect(() => {
     const made = new Client(new HostSocket(onUnauthorized), onUnauthorized)
     setClient(made)
-    return () => made.socket.close()
+    const stop = made.socket.subscribe(() => importLocal(made))
+    return () => {
+      stop()
+      made.socket.close()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   return (
@@ -210,6 +239,12 @@ export function useHost(): SocketState {
     () => socket.state,
   )
 }
+
+export const useMemories = () => useHost().memories
+export const useProjects = () => useHost().projects
+
+/** The project a conversation is in. */
+export const projectOf = (projects: readonly Project[] | null, tree: TreeMeta | undefined) => (tree?.projectId ? projects?.find((p) => p.id === tree.projectId) : undefined)
 
 export function useTools() {
   const { plugins } = useHost()

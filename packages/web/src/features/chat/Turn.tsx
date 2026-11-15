@@ -1,4 +1,5 @@
-import type { EventData, ModelInfo } from '@gense/protocol'
+import type { EventData, MemoryToolDetails, ModelInfo } from '@gense/protocol'
+import { MEMORY_LIMITS } from '@gense/protocol'
 import {
   BookmarkPlus,
   Bot,
@@ -24,6 +25,7 @@ import {
   Square,
   ThumbsDown,
   ThumbsUp,
+  Undo2,
   Volume2,
   Webhook,
   Wrench,
@@ -31,11 +33,12 @@ import {
 } from 'lucide-react'
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { modelKey } from '../../app/client'
+import { modelKey, report, useClient, type Client } from '../../app/client'
 import { cn } from '../../lib/cn'
 import { copyText, formatBytes, formatDuration, formatTime } from '../../lib/format'
 import { useFlash } from '../../lib/hooks'
-import { feedback, memories, useFeedback, useLab } from '../../lib/lab'
+import { Link } from '../../lib/router'
+import { feedback, useFeedback, useLab } from '../../lib/lab'
 import type { ToolIndex, ToolMeta } from '../../lib/tools'
 import type { ToolCall, Turn, TurnBlock, Versions, WebSource } from '../../lib/types'
 import type { DisplayMode } from '../../plugins/types'
@@ -68,7 +71,11 @@ export interface TurnContext {
 }
 
 type Step = Exclude<TurnBlock, { kind: 'text' }>
-type Segment = { kind: 'text'; text: string } | { kind: 'steps'; steps: Step[] } | { kind: 'view'; call: ToolCall; meta: ToolMeta }
+type Segment =
+  | { kind: 'text'; text: string }
+  | { kind: 'steps'; steps: Step[] }
+  | { kind: 'view'; call: ToolCall; meta: ToolMeta }
+  | { kind: 'memory'; call: ToolCall; details: MemoryToolDetails }
 
 /** An answer in the order it was produced: prose, runs of thinking and tool calls folded together, and views. */
 function segments(blocks: TurnBlock[], tools: ToolIndex): Segment[] {
@@ -79,6 +86,12 @@ function segments(blocks: TurnBlock[], tools: ToolIndex): Segment[] {
       continue
     }
     if (b.kind === 'thinking' && !b.text.trim()) continue
+    // A memory the model saved, corrected or removed shows in the answer with an undo (roadmap-7 A3).
+    const details = b.kind === 'tool' && b.call.name === 'memory' && !b.call.result?.isError ? (b.call.result?.structuredContent as MemoryToolDetails | undefined) : undefined
+    if (b.kind === 'tool' && details?.memory) {
+      out.push({ kind: 'memory', call: b.call, details })
+      continue
+    }
     const meta = b.kind === 'tool' ? tools.get(b.call.name) : undefined
     if (b.kind === 'tool' && meta && hasView(b.call, meta)) {
       out.push({ kind: 'view', call: b.call, meta })
@@ -96,6 +109,7 @@ const followUps = ['展开讲讲', '更简洁一点', '举个例子', '换个角
 /** `last` is the newest turn of the conversation: it alone offers follow-ups. */
 export function TurnView({ turn, ctx, last: newest }: { turn: Turn; ctx: TurnContext; last?: boolean }) {
   const { suggestions } = useLab()
+  const client = useClient()
   const active = turn.status === 'queued' || turn.status === 'running'
   // An Event or a brief is not the user's message: it has no versions to edit or ask again.
   const own = !turn.event && turn.brief === undefined
@@ -124,6 +138,7 @@ export function TurnView({ turn, ctx, last: newest }: { turn: Turn; ctx: TurnCon
           {parts.map((s, i) => {
             const last = i === parts.length - 1
             if (s.kind === 'text') return <Markdown key={i} text={s.text} streaming={last && turn.status === 'running'} />
+            if (s.kind === 'memory') return <MemoryChip key={s.call.id} details={s.details} />
             if (s.kind === 'steps') return <Steps key={i} steps={s.steps} tools={ctx.tools} live={last && turn.status === 'running'} />
             if (ctx.panelCallId === s.call.id)
               return (
@@ -201,7 +216,7 @@ export function TurnView({ turn, ctx, last: newest }: { turn: Turn; ctx: TurnCon
                     </DropdownMenuItem>
                   )}
                   {turn.assistantMessage && (
-                    <DropdownMenuItem onSelect={() => remember(turn.assistantMessage)}>
+                    <DropdownMenuItem onSelect={() => remember(client, turn.assistantMessage, ctx.treeId)}>
                       <BookmarkPlus /> 存入记忆
                     </DropdownMenuItem>
                   )}
@@ -238,11 +253,56 @@ export function TurnView({ turn, ctx, last: newest }: { turn: Turn; ctx: TurnCon
   )
 }
 
-/** Keeps a passage of an answer as a memory (kept in this browser until the server has memories). */
-function remember(text: string) {
-  const short = text.trim().replace(/\s+/g, ' ').slice(0, 280)
-  memories.set((all) => [{ id: crypto.randomUUID(), text: short, source: 'chat', enabled: true, createdAt: Date.now() }, ...all])
-  toast.success('已存入记忆', { description: '可以在「记忆」里修改或删除。' })
+/** Keeps (the start of) an answer as a memory the user can edit on the Memory page. */
+function remember(client: Client, text: string, treeId: string) {
+  const short = text.trim().replace(/\s+/g, ' ').slice(0, MEMORY_LIMITS.text)
+  client.addMemory({ text: short, source: 'saved', treeId }).then(
+    (m) => toast.success('已存入记忆', { description: '可以在「记忆」里修改或删除。', action: { label: '撤销', onClick: () => client.removeMemory(m.id) } }),
+    report,
+  )
+}
+
+const memoryVerbs = { add: '已记住', update: '已更新记忆', remove: '已忘掉' } as const
+
+/** What the model did with the `memory` tool, with an undo that reverses it. */
+function MemoryChip({ details }: { details: MemoryToolDetails }) {
+  const client = useClient()
+  const [state, setState] = useState<'done' | 'undoing' | 'undone'>('done')
+  const undo = () => {
+    setState('undoing')
+    const { action, memory, previous } = details
+    const reverse =
+      action === 'add'
+        ? client.request({ t: 'memory.remove', memoryId: memory.id })
+        : action === 'update' && previous
+          ? client.request({ t: 'memory.update', memoryId: memory.id, text: previous.text, enabled: previous.enabled, projectId: previous.projectId })
+          : client.addMemory({ text: (previous ?? memory).text, treeId: memory.treeId ?? undefined, projectId: (previous ?? memory).projectId })
+    reverse.then(
+      () => setState('undone'),
+      (e: unknown) => {
+        setState('done')
+        report(e)
+      },
+    )
+  }
+  const shown = details.action === 'remove' ? (details.previous ?? details.memory) : details.memory
+  return (
+    <div className="flex max-w-full items-center gap-2 self-start rounded-xl border bg-card py-1.5 pr-1.5 pl-3 text-sm">
+      <Brain className="size-4 shrink-0 text-accent" />
+      <span className={cn('min-w-0 truncate', state === 'undone' && 'text-muted-foreground line-through')}>
+        <span className="text-muted-foreground">{state === 'undone' ? '已撤销' : memoryVerbs[details.action]}：</span>
+        {shown.text}
+      </span>
+      {state !== 'undone' && (
+        <Button variant="ghost" size="sm" disabled={state === 'undoing'} onClick={undo} className="shrink-0">
+          {state === 'undoing' ? <Spinner /> : <Undo2 />} 撤销
+        </Button>
+      )}
+      <Link to={{ name: 'memory' }} className="shrink-0 px-1.5 text-xs text-muted-foreground hover:text-foreground">
+        管理
+      </Link>
+    </div>
+  )
 }
 
 /** 👍 / 👎 on an answer. */

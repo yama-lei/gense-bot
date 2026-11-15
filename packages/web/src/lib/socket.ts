@@ -6,9 +6,11 @@ import type {
   ChannelInfo,
   ClientRequest,
   LoginPrompt,
+  Memory,
   ModelInfo,
   PluginInfo,
   Preferences,
+  Project,
   ProviderState,
   ScheduleInfo,
   ServerMessage,
@@ -32,6 +34,9 @@ export interface SocketState {
   canInstallSkills: boolean
   channels: ChannelInfo[] | null
   prefs: Preferences | null
+  /** Null until the server sends them (roadmap-7 A). */
+  memories: Memory[] | null
+  projects: Project[] | null
   schedules: ScheduleInfo[]
   webhooks: WebhookInfo[]
   canCreateWebhooks: boolean
@@ -63,6 +68,8 @@ export class HostSocket {
     canInstallSkills: true,
     channels: null,
     prefs: null,
+    memories: null,
+    projects: null,
     schedules: [],
     webhooks: [],
     canCreateWebhooks: true,
@@ -151,6 +158,10 @@ export class HostSocket {
         if (timeZone && m.prefs.timeZone !== timeZone) void this.request({ t: 'prefs.set', timeZone }).catch(() => {})
         return this.#set({ prefs: m.prefs })
       }
+      case 'memories':
+        return this.#set({ memories: m.memories })
+      case 'projects':
+        return this.#set({ projects: m.projects })
       case 'schedules':
         return this.#set({ schedules: m.schedules })
       case 'webhooks':

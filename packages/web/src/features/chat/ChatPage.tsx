@@ -1,12 +1,12 @@
 import { ArrowDown, Check, ChevronDown, Copy, Download, FolderInput, FolderOpen, GitBranch, Link2, Minimize2, Pencil, Pin, PinOff, Radio, Share, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { report, useChat, useClient, useFiles, useHost, useTools } from '../../app/client'
+import { report, useChat, useClient, useFiles, useHost, useTools, projectOf, useProjects } from '../../app/client'
 import { SidebarToggle } from '../../app/Shell'
 import { phoneQuery } from '../../app/shell-context'
 import { cn } from '../../lib/cn'
 import { copyText, saveBlob } from '../../lib/format'
 import { useFlash, useMediaQuery } from '../../lib/hooks'
-import { moveToProject, projectColors, projectOf, useLab, useProjects } from '../../lib/lab'
+import { projectColors, useLab } from '../../lib/lab'
 import { Link, navigate } from '../../lib/router'
 import type { Outgoing, ToolCall, Turn } from '../../lib/types'
 import { Badge, PreviewBadge } from '../../ui/badge'
@@ -350,8 +350,8 @@ function Loading() {
 
 function TitleMenu({ treeId, title, pinned, canCompact, onExport }: { treeId: string; title: string; pinned: boolean; canCompact: boolean; onExport: () => void }) {
   const client = useClient()
-  const projects = useProjects()
-  const project = projectOf(projects, treeId)
+  const projects = useProjects() ?? []
+  const project = projectOf(projects, useHost().trees?.find((t) => t.id === treeId))
   const [renaming, setRenaming] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [draft, setDraft] = useState('')
@@ -397,7 +397,7 @@ function TitleMenu({ treeId, title, pinned, canCompact, onExport }: { treeId: st
                 <FolderInput className="size-3.5" /> 移到项目
               </DropdownMenuLabel>
               {projects.map((p) => (
-                <DropdownMenuCheckItem key={p.id} checked={project?.id === p.id} onSelect={() => moveToProject(treeId, project?.id === p.id ? null : p.id)}>
+                <DropdownMenuCheckItem key={p.id} checked={project?.id === p.id} onSelect={() => client.moveToProject(treeId, project?.id === p.id ? null : p.id)}>
                   <span className="flex items-center gap-2">
                     <span className="size-2 rounded-full" style={{ background: projectColors[p.color] }} />
                     <span className="truncate">{p.name}</span>
@@ -450,7 +450,6 @@ function TitleMenu({ treeId, title, pinned, canCompact, onExport }: { treeId: st
         confirm="删除"
         onConfirm={() =>
           void client.request({ t: 'tree.delete', treeId }).then(() => {
-            moveToProject(treeId, null)
             navigate({ name: 'home' }, { replace: true })
           }, report)
         }

@@ -33,7 +33,7 @@ import { modKey } from '../../lib/hooks'
 import { drafts, lab, useLab } from '../../lib/lab'
 import { Link, navigate } from '../../lib/router'
 import type { Attachment, Outgoing } from '../../lib/types'
-import { Badge, PreviewBadge } from '../../ui/badge'
+import { Badge } from '../../ui/badge'
 import { Spinner } from '../../ui/feedback'
 import { DropdownMenu, DropdownMenuCheckItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '../../ui/menu'
 import { Tooltip } from '../../ui/tooltip'
@@ -471,9 +471,9 @@ export function Composer({ treeId, placeholder, onSend, busy, onStop, autoFocus,
               />
               <DropdownMenuSeparator />
               <DropdownMenuLabel className="flex items-center gap-1.5">
-                始终生效 <PreviewBadge />
+                始终生效
               </DropdownMenuLabel>
-              <LabToggle icon={<Brain />} label="参考记忆" hint="回答时带上你让它记住的事" field="memory" />
+              <MemoryToggle />
               <LabToggle icon={<Sparkles />} label="追问建议" hint="每个回答后给出可点的后续问题" field="suggestions" />
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => navigate({ name: 'plugins' })}>
@@ -554,7 +554,15 @@ function ToolToggle({ icon, label, hint, checked, disabled, onToggle }: { icon: 
   )
 }
 
-function LabToggle({ field, ...props }: { icon: ReactNode; label: string; hint: string; field: 'memory' | 'suggestions' }) {
+/** The account-wide memory switch (roadmap-7 A5); it applies to chats in Feishu too. */
+function MemoryToggle() {
+  const { prefs } = useHost()
+  const client = useClient()
+  const on = prefs?.useMemory ?? true
+  return <ToolToggle icon={<Brain />} label="参考记忆" hint="回答时带上你让它记住的事" disabled={!prefs} checked={on} onToggle={() => client.setPrefs({ useMemory: !on })} />
+}
+
+function LabToggle({ field, ...props }: { icon: ReactNode; label: string; hint: string; field: 'suggestions' }) {
   const value = useLab()[field]
   return <ToolToggle {...props} checked={value} onToggle={() => lab.set((l) => ({ ...l, [field]: !l[field] }))} />
 }

@@ -4,12 +4,11 @@ import { ChatPage } from '../features/chat/ChatPage'
 import { HomePage } from '../features/chat/HomePage'
 import { cn } from '../lib/cn'
 import { useMediaQuery, useSettled } from '../lib/hooks'
-import { useProjects } from '../lib/lab'
 import { Link, navigate, useRoute } from '../lib/router'
 import { Button } from '../ui/button'
 import { Drawer } from '../ui/dialog'
 import { Empty, Spinner } from '../ui/feedback'
-import { localPrefs, useClient, useHost, useLocalPrefs, useUser } from './client'
+import { localPrefs, useClient, useHost, useLocalPrefs, useUser, useProjects } from './client'
 import { CommandPalette } from './CommandPalette'
 import { phoneQuery, ShellContext, useShell, type ShellApi } from './shell-context'
 import { Sidebar } from './Sidebar'
@@ -112,7 +111,7 @@ export function Shell() {
 
   useEffect(() => {
     const title =
-      route.name === 'chat' ? host.trees?.find((t) => t.id === route.id)?.title : route.name === 'projects' && route.id ? projects.find((p) => p.id === route.id)?.name : titles[route.name]
+      route.name === 'chat' ? host.trees?.find((t) => t.id === route.id)?.title : route.name === 'projects' && route.id ? projects?.find((p) => p.id === route.id)?.name : titles[route.name]
     document.title = title ? `${title} · Gense` : 'Gense'
   }, [route, host.trees, projects])
 

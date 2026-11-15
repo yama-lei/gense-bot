@@ -1,13 +1,13 @@
 import type { TreeHit } from '@gense/protocol'
+import { projectColors } from '../lib/lab'
 import { Command } from 'cmdk'
 import { Blocks, BookMarked, Brain, CornerDownLeft, Cpu, FolderClosed, Inbox, Keyboard, MessageSquare, Monitor, Moon, PanelLeft, Radio, Search, Settings, SquarePen, Sun, TextSearch, Timer } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { formatTime } from '../lib/format'
 import { navigate, type Route } from '../lib/router'
-import { projectColors, useProjects } from '../lib/lab'
 import { accentPref, accents, themePref } from '../lib/theme'
 import { Spinner } from '../ui/feedback'
-import { localPrefs, useClient, useHost } from './client'
+import { localPrefs, useClient, useHost, useProjects } from './client'
 
 const itemClass =
   'flex min-h-10 cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm data-[selected=true]:bg-hover [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted-foreground'
@@ -37,7 +37,7 @@ const themes = [
 export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const host = useHost()
   const client = useClient()
-  const projects = useProjects()
+  const projects = useProjects() ?? []
   const [query, setQuery] = useState('')
   const [hits, setHits] = useState<{ query: string; items: TreeHit[] } | null>(null)
   const q = query.trim().toLowerCase()
@@ -109,7 +109,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
             {shownProjects.map((p) => (
               <Command.Item key={p.id} value={`project:${p.id}`} onSelect={() => go({ name: 'projects', id: p.id })} className={itemClass}>
                 <FolderClosed style={{ color: projectColors[p.color] }} /> <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                <span className="shrink-0 text-xs text-muted-foreground">{p.treeIds.length} 个对话</span>
+                <span className="shrink-0 text-xs text-muted-foreground">{trees.filter((t) => t.projectId === p.id).length} 个对话</span>
               </Command.Item>
             ))}
           </Command.Group>

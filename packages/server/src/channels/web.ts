@@ -45,6 +45,7 @@ export class Connection {
     this.#unsubscribe.push(space.channels.subscribe(() => this.#send({ t: 'channels', channels: space.channels.list() })))
     this.#send({ t: 'prefs', prefs: space.preferences.get() })
     this.#unsubscribe.push(space.feedback.subscribe((treeId, feedback) => this.#send({ t: 'feedback', treeId, feedback })))
+    this.#unsubscribe.push(space.suggestions.subscribe((treeId, suggestions) => this.#send({ t: 'suggestions', treeId, ...suggestions })))
     this.#unsubscribe.push(space.preferences.subscribe(() => this.#send({ t: 'prefs', prefs: space.preferences.get() })))
     this.#unsubscribe.push(space.memories.subscribe(memories => this.#send({ t: 'memories', memories })))
     this.#send({ t: 'memories', memories: await space.memories.list() })
@@ -307,6 +308,8 @@ export class Connection {
     const enc = encoder()
     this.#send({ t: 'view', treeId, branchId: shown, value: watch.value })
     this.#send({ t: 'feedback', treeId, feedback: await space.feedback.list(treeId) })
+    const suggestions = space.suggestions.get(treeId)
+    if (suggestions) this.#send({ t: 'suggestions', treeId, ...suggestions })
     const trace = nativeState(space).traces.get(shown)
     if (trace) this.#send({ t: 'native', treeId, branchId: shown, trace })
     let previous: { running: CompactionStatus[]; failure?: CompactionFailure } | undefined

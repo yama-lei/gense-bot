@@ -2,7 +2,7 @@ import type { SqliteDatabase } from '@earendil-works/chord/sqlite'
 import type { Preferences } from '@gense/protocol'
 
 export class PreferenceStore {
-  #value: Preferences = { name: '', instructions: '', useMemory: true, memoryWrites: 'auto' }
+  #value: Preferences = { name: '', instructions: '', useMemory: true, memoryWrites: 'auto', suggestions: true }
   #listeners = new Set<() => void>()
   private db: SqliteDatabase
   private constructor(db: SqliteDatabase) { this.db = db }
@@ -17,6 +17,10 @@ export class PreferenceStore {
   subscribe(listener: () => void) { this.#listeners.add(listener); return () => { this.#listeners.delete(listener) } }
   async set(patch: Partial<Preferences>) {
     const next = { ...this.#value }
+    if (patch.suggestions !== undefined) {
+      if (typeof patch.suggestions !== 'boolean') throw new Error('追问开关无效')
+      next.suggestions = patch.suggestions
+    }
     if (patch.deepseekSafety !== undefined) {
       if (typeof patch.deepseekSafety !== 'boolean') throw new Error('偏好无效')
       next.deepseekSafety = patch.deepseekSafety

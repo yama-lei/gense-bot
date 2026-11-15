@@ -10,6 +10,7 @@ import { defineExtension, section } from '@earendil-works/pi-durable'
 import { PreferenceStore } from './preferences.ts'
 import { FeedbackStore } from './feedback.ts'
 import { SuggestionStore } from './suggestions.ts'
+import { InboxReadStore } from './inbox.ts'
 import { MemoryStore, memoryExtension } from './memory.ts'
 import { ProjectStore, projectExtension } from './projects.ts'
 import type { UserShares } from '../platform/shares.ts'
@@ -91,6 +92,7 @@ export class UserSpace {
   readonly preferences: PreferenceStore
   readonly feedback: FeedbackStore
   readonly suggestions: SuggestionStore
+  readonly inboxRead: InboxReadStore
   readonly memories: MemoryStore
   readonly projects: ProjectStore
   readonly shares: UserShares | undefined
@@ -121,6 +123,7 @@ export class UserSpace {
     this.preferences = preferences
     this.feedback = new FeedbackStore(this)
     this.suggestions = new SuggestionStore(this)
+    this.inboxRead = new InboxReadStore(db, () => this.now())
     this.memories = new MemoryStore(db, () => this.now())
     this.projects = new ProjectStore(this)
     this.accounts = accounts

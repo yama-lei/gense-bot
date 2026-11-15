@@ -203,6 +203,7 @@ export async function close(this: UserSpace, ctx: Context = BACKGROUND_CONTEXT):
     await this.shares?.flush()
     await this.feedback.close()
     await this.suggestions.close()
+    await this.inboxRead.close()
     this.listeners.clear()
     this.branchListeners.clear()
     this.automationListeners.clear()

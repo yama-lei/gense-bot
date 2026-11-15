@@ -107,6 +107,10 @@ export const migrations = [
       'CREATE TABLE feedback (treeId TEXT NOT NULL, turnId TEXT NOT NULL, value TEXT NOT NULL, reasons TEXT NOT NULL, comment TEXT, model TEXT NOT NULL, updatedAt INTEGER NOT NULL, PRIMARY KEY (treeId, turnId))',
     ],
   },
+  {
+    version: 8,
+    statements: ['CREATE TABLE inbox_read (id TEXT PRIMARY KEY, readAt INTEGER NOT NULL)'],
+  },
 ]
 
 /** Who the assistant is and how it answers (roadmap-6 A10). Only the date changes, once a day, so the prompt cache holds. */

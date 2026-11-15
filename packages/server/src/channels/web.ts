@@ -44,6 +44,8 @@ export class Connection {
     this.#send({ t: 'channels', channels: space.channels.list() })
     this.#unsubscribe.push(space.channels.subscribe(() => this.#send({ t: 'channels', channels: space.channels.list() })))
     this.#send({ t: 'prefs', prefs: space.preferences.get() })
+    this.#unsubscribe.push(space.inboxRead.subscribe(ids => this.#send({ t: 'inboxRead', ids })))
+    this.#send({ t: 'inboxRead', ids: await space.inboxRead.list() })
     this.#unsubscribe.push(space.feedback.subscribe((treeId, feedback) => this.#send({ t: 'feedback', treeId, feedback })))
     this.#unsubscribe.push(space.suggestions.subscribe((treeId, suggestions) => this.#send({ t: 'suggestions', treeId, ...suggestions })))
     this.#unsubscribe.push(space.preferences.subscribe(() => this.#send({ t: 'prefs', prefs: space.preferences.get() })))
@@ -249,6 +251,8 @@ export class Connection {
         return space.searchTrees(r.query, r.limit)
       case 'feedback.set':
         return space.feedback.set(r.treeId, r)
+      case 'inbox.read':
+        return space.inboxRead.read(r.ids)
       case 'plugin.set':
         return space.plugins.set(r.pluginId, {
           ...(r.enabled !== undefined && { enabled: r.enabled }),

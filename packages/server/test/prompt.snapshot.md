@@ -103,6 +103,17 @@ When your answer uses web pages, cite them right after the sentence that uses th
 </sandbox>
 ````
 
+## Section: memory
+
+````text
+<memory>
+What the user asked you to remember, or you saved earlier with the `memory` tool. Use it when relevant, without mentioning that you remembered unless asked. If the user contradicts an entry, follow the user and update the entry.
+<memories>
+(none yet)
+</memories>
+</memory>
+````
+
 ## Tool: read
 
 ````text
@@ -586,6 +597,73 @@ Run a bash command in the user's Linux sandbox. The current directory is this co
 }
 ````
 
+## Tool: memory
+
+````text
+Save, correct or delete a long-term memory about the user. Memories are shown to you at the start of every later conversation, on the web and in chat apps.
+
+Use it when the user:
+- asks you to remember something ("remember that…", "from now on…", "always/never…") → add
+- corrects a memory or says it is out of date → update that entry
+- asks you to forget something → remove that entry
+
+Only save durable facts about the user: their background, ongoing projects, stable preferences for how you should work. Do not save one-off task details, things that only matter in this conversation, or what you can find again in the conversation itself. Never save passwords, API keys, ID or card numbers; the tool rejects them.
+
+Write each memory as one self-contained sentence in the user's language, about the user in the third person ("Prefers metric units", "用户在南京大学读研"). Prefer updating an existing entry to adding a near-duplicate. The user sees every change and can undo it, so do not ask before saving what they asked you to remember; mention it in a few words in your answer.
+
+You may also save a memory without being asked, when the user states a durable fact or preference that will clearly help in future conversations. Do this sparingly: at most one or two per conversation.
+````
+
+````json
+{
+  "type": "object",
+  "required": [
+    "action"
+  ],
+  "properties": {
+    "action": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "add"
+        },
+        {
+          "type": "string",
+          "const": "update"
+        },
+        {
+          "type": "string",
+          "const": "remove"
+        }
+      ],
+      "description": "add | update | remove"
+    },
+    "text": {
+      "type": "string",
+      "maxLength": 500,
+      "description": "The memory as one sentence. Required for add and update; at most 500 characters."
+    },
+    "id": {
+      "type": "string",
+      "description": "The entry to update or remove, as shown in <memories>."
+    },
+    "scope": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "project"
+        },
+        {
+          "type": "string",
+          "const": "global"
+        }
+      ],
+      "description": "`project` to keep it only for the current project (default when the conversation is in a project and the fact is about that project); `global` otherwise."
+    }
+  }
+}
+````
+
 ## Context compaction instructions
 
 ````text
@@ -598,4 +676,36 @@ Include:
 - Any critical data, examples, or references needed to continue
 
 Be concise, structured, and focused on helping the next LLM seamlessly continue the work.
+````
+
+# Project conversation prompt
+
+A conversation in Research, with two memories and one project file. All other sections and tools are identical to the first-turn baseline above (checked by the test).
+
+## Section: memory
+
+````text
+<memory>
+What the user asked you to remember, or you saved earlier with the `memory` tool. Use it when relevant, without mentioning that you remembered unless asked. If the user contradicts an entry, follow the user and update the entry.
+<memories>
+- [memory-project] (project) Researches climate models.
+- [memory-global] Prefers metric units.
+</memories>
+</memory>
+````
+
+## Section: project
+
+````text
+<project>
+This conversation belongs to the user's project "Research".
+
+The project's instructions apply to every conversation in it. Where they differ from your default guidance, follow them:
+<project_instructions>
+Use SI units and cite primary sources.
+</project_instructions>
+
+The project's files are in /data/projects/project-research/ (read-only; copy one into the conversation's workspace before changing it). Read the ones relevant to the question before answering from memory:
+- reference.md (19 B)
+</project>
 ````

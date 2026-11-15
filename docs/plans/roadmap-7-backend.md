@@ -161,8 +161,33 @@
 
 ## 汇报
 
-（在这里按阶段追加：做了什么、测试结果、偏离之处）
+### A-1 记忆（2026-11-14）
+
+- `space.sqlite` 新增 `memories`，提供增删改、来源与会话关联、开关、200 条 / 每条 500 字符限制；同用户全部连接首次和变化时推送，其他用户隔离。偏好默认 `useMemory: true`、`memoryWrites: auto`，请求校验并持久化。
+- 每轮通过原样的 `memorySection` 渲染靠后的记忆节，按偏好提供 `MEMORY_TOOL` 并拼接原文写入说明。工具返回英文确认及 `MemoryToolDetails`，更新/删除的撤销值与写操作串行取得；拒绝疑似密钥、私钥、长数字和密码。
+- A1–A6 / A11 测试覆盖真实 SQLite、双设备 WebSocket、双用户、重启、faux 工具结果、上限和敏感内容，以及真实飞书 SDK 对本地 HTTP / protobuf WebSocket 平台的收发；基础提示词快照已更新。
+- 适配 faux 模型：动态提示词可能在工具结果后插入 system 消息，脚本改为从最后一条非 system 消息识别结果，避免重复执行工具。临时对话的禁用判断留在公共会话查询位置，阶段 B 接入。
+- 验证：`env -u https_proxy -u http_proxy -u all_proxy -u HTTPS_PROXY -u HTTP_PROXY -u ALL_PROXY npm run check:server` 通过，80 项测试全部通过（含真实 Docker 与本地飞书平台），无跳过。
+
+### A-2 项目（2026-11-14）
+
+- `space.sqlite` 新增 `projects` 与 `trees.projectId`，接通项目增改删和首次/变化广播；`tree.create`、`tree.update` 支持项目归属及移出，分叉始终随树读取。创建/移动与删除串行，避免对话落入正在删除的项目。
+- 项目资料在 `files/projects/<projectId>/`，提供 list/add/delete/read。上传文件按原名移入，重名保留两份；批量先校验实际文件大小、20 MB 单文件及 200 MB 总量，再执行移动，出错时回移已移动的文件。并发新增共用队列，避免超过总量。
+- 使用原样 `projectSection`，项目指令和文件清单每轮读取；记忆现在校验项目存在并按作用域过滤，默认项目记忆和显式全局记忆都已验证。`treeId` 按协议可选，保留提供的来源（包含撤销恢复的 `model`）。
+- 删除项目可保留并移出对话，或终止并删除其对话和工作区；两种方式都删除项目文件与项目记忆，并推送受影响的 trees/memories/projects。
+- 沙箱取舍按 t4h 确认：每用户一个容器，整个 `/data/projects` 只读挂载；read/write/edit/delete 与文件面板只读取当前项目，项目资料不可由文件工具修改。bash 可以读取同用户其他项目；不增加容器。
+- 验证：清除代理后 `npm run check:server` 通过，84 项全部通过，无跳过。新增验证涵盖双设备/双用户、重启、删除两种选项、分叉与移入移出、真实稀疏文件的容量/并发限制、真实 Docker 的挂载只读及工具访问范围；飞书已验证从网页移入项目后也带指令与项目记忆。
+- 内部 API 调整：`UserSpace.createTree(projectId?, ctx?)`，原有无参数调用不变；显式传 Context 的调用方应使用第二个参数。无其他协议改动。
+
+### A-3 收尾（2026-11-14）
+
+- 提示词快照新增“Research 项目对话、两条记忆（全局 / 项目各一）、一个项目文件”的场景。测试使用真实 SQLite 和文件，固定条目 id；对比两个真实模型请求，断言其余提示词节与工具完全相同，快照只追加有变化的 memory / project 两节，避免重复基础内容。`memory-prompt.ts` 原文未改。
+- `docs/design/architecture.md` 新增记忆与项目的数据表、文件位置、限额、动态提示词和删除行为。按 t4h 明确授权，同时校正与旧单所有者布局相关的段落：状态和结构说明、HTTP / WebSocket 路由、登录/密钥/模型来源、数据目录与 Trigger id 范围、飞书所属用户、工作区/沙箱/备份、验证范围的多用户排除项；其他路线图 5 内容保留。
+- 验证：`UPDATE_SNAPSHOT=1` 的提示词单测通过。首次完整并行检查受机器高负载影响，84 项中仅现有 R51/R52/R56 的 spawn-answer 等待超时；没有改断言或超时。用 `taskset -c 0 env -u https_proxy -u http_proxy -u all_proxy -u HTTPS_PROXY -u HTTP_PROXY -u ALL_PROXY npm run check:server` 降低本任务并发后，84 项全部通过，无跳过，包含真实 Docker 与本地飞书平台。
+- 无新的协议问题或设计偏离。阶段 A 完成，按 t4h 指示停下，等待合并和阶段 B 的任务。
 
 ## 协议问题
 
-（在这里记录）
+- A-1：`memorySection` 的 8000 字符预算只计条目，不包含前导说明和标签。t4h 已明确接受，照用原文与现有预算，不修改。
+- A-1：原 `memory.add.source` 不接受 `model`，撤销删除模型记忆会丢失来源。t4h 明确授权本次唯一的协议改动：将其放宽为 `MemorySource`；后端照存并测试删除后恢复来源。
+- A-2 沙箱取舍已获 t4h 确认：仍每用户一个容器，整体只读挂载 `projects/`，read/write/edit/delete 只允许当前项目；bash 可以读取同用户其他项目，不拆分容器。

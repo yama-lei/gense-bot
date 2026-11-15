@@ -1,6 +1,6 @@
 # Design：单机自部署的个人助手
 
-状态：路线图 5 后端 B0–B5，2026-11-10。当前范围和决定以 [roadmap-5](../plans/roadmap-5.md) 为准；阶段验证及协议问题见 [backend notes](../plans/roadmap-5-backend-notes.md)。不迁移旧版数据库。
+状态：补充至路线图 7 阶段 A，2026-11-14。多用户数据边界以 [ADR-0006](../adr/0006-multi-user.md) 为准，记忆与项目见 [roadmap-7](../plans/roadmap-7.md)。其余路线图 5 设计及验证保留，见 [roadmap-5](../plans/roadmap-5.md) 和 [backend notes](../plans/roadmap-5-backend-notes.md)。旧单用户布局不自动迁移，可用一次性 `npm run user:import-owner <email>` 导入。
 
 ## 结构与运行
 
@@ -9,13 +9,13 @@ Node 24 直接运行 TypeScript。`packages/protocol` 是浏览器与后端的�
 ```text
 packages/server/src/
   platform/         配置、SQLite、登录、HTTP、备份、Docker sandbox、文件挂载
-  agent/            UserSpace 组装；trees、branches/send、subagents、workspace、ledger、models、credentials、preferences
+  agent/            UserSpace 组装；trees、branches/send、subagents、workspace、ledger、models、credentials、preferences、memory、projects
   events/           自动任务定义、Trigger 存储与恢复、outbox
   channels/         Channel 接口、渠道设置/准入/配对、web Connection、feishu
   plugins/          definePlugin、注册表与设置、builtin/*、mcp/*、skills/*
 ```
 
-一个进程、一个所有者、一个 SQLite WAL 文件。数据库不能同时由多个服务实例打开。`UserSpace` 组装运行时和按职责拆开的操作；pi-durable 负责模型循环、分叉、子 agent、任务调度及崩溃恢复。
+一个进程提供多用户服务：全局 `app.sqlite`，每个用户各有 `UserSpace`、`space.sqlite` 和文件目录，SQLite 使用 WAL。一个数据目录不能同时由多个服务实例打开。进程启动时打开全部未停用用户的空间，飞书和定时任务不依赖浏览器登录。`UserSpace` 组装运行时和按职责拆开的操作；pi-durable 负责模型循环、分叉、子 agent、任务调度及崩溃恢复。
 
 ```text
 网页 WebSocket ───────────────┐
@@ -24,27 +24,34 @@ packages/server/src/
                                                            └──► final + outbox 同一事务 ──► 飞书
 ```
 
-平台入口是 `platform/main.ts`；WebSocket 连接在 `channels/web.ts`。HTTP 提供静态网页、`/api/login`、`/api/logout`、`/api/me`、`/api/password`、`/api/mcp/callback` 和签名的 `/hooks/<id>`。路径路由回退到网页 app shell。
+平台入口是 `platform/main.ts`；WebSocket 连接在 `channels/web.ts`，按登录账号路由到对应 `UserSpace`。HTTP 提供静态网页、`/api/register`、`/api/login`、`/api/logout`、`/api/me`、`/api/password`、管理员 `/api/admin/*`、`/api/users/<userId>/mcp/callback` 和签名的 `/hooks/<userId>/<id>`。路径路由回退到网页 app shell。
 
 ## 登录、密钥与模型
 
-- 只有所有者密码。PBKDF2-SHA256、600,000 次迭代；登录 cookie 为 HttpOnly / SameSite=Lax，HTTPS 加 Secure。数据库只存会话令牌的哈希；连续失败有速率限制。
-- `npm run passwd` 设置密码。`POST /api/password {current,next}` 需有效会话与当前密码；撤销旧会话并给当前浏览器新 cookie。写请求和 WebSocket 握手检查来源。
-- `TOKEN_ENCRYPTION_KEY` 通过 Sealer 的 AES-GCM 加密插件密钥、模型凭据、webhook 密钥、MCP headers/OAuth 数据和渠道凭据。密钥不进 sandbox，浏览器只收到已设置的键名。
-- 模型来自 `.env` 的 relay（OpenAI Responses）和所有者在页面登录的 pi-ai providers。新会话使用默认模型，分叉可单独切换。`GENSE_FAUX=1` 使用本地流式 faux provider。
+- 邮箱和密码账号，角色为 admin / user；第一个注册账号是 admin，管理员可关闭注册或停用用户。PBKDF2-SHA256、600,000 次迭代；登录 cookie 为 HttpOnly / SameSite=Lax，HTTPS 加 Secure。`app.sqlite` 只存会话令牌的哈希；连续失败有速率限制。
+- `npm run passwd <email>` 设置指定已注册用户的密码，`npm run user:admin <email>` 用于管理员恢复。`POST /api/password {current,next}` 需有效会话与当前密码；只撤销该用户的旧会话并给当前浏览器新 cookie。写请求和 WebSocket 握手检查来源。
+- `TOKEN_ENCRYPTION_KEY` 通过 Sealer 的 AES-GCM 加密插件密钥、模型凭据、webhook 密钥、MCP headers/OAuth 数据和渠道凭据（各用户的 `space.sqlite`），以及共享模型密钥（`app.sqlite`）。密钥不进 sandbox，浏览器只收到已设置的键名。
+- 模型来自管理员登记的共享提供方和用户自己的 pi-ai providers（BYOK）。共享提供方及按用户记账的用量在 `app.sqlite`，BYOK 凭据在该用户的 `space.sqlite`；共享模型密钥不发给用户。新会话使用默认模型，分叉可单独切换。`GENSE_FAUX=1` 使用本地流式 faux provider。
 - `prefs` 的称呼与自定义指令作为独立提示词节，下一轮读取最新值。`trees.search` 按标题和各分叉的消息文本搜索，通过 pi-durable 公共 transcript API 读取。
 
 ## 数据、Trigger 与恢复
 
 ```text
 <DATA_DIR>/
-  gense.sqlite       登录、会话索引、Triggers、threads、outbox、设置、Skills 与 pi-durable
-  files/             工作区；agent 看到 /data
-  skill-tmp/         Git 安装临时目录，完成/失败后移除
-  backups/           每日 SQLite 副本
+  app.sqlite                       账号、登录会话、共享模型、用量
+  users/<userId>/
+    space.sqlite                   会话索引、Triggers、threads、outbox、设置、Skills、记忆、项目、pi-durable
+    files/                         仅此用户的文件；该用户的 agent 看到 /data
+      sessions/<treeId>/           对话工作区；同树分叉共用
+      skills/                      该用户共享的 Skills，agent 只读
+      uploads/                     上传暂存区
+      projects/<projectId>/        项目资料，agent 只读
+    skill-tmp/                     Git 安装临时目录，完成/失败后移除
+  backups/app/                     app.sqlite 的每日副本
+  backups/users/<userId>/          该用户 space.sqlite 的每日副本（包含停用用户）
 ```
 
-`triggers` 以来源投递 id 为主键，保存来源、线程、actor、原始输入、准入决定、会话和处理结果。网页 requestId 就是 Trigger id，必须全局唯一。被拒绝的输入保留原因，不建立会话、不调用模型。重复投递不覆盖原决定。内部自动任务以 owner 身份准入，外部渠道只接受该渠道名单中的 actor；首次需要配对。
+各用户的数据库和文件目录构成隔离边界；不同用户可以使用相同的 Trigger id、项目名和文件名。`triggers` 在该用户库内以来源投递 id 为主键，保存来源、线程、actor、原始输入、准入决定、会话和处理结果。网页 requestId 就是 Trigger id，须在该 `UserSpace` 内唯一。被拒绝的输入保留原因，不建立会话、不调用模型。重复投递不覆盖原决定。内部自动任务以该空间用户本人的 owner 身份准入，外部渠道只接受该渠道名单中的 actor；首次需要配对。
 
 `threads` 将 `(source, thread_key)` 映射到会话；`/new` 改写映射。会话有 `TreeMeta.source`；渠道人设只配置渠道创建的会话。网页继续这棵树时，不向原 IM 发送回答。
 
@@ -52,11 +59,19 @@ packages/server/src/
 
 运行最终结果和 final 消息/文件在同一 SQLite 事务入队，outbox id 唯一。文件在入队时保存字节快照。发送后记录回执；失败按指数退避，启动后继续未完成记录。进行中的卡片更新不走 outbox。原进程结束时没有发送的 final 会在重启后发送。
 
+## 记忆与项目
+
+`agent/memory.ts` 管理用户 `space.sqlite` 中的 `memories(id, text, source, treeId, projectId, enabled, createdAt, updatedAt)`；`preferences` 保存 `useMemory` 和 `memoryWrites`。每用户最多 200 条，每条最多 500 字符；写入串行校验容量并拒绝疑似密码、密钥、证件号和卡号。变化向该用户全部网页连接推送，网页与飞书模型调用读取同一份数据。
+
+`agent/projects.ts` 管理同库的 `projects(id, name, color, instructions, createdAt, updatedAt)`；`trees.projectId` 保存整棵对话树的归属。项目资料从 uploads 移到 `users/<userId>/files/projects/<projectId>/`，模型中的路径为 `/data/projects/<projectId>/`；单文件最多 20 MB，一个项目总量最多 200 MB。删除项目时可删除所属对话及其工作区，或保留对话并移出项目；两种方式都删除项目文件和项目记忆。
+
+系统提示词靠后的 `memory` 和 `project` 节由 `agent/memory-prompt.ts` 的原文函数生成，每轮读取当前数据。记忆只包含启用的全局条目及当前项目条目，按更新时间优先并限制条目文本预算为 8000 字符；关闭参考记忆也会移除 `memory` 工具。项目节包含当前指令和资料清单，移入/移出、修改指令和分叉都在后续轮次生效，不在首条用户消息里保存项目指令。
+
 ## 飞书 / Lark
 
 使用官方 `@larksuiteoapi/node-sdk` 的 WSClient 与 Client，不开放公网事件回调。渠道声明设置：App ID、加密的 App Secret、飞书/Lark、流式开关、群上下文条数、Bot 人设。`PUBLIC_URL` 是卡片内网页链接的公开地址，也是 MCP OAuth 回调的基址。
 
-- 所有者在网页生成一次性配对码，十分钟内私聊发送给 Bot。绑定与配对 Trigger 在同一事务落库；码不能重放。其他身份需所有者显式 allow，可 revoke。
+- 每个用户在自己的空间配置自己的 Bot，在网页生成一次性配对码，十分钟内私聊发送给 Bot。绑定与配对 Trigger 在同一事务落库；码不能重放。其他身份需该用户显式 allow，可 revoke。
 - 私聊持续使用同一棵会话树；群聊只响应 @Bot。按 thread_id，或被回复的根消息分会话，携带被回复消息和有限的话题历史。未 @ 或未获准的消息记录拒绝，附件也不会下载。
 - `/new`、`/stop`、`/model [provider/id]`、`/help` 不调用模型。命令结果也通过 outbox 投递，未完成的命令启动时恢复。
 - 实时读取 `pi.live.generation.message`，约每秒更新同一卡片；保存卡片身份，使 final 可在重启后继续更新。final 等待进行中写入完成，避免旧片段覆盖完整回答。群回复留在原话题。
@@ -77,14 +92,14 @@ SQLite 保留安装来源、元数据和所有字节；启用的目录投影到 
 
 ## 工作区、sandbox 与备份
 
-每棵树的 cwd 为 `/data/sessions/<treeId>`。文件工具直接访问挂载目录，限制在本树工作区；Skills 只读。read/write/edit/delete 使用文件账本，在修改已有文件前必须先读，读后内容改变则拒绝覆盖。
+每棵树的 cwd 为 `/data/sessions/<treeId>`，对应当前用户的 `files/sessions/<treeId>/`。文件工具直接访问挂载目录，只修改本树工作区；该用户的 Skills 和当前项目资料只读。read/write/edit/delete 使用文件账本，在修改已有文件前必须先读，读后内容改变则拒绝覆盖。
 
-bash 通过宿主 Docker CLI 在隔离容器执行，默认 1 GB 内存、2 CPU、120 秒命令超时，空闲后停止。容器按 files 目录哈希命名，避免不同数据目录互相停止。容器可联网，防火墙拒绝宿主/内网地址，不含宿主密钥。生产镜像带 Git（用于 Skill 安装）和 Docker 客户端；bind mount 的数据路径在容器内外相同。
+bash 通过宿主 Docker CLI 在隔离容器执行，默认 1 GB 内存、2 CPU、120 秒命令超时，空闲后停止。每用户一个容器，按数据目录哈希加用户 id 命名，只挂载该用户的 files，避免不同数据目录和用户互相影响。`projects/` 整体只读挂载，read 工具和文件面板限当前项目，write/edit/delete 不允许修改项目资料；bash 可以读取同用户其他项目，这是单用户容器的已接受取舍。容器可联网，防火墙拒绝宿主/内网地址，不含宿主密钥。生产镜像带 Git（用于 Skill 安装）和 Docker 客户端；bind mount 的数据路径在容器内外相同。
 
-每日 `VACUUM INTO` 创建完整数据库副本（完成后改名），默认保留七份；`BACKUPS=0` 关闭。恢复时停服，替换 gense.sqlite 并移除旧 WAL/SHM 后启动。
+每日为 `app.sqlite` 和每个用户的 `space.sqlite`（包括停用用户）用 `VACUUM INTO` 创建完整副本（完成后改名），默认保留七份；`BACKUPS=0` 关闭。恢复时停服，替换对应的 app.sqlite / space.sqlite 并移除它的旧 WAL/SHM 后启动；文件目录需要另行保留或恢复。
 
 ## 验证范围
 
 `npm run check:server` 只检查 protocol/server 类型并运行服务端全部测试，不依赖正在重写的前端。测试使用真实 SQLite、文件、faux 模型和可用的 Docker sandbox；MCP 是本地 JSON-RPC/OAuth HTTP 服务，飞书是本地 HTTP + protobuf WebSocket 服务。包含 SIGKILL 后模型恢复、final outbox 恢复、重复投递、文件与工具完整过程。真实平台凭据与 VPS 部署仍需部署环境验证。
 
-本轮不实现多用户、Ticket/Mandate、GitHub/GitLab Source、内置日历、smail、Drive 或其他 IM。依据见 [roadmap-5](../plans/roadmap-5.md) 和 [ADR-0005](../adr/0005-event-driven-vps.md)。
+多用户已按 [ADR-0006](../adr/0006-multi-user.md) 实现。不实现 Ticket/Mandate、GitHub/GitLab Source、内置日历、smail、Drive 或其他 IM；其余范围依据仍见 [roadmap-5](../plans/roadmap-5.md) 和 [ADR-0005](../adr/0005-event-driven-vps.md)。

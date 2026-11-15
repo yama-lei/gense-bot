@@ -79,6 +79,21 @@ export const migrations = [
       'CREATE TABLE webhooks (id TEXT PRIMARY KEY, treeId TEXT NOT NULL, secret TEXT NOT NULL, createdAt INTEGER NOT NULL, lastUsedAt INTEGER)',
     ],
   },
+  {
+    version: 4,
+    statements: [
+      'CREATE TABLE memories (id TEXT PRIMARY KEY, text TEXT NOT NULL, source TEXT NOT NULL, treeId TEXT, projectId TEXT, enabled INTEGER NOT NULL, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL)',
+      'CREATE INDEX memories_updated ON memories (updatedAt DESC)',
+    ],
+  },
+  {
+    version: 5,
+    statements: [
+      'CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, color INTEGER NOT NULL, instructions TEXT NOT NULL, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL)',
+      'ALTER TABLE trees ADD COLUMN projectId TEXT',
+      'CREATE INDEX trees_project ON trees (projectId)',
+    ],
+  },
 ]
 
 /** Who the assistant is and how it answers (roadmap-6 A10). Only the date changes, once a day, so the prompt cache holds. */
@@ -164,11 +179,11 @@ export interface SpaceOptions {
   webhooks?: boolean
 }
 
-export type TreeRow = { id: string; rootId: number; title: string; pinned: number; createdAt: number; updatedAt: number; activeBranchId: string; source: string | null }
+export type TreeRow = { id: string; rootId: number; title: string; pinned: number; createdAt: number; updatedAt: number; activeBranchId: string; source: string | null; projectId: string | null }
 
-export const COLUMNS = 'id, rootId, title, pinned, createdAt, updatedAt, activeBranchId, source'
+export const COLUMNS = 'id, rootId, title, pinned, createdAt, updatedAt, activeBranchId, source, projectId'
 
-export const toMeta = ({ rootId: _, activeBranchId: __, source, ...r }: TreeRow): TreeMeta => ({ ...r, pinned: r.pinned === 1, ...(source && { source: JSON.parse(source) }) })
+export const toMeta = ({ rootId: _, activeBranchId: __, source, projectId, ...r }: TreeRow): TreeMeta => ({ ...r, pinned: r.pinned === 1, ...(source && { source: JSON.parse(source) }), ...(projectId && { projectId }) })
 
 export type BranchRow = {
   id: string

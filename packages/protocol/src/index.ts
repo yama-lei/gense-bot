@@ -12,6 +12,9 @@ export * from './accounts.ts'
 export * from './notes.ts'
 export * from './plugins.ts'
 export * from './discover.ts'
+export * from './memory.ts'
+
+import type { Memory, Project } from './memory.ts'
 
 /** A conversation as the sidebar lists it: a tree of branches, titled by its main branch (roadmap-3 R35). */
 export interface TreeMeta {
@@ -20,6 +23,8 @@ export interface TreeMeta {
   pinned: boolean
   /** The channel it started in, when not the web: `feishu` and the chat's name. */
   source?: { kind: string; label: string }
+  /** The project it belongs to (roadmap-7 A7); a conversation is in at most one. */
+  projectId?: string
   createdAt: number
   updatedAt: number
 }
@@ -38,6 +43,10 @@ export interface Preferences {
   instructions: string
   /** IANA time zone, e.g. Asia/Shanghai; the web client keeps it in step with the browser. */
   timeZone?: string
+  /** Send enabled memories to the model, and offer it the `memory` tool (A2). Default true. */
+  useMemory?: boolean
+  /** `explicit`: the model writes memories only when the user asks it to (Q1). Default `auto`. */
+  memoryWrites?: 'auto' | 'explicit'
 }
 
 export type BranchRole = 'main' | 'user' | 'agent'
@@ -190,12 +199,31 @@ export interface WebhookInfo {
 
 /** Requests carry an `id`; the host answers each with one `reply`. */
 export type ClientRequest =
-  | { t: 'tree.create'; id: number }
-  | { t: 'tree.update'; id: number; treeId: string; title?: string; pinned?: boolean }
+  /** Resolves to the new TreeMeta; with `projectId` it starts in that project. */
+  | { t: 'tree.create'; id: number; projectId?: string }
+  /** `projectId: null` takes it out of its project. */
+  | { t: 'tree.update'; id: number; treeId: string; title?: string; pinned?: boolean; projectId?: string | null }
   | { t: 'tree.delete'; id: number; treeId: string }
   /** Conversations whose title or messages match; resolves to TreeHit[], best first. */
   | { t: 'trees.search'; id: number; query: string; limit?: number }
-  | { t: 'prefs.set'; id: number; name?: string; instructions?: string; timeZone?: string }
+  | { t: 'prefs.set'; id: number; name?: string; instructions?: string; timeZone?: string; useMemory?: boolean; memoryWrites?: 'auto' | 'explicit' }
+  /** Resolves to the new Memory. `source` is `manual` unless it is `saved` from an answer of `treeId`. */
+  | { t: 'memory.add'; id: number; text: string; source?: 'manual' | 'saved'; treeId?: string; projectId?: string | null; enabled?: boolean }
+  /** Resolves to the changed Memory. */
+  | { t: 'memory.update'; id: number; memoryId: string; text?: string; enabled?: boolean; projectId?: string | null }
+  | { t: 'memory.remove'; id: number; memoryId: string }
+  /** Resolves to the new Project. */
+  | { t: 'project.create'; id: number; name: string; instructions?: string; color?: number }
+  | { t: 'project.update'; id: number; projectId: string; name?: string; instructions?: string; color?: number }
+  /** Deletes its files and its memories; its conversations are deleted with `deleteChats`, otherwise moved out. */
+  | { t: 'project.delete'; id: number; projectId: string; deleteChats: boolean }
+  /** Resolves to FileEntry[] with paths under projectDir(projectId). */
+  | { t: 'project.files.list'; id: number; projectId: string }
+  /** Moves uploads (ids from `upload`) into the project; resolves to FileEntry[]. Fails past PROJECT_LIMITS.files. */
+  | { t: 'project.files.add'; id: number; projectId: string; uploads: string[] }
+  | { t: 'project.files.delete'; id: number; projectId: string; path: string }
+  /** Resolves to `{ name, mimeType, base64 }`. */
+  | { t: 'project.files.read'; id: number; projectId: string; path: string }
   /**
    * `attachments` are upload ids; they are copied into the tree's workspace. Goes to `branchId`, or the active branch.
    * With `replace` (a user entry id) the message is an edit: it goes to a new branch beside that message (R37).
@@ -300,6 +328,10 @@ export type ServerMessage =
   | { t: 'skills'; skills: SkillInfo[]; canInstall: boolean }
   | { t: 'channels'; channels: ChannelInfo[] }
   | { t: 'prefs'; prefs: Preferences }
+  /** All of the user's memories, newest first; sent on connect and after every change. */
+  | { t: 'memories'; memories: Memory[] }
+  /** All of the user's projects, newest first; sent on connect and after every change. */
+  | { t: 'projects'; projects: Project[] }
   | { t: 'schedules'; schedules: ScheduleInfo[] }
   /** `canCreate` is false when the host has no TOKEN_ENCRYPTION_KEY to seal a webhook's secret. */
   | { t: 'webhooks'; webhooks: WebhookInfo[]; canCreate: boolean }

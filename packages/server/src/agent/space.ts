@@ -52,6 +52,7 @@ import * as subagents from './subagents.ts'
 import * as trees from './trees.ts'
 import * as webhooks from './webhooks.ts'
 import { compact, compactionPolicy, compactionRegistry } from './compaction.ts'
+import { deepseekRegistry, initializeDeepseek } from './deepseek.ts'
 export type { SpaceOptions } from './shared.ts'
 export class UserSpace {
 
@@ -127,6 +128,7 @@ export class UserSpace {
   /** Opens the database's host tables and pi-durable storage. The Harness owns `db` and closes it in `close()`. */
   static async open(db: SqliteDatabase, options: SpaceOptions, ctx: Context = BACKGROUND_CONTEXT) {
     await applySqliteMigrations(db, migrations, { table: 'app_migrations' })
+    await initializeDeepseek(db)
     const triggers = await TriggerStore.open(db)
     const channels = await ChannelHub.open(db, options.secretKey)
     const outbox = new Outbox(db, item => channels.deliver(item), options.outboxRetryMs)
@@ -191,7 +193,7 @@ export class UserSpace {
     }
     const harness = await Harness.open(
       storage,
-      { ...options.harness, settings, models: accounts.models, registry: compactionRegistry(registry), env: ({ cwd }) => workspace.agentEnv(cwd ?? DATA_DIR) },
+      { ...options.harness, settings, models: accounts.models, registry: deepseekRegistry(compactionRegistry(registry), getSpace), env: ({ cwd }) => workspace.agentEnv(cwd ?? DATA_DIR) },
       ctx,
     )
     space = new UserSpace(db, harness, workspace, plugins, skills, accounts, options, preferences, mcp, channels, triggers, outbox)

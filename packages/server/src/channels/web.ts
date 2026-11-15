@@ -7,6 +7,7 @@ import { compactionOutcome } from '../agent/compaction.ts'
 import type { UserSpace } from '../agent/space.ts'
 import { fromBase64 } from '../agent/workspace.ts'
 import { discoverCatalog } from '../plugins/discover.ts'
+import { nativeState } from '../agent/deepseek.ts'
 
 export interface ConnectionOptions {
   space: UserSpace
@@ -16,6 +17,7 @@ export interface ConnectionOptions {
 export class Connection {
   readonly #o: ConnectionOptions
   readonly #watches = new Map<string, ConversationWatch>()
+  readonly #shown = new Map<string, string>()
   /** Logins this socket runs, and the prompts they wait on; closing the socket cancels them. */
   readonly #logins = new Map<string, AbortController>()
   readonly #prompts = new Map<string, (value: string | undefined) => void>()
@@ -32,6 +34,12 @@ export class Connection {
 
   async start() {
     const { space } = this.#o
+    const native = nativeState(space)
+    const onNative = (treeId: string, branchId: string, trace: import('@gense/protocol').NativeTrace) => {
+      if (this.#shown.get(treeId) === branchId) this.#send({ t: 'native', treeId, branchId, trace })
+    }
+    native.listeners.add(onNative)
+    this.#unsubscribe.push(() => native.listeners.delete(onNative))
     this.#send({ t: 'hello' })
     this.#send({ t: 'channels', channels: space.channels.list() })
     this.#unsubscribe.push(space.channels.subscribe(() => this.#send({ t: 'channels', channels: space.channels.list() })))
@@ -279,9 +287,12 @@ export class Connection {
     const { branchId: shown, watch } = await space.watch(treeId, branchId)
     if (this.#closed) return void (await watch.stop())
     this.#watches.set(treeId, watch)
+    this.#shown.set(treeId, shown)
     this.#send({ t: 'branches', treeId, ...(await space.branches(treeId)) })
     const enc = encoder()
     this.#send({ t: 'view', treeId, branchId: shown, value: watch.value })
+    const trace = nativeState(space).traces.get(shown)
+    if (trace) this.#send({ t: 'native', treeId, branchId: shown, trace })
     let previous: { running: CompactionStatus[]; failure?: CompactionFailure } | undefined
     const summaries = new Set<number>()
     const compactions = (value: ConversationView) => {
@@ -316,6 +327,7 @@ export class Connection {
   async #unwatch(treeId: string) {
     const watch = this.#watches.get(treeId)
     this.#watches.delete(treeId)
+    this.#shown.delete(treeId)
     await watch?.stop()
   }
 

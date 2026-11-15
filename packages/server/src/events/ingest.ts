@@ -5,6 +5,7 @@ import type { UserSpace } from '../agent/space.ts'
 import type { send as sendInput } from '../agent/branches.ts'
 import { entryText } from '../agent/shared.ts'
 import type { StoredTrigger } from './store.ts'
+import { NATIVE_KIND } from '@gense/protocol'
 
 type SendInput = Parameters<typeof sendInput>[1]
 type SendResult = Awaited<ReturnType<typeof sendInput>>
@@ -79,9 +80,14 @@ export function monitorChannel(this: UserSpace, triggerId: string, treeId: strin
         const view = value as ConversationView
         const entries = view.entries ?? []
         const user = entries.findLast(e => e.kind === 'pi.user')
-        const committed = entries.filter(e => e.kind === 'pi.assistant' && (!user || e.id > user.id)).map(entryText).filter(Boolean).join('\n\n')
+        // Native safety review is terminal: do not publish text that could later be refused to an external channel.
+        const committed = entries.filter(e => e.kind === 'pi.assistant' && (!user || e.id > user.id)).flatMap(e => {
+          const message = e.model?.[0] as import('../agent/deepseek.ts').DeepSeekMessage | undefined
+          return message?.deepseek?.trace.refusal ? ['这个问题我没法回答。'] : [entryText(e)]
+        }).filter(Boolean).join('\n\n')
         const live = view.docs['pi.live'] as { generation?: { message?: { content?: { type: string; text?: string }[] } } } | undefined
-        const partial = live?.generation?.message?.content?.filter(c => c.type === 'text').map(c => c.text ?? '').join('') ?? ''
+        const generation = live?.generation?.message as import('../agent/deepseek.ts').DeepSeekMessage | undefined
+        const partial = generation?.deepseek ? '' : generation?.content?.filter(c => c.type === 'text').map(c => c.text ?? '').join('') ?? ''
         const text = [committed, partial && partial !== committed ? partial : ''].filter(Boolean).join('\n\n')
         if (text) void this.triggers.get(triggerId).then(row => row && this.channels.render(row.source, triggerId, treeId, text)).catch(() => {})
       }
@@ -96,7 +102,8 @@ export function monitorChannel(this: UserSpace, triggerId: string, treeId: strin
       const { entries } = await conv.context(ctx)
       const answerId = settled.status === 'done' && settled.type === 'input' ? settled.answer : undefined
       const answer = entries.find(e => e.id === answerId)
-      const text = answer ? entryText(answer) : settled.status === 'unanswered' ? `本次回答已停止或失败（${settled.reason}）。` : '本次回答已结束。'
+      const refusal = (answer?.model?.[0] as import('../agent/deepseek.ts').DeepSeekMessage | undefined)?.deepseek?.trace.refusal || entries.some(e => e.kind === NATIVE_KIND && e.id === (answerId ?? -2) + 1 && (e.data as { refusal?: boolean })?.refusal)
+      const text = refusal ? '这个问题我没法回答。' : answer ? entryText(answer) : settled.status === 'unanswered' ? `本次回答已停止或失败（${settled.reason}）。` : '本次回答已结束。'
       const runEntries = entries.filter(e => e.kind !== 'pi.user' && settled.entry !== undefined && e.id >= settled.entry && (answerId === undefined || e.id <= answerId)).map(e => ({ id: e.id, kind: e.kind, model: e.model }))
       const items: OutboxItem[] = [{ id: triggerId + ':final', channelId: row.source, triggerId, treeId, kind: 'message', payload: { ...trigger.destination, text, treeId, entries: runEntries } }]
       const workspace = await this.workspace.list(treeId)

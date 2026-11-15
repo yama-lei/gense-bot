@@ -1,0 +1,13 @@
+event: message_start
+data: {"type":"message_start","message":{"id":"ds-error","model":"deepseek-flash","usage":{"input_tokens":3,"output_tokens":0}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Partial"}}
+
+event: error
+data: {"type":"error","error":{"type":"api_error","message":"Generation failed"},"usage":{"input_tokens":91,"cache_read_input_tokens":9,"output_tokens":7,"server_tool_use":{"tool_search":3,"tool_fetch":2,"tool_image_search":1}}}
+
+: end of authored fixture

@@ -17,6 +17,10 @@ export class PreferenceStore {
   subscribe(listener: () => void) { this.#listeners.add(listener); return () => { this.#listeners.delete(listener) } }
   async set(patch: Partial<Preferences>) {
     const next = { ...this.#value }
+    if (patch.deepseekSafety !== undefined) {
+      if (typeof patch.deepseekSafety !== 'boolean') throw new Error('偏好无效')
+      next.deepseekSafety = patch.deepseekSafety
+    }
     for (const key of ['name', 'instructions', 'timeZone'] as const) {
       if (patch[key] === undefined) continue
       if (typeof patch[key] !== 'string' || patch[key].length > (key === 'instructions' ? 20_000 : 200)) throw new Error('偏好无效')

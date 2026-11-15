@@ -49,6 +49,8 @@ export class Connection {
     this.#send({ t: 'memories', memories: await space.memories.list() })
     this.#unsubscribe.push(space.projects.subscribe(projects => this.#send({ t: 'projects', projects })))
     this.#send({ t: 'projects', projects: await space.projects.list() })
+    if (space.shares) this.#unsubscribe.push(space.shares.subscribe(shares => this.#send({ t: 'shares', shares })))
+    this.#send({ t: 'shares', shares: await space.shares?.list() ?? [] })
     const accounts = async () => {
       const { accounts } = space
       this.#send({ t: 'providers', providers: accounts.providers() })
@@ -107,6 +109,12 @@ export class Connection {
       case 'tree.delete':
         await this.#unwatch(r.treeId)
         return space.deleteTree(r.treeId)
+      case 'share.create':
+        return space.shareLinks.create(r.treeId, r.snapshot)
+      case 'share.update':
+        return space.shareLinks.update(r.token, r.snapshot)
+      case 'share.delete':
+        return space.shareLinks.remove(r.token)
       case 'send':
         return space.send(r.treeId, {
           text: r.text,

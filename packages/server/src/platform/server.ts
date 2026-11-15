@@ -11,6 +11,7 @@ import type { HostConfig } from './config.ts'
 import { Spaces } from './spaces.ts'
 import { lockData } from './data-lock.ts'
 import { AppStore } from './app.ts'
+import { ShareRateLimit, ShareStore } from './shares.ts'
 import { readJson } from './http.ts'
 import type { SharedProviderInput, UserPatch } from '@gense/protocol'
 
@@ -63,16 +64,18 @@ async function openServer(config: HostConfig, unlock: () => Promise<void>) {
   try {
     const auth = await Auth.open(db)
     const app = await AppStore.open(db, config.secretKey)
-    const spaces = new Spaces(config, auth, app)
-    cleanup = async () => { await spaces.close(); await db.close() }
+    const shares = await ShareStore.open(db), shareLimit = new ShareRateLimit()
+    const spaces = new Spaces(config, auth, app, shares)
+    cleanup = async () => { await spaces.close(); await shares.flush(); await db.close() }
     await spaces.start()
     const backups = config.backups === false ? undefined : startBackups(db, join(config.dataDir, 'backups', 'app'), config.backups)
-    cleanup = async () => { await backups?.stop(); await spaces.close(); await db.close() }
+    cleanup = async () => { await backups?.stop(); await spaces.close(); await shares.flush(); await db.close() }
 
     async function staticFile(res: ServerResponse, path: string) {
+      const sharedPage = /^\/s\/[^/]+\/?$/.test(path)
       const file = normalize(join(config.webDir, decodeURIComponent(path)))
       const inside = file.startsWith(config.webDir + sep)
-      const found = inside && (await stat(file).catch(() => undefined))?.isFile()
+      const found = !sharedPage && inside && (await stat(file).catch(() => undefined))?.isFile()
       // Client-side routes fall back to the app shell.
       const target = found ? file : join(config.webDir, 'index.html')
       const body = await readFile(target).catch(() => undefined)
@@ -81,6 +84,7 @@ async function openServer(config: HostConfig, unlock: () => Promise<void>) {
       res.writeHead(200, {
         'content-type': TYPES[extname(target)] ?? 'application/octet-stream',
         'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
+        ...(sharedPage && { 'x-robots-tag': 'noindex', 'referrer-policy': 'no-referrer' }),
       })
       res.end(body)
     }
@@ -91,8 +95,17 @@ async function openServer(config: HostConfig, unlock: () => Promise<void>) {
         if (!(await signedIn(auth, request))) ws.close(4401, 'Session expired')
       }))
     }
-    async function api(request: Request): Promise<Response> {
+    async function api(request: Request, ip: string): Promise<Response> {
       const url = new URL(request.url), path = url.pathname
+      const shared = /^\/api\/share\/([^/]+)$/.exec(path)
+      if (shared) {
+        // Public snapshots do not inspect cookies or resolve a user runtime.
+        const headers = { 'x-robots-tag': 'noindex' }
+        if (request.method !== 'GET') return json(405, { error: 'GET only' }, { ...headers, allow: 'GET' })
+        if (!shareLimit.allow(ip)) return json(429, { error: '访问过于频繁，请稍后再试' }, { ...headers, 'retry-after': '60' })
+        const page = await shares.page(shared[1]!)
+        return page ? json(200, page, headers) : json(404, { error: '分享链接不存在或已撤销' }, headers)
+      }
       const userRoute = /^\/api\/users\/([^/]+)\/(.*)$/.exec(path)
       const hook = /^\/hooks\/([^/]+)\/([^/]+)$/.exec(path)
       const user = await signedIn(auth, request)
@@ -166,7 +179,7 @@ async function openServer(config: HostConfig, unlock: () => Promise<void>) {
     const server = createServer((req, res) => {
       const path = new URL(req.url ?? '/', 'http://x').pathname
       const handled = path.startsWith('/api/') || path.startsWith('/hooks/')
-        ? toRequest(req).then(api).then(r => send(res, r))
+        ? toRequest(req).then(request => api(request, req.socket.remoteAddress ?? 'unknown')).then(r => send(res, r))
         : staticFile(res, path)
       handled.catch((error) => {
         if (!res.headersSent) void send(res, json(500, { error: error instanceof Error ? error.message : String(error) }))

@@ -190,6 +190,15 @@
 
 - C-2（2026-11-14）：已基于 `feat/r7-int` 集成 A。Messages 包装保留原生块、引用与签名，按提供方/模型/上下文回放；`app.native` 与助手条目同事务相邻保存，提供分支范围的节流推送。共享安全强制 high、BYOK 可关；拒答清空正文/思考/客户端调用并正常结束，飞书等待终态后使用固定拒答说明；手动改标题有持久标记。SSE error 和输入 400 的用量从 fetch 包装补齐。原生 5 项测试覆盖本地 HTTP→真实 SDK→SQLite、重启、分叉、两种拒答、错误用量、标题竞争和侧调用。清除代理并用 `taskset -c 0` 跑 `npm run check:server`，90 项全部通过；先前一次高负载运行仅旧 V6 短等待超时，未改测试。无真实 API 验证；压缩/跨模型及协议推送的额外验收留 C-6。
 
+### B-1 分享链接（2026-11-14）
+
+- 从集成分支 `feat/r7-int`（`1f7a2db`）建立 `feat/r7-b-server`，工作区为 `/mnt/data/linux/repos/gense-wt/r7-b`。未修改 web 或 protocol。
+- 新模块 `platform/shares.ts` 在 `app.sqlite` 建立 shares 表和索引，保存前端快照，不解释正文、界面输入或结果语义。TypeBox 校验完整结构，检查 UTF-8 JSON 的 8 MB 上限、500 轮上限、图片 data URL 前缀，标题截断为 200 字符；token 为 16 字节随机数的 base64url。
+- `share.create/update/delete` 校验所属用户和对话，更新保持原 token；首次连接和修改后向该用户全部连接推送 shares。共享链接变更与删除对话共用按用户的队列，删除对话时撤销其全部链接，避免并发创建留下孤立链接。
+- 公开 `GET /api/share/:token` 在登录检查之前读取全局库，不解析 cookie，返回快照与 updatedAt；设置 noindex / no-store / JSON 头，按 socket IP 限制每分钟 60 次。`/s/:token` 返回网页入口并设置 noindex / no-referrer。
+- 验证：3 组 B1–B4 专项测试覆盖真实 SQLite / HTTP / 双用户及双设备 WebSocket、原样保存及后续消息不进入旧快照、更新/撤销/重启、删除对话撤销、全局库位置、无效 cookie、限流及伪造转发头、结构/UTF-8 大小/轮数/图片校验与精确 8 MB 边界。按要求用 `taskset -c 0` 并清除代理运行 `npm run check:server`，88 项全部通过，无跳过。
+- 无协议问题或设计偏离。临时对话的拒绝逻辑将在 B-2 接入 expiresAt。
+
 ## 协议问题
 
 

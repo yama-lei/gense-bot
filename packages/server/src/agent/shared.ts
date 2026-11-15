@@ -158,6 +158,8 @@ export interface SpaceOptions {
   models: ModelSetup | (() => ModelSetup)
   /** Host-only tenant identity and model metering, installed before work resumes. */
   userId?: string
+  /** Public snapshot storage belongs to app.sqlite; direct standalone Harness tests need no public host. */
+  shares?: import('../platform/shares.ts').ShareStore
   meterModels?: (models: import('@earendil-works/pi-ai').MutableModels, source: (provider: string) => import('@gense/protocol').ModelSource) => void
   /** Seals the user's plugin secrets and model credentials. */
   secretKey?: string

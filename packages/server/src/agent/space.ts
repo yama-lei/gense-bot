@@ -10,6 +10,7 @@ import { defineExtension, section } from '@earendil-works/pi-durable'
 import { PreferenceStore } from './preferences.ts'
 import { MemoryStore, memoryExtension } from './memory.ts'
 import { ProjectStore, projectExtension } from './projects.ts'
+import type { UserShares } from '../platform/shares.ts'
 // One user's conversations: a pi-durable Harness plus the sidebar index, in the same SQLite database (roadmap-3 D2).
 // A tree is a main conversation and the branches forked from it, all ownerless; tree and branch ids are ours,
 // conversation ids are pi-durable's. Each tree has one workspace directory, every branch's cwd (D6).
@@ -85,6 +86,7 @@ export class UserSpace {
   readonly preferences: PreferenceStore
   readonly memories: MemoryStore
   readonly projects: ProjectStore
+  readonly shares: UserShares | undefined
   readonly accounts: ModelAccounts
 
   readonly options: SpaceOptions
@@ -112,6 +114,8 @@ export class UserSpace {
     this.projects = new ProjectStore(this)
     this.accounts = accounts
     this.options = options
+    if (options.shares && !options.userId) throw new Error('分享存储需要用户 id')
+    this.shares = options.shares?.forUser(options.userId!, id => this.row(id), () => this.now())
     harness.subscribeCommits((publication) => {
       for (const c of publication.changes) {
         if (c.type !== 'document' || c.record.kind !== 'pi.live' || c.conversationId === undefined) continue
@@ -221,6 +225,11 @@ export class UserSpace {
   /** Webhook secrets are sealed, so creating one needs the host's TOKEN_ENCRYPTION_KEY. */
   get canCreateWebhooks() {
     return !!this.sealer
+  }
+
+  get shareLinks() {
+    if (!this.shares) throw new Error('这个部署没有开启公开分享')
+    return this.shares
   }
 
   closed = false

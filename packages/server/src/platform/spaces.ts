@@ -13,18 +13,21 @@ import { startBackups } from './backup.ts'
 import type { Auth } from './auth.ts'
 import type { AppStore } from './app.ts'
 import type { HostConfig } from './config.ts'
+import type { ShareStore } from './shares.ts'
 
 export const userDir = (dataDir: string, userId: string) => resolve(dataDir, 'users', userId)
 export class Spaces {
   readonly #config: HostConfig
   readonly #auth: Auth
   readonly #app: AppStore
+  readonly #shares: ShareStore
   readonly #opened = new Map<string, { space: UserSpace; sandbox?: Sandbox; backup?: ReturnType<typeof startBackups> }>()
   readonly #inactive = new Map<string, { db: import('@earendil-works/chord/sqlite').SqliteDatabase; backup: ReturnType<typeof startBackups> }>()
   readonly #queues = new Map<string, Promise<unknown>>()
   readonly #unsubscribe: () => void
-  constructor(config: HostConfig, auth: Auth, app: AppStore) {
+  constructor(config: HostConfig, auth: Auth, app: AppStore, shares: ShareStore) {
     this.#config = config; this.#auth = auth; this.#app = app
+    this.#shares = shares
     this.#unsubscribe = app.subscribe(async () => { await Promise.all([...this.#opened.values()].map(r => r.space.accounts.refreshHost())) })
   }
   get(userId: string) { return this.#opened.get(userId)?.space }
@@ -62,7 +65,7 @@ export class Spaces {
       const development = config.models()
       const models = () => { const shared = this.#app.models(); const options = [...shared.options, ...development.options]; return { providers: [...shared.providers, ...development.providers], options, defaultModel: options[0] ?? null, kinds: { ...development.kinds, ...shared.kinds } } }
       try {
-        space = await UserSpace.open(db, { userId, models, env, plugins: config.plugins, secretKey: config.secretKey, sandbox: !!sandbox, webhooks: true, skillTempDir: join(dir, 'skill-tmp'), mcp: { publicUrl: config.publicUrl, callbackPath: `/api/users/${userId}/mcp/callback` }, feishu: { ...config.feishu, publicUrl: config.publicUrl }, meterModels: (registry, source) => this.#app.meter(userId, registry, source) })
+        space = await UserSpace.open(db, { userId, shares: this.#shares, models, env, plugins: config.plugins, secretKey: config.secretKey, sandbox: !!sandbox, webhooks: true, skillTempDir: join(dir, 'skill-tmp'), mcp: { publicUrl: config.publicUrl, callbackPath: `/api/users/${userId}/mcp/callback` }, feishu: { ...config.feishu, publicUrl: config.publicUrl }, meterModels: (registry, source) => this.#app.meter(userId, registry, source) })
         const backup = config.backups === false ? undefined : startBackups(db, join(config.dataDir, 'backups', 'users', userId), config.backups)
         this.#opened.set(userId, { space, sandbox, backup })
         await space.accounts.refreshHost()

@@ -1,8 +1,9 @@
-import type { EventData, FeedbackReason, MemoryToolDetails, ModelInfo } from '@gense/protocol'
+import type { EventData, FeedbackReason, MemoryToolDetails, ModelInfo, NativeSource, NativeStep } from '@gense/protocol'
 import { FEEDBACK_REASONS, MEMORY_LIMITS } from '@gense/protocol'
 import {
   BookmarkPlus,
   Bot,
+  BookOpen,
   Brain,
   Check,
   CornerDownRight,
@@ -15,12 +16,16 @@ import {
   FolderOpen,
   GitBranch,
   Globe,
+  ImageIcon,
   Info,
   MessageSquare,
   PencilLine,
   Puzzle,
   Radio,
   RefreshCw,
+  ScanText,
+  Search,
+  ShieldAlert,
   Slash,
   Square,
   ThumbsDown,
@@ -49,7 +54,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Tooltip } from '../../ui/tooltip'
 import { CompactionDivider } from './Compaction'
 import { Markdown } from './Markdown'
-import { canSpeak, useSpeech } from './speech'
+import { useCanSpeak, useSpeech } from './speech'
 import { hasView, ViewSlot } from './ViewSlot'
 
 export interface TurnContext {
@@ -114,6 +119,7 @@ export function TurnView({ turn, ctx, last: newest }: { turn: Turn; ctx: TurnCon
   const own = !turn.event && turn.brief === undefined
   const canChange = !ctx.busy && own
   const parts = segments(turn.blocks, ctx.tools)
+  const canSpeak = useCanSpeak()
   // An Event that did not wake the conversation has no answer of its own; the next turn reads it.
   const passive = !!turn.event && parts.length === 0 && turn.status === 'succeeded'
   const model = turn.model ? (ctx.models.find((m) => modelKey(m) === turn.model)?.name ?? turn.model.slice(turn.model.indexOf(':') + 1)) : ''
@@ -133,7 +139,7 @@ export function TurnView({ turn, ctx, last: newest }: { turn: Turn; ctx: TurnCon
       {!passive && (
         <div className="flex min-w-0 flex-col gap-3">
           {turn.status === 'queued' && <Working label="排队中" />}
-          {turn.status === 'running' && parts.length === 0 && <Working label="正在思考" />}
+          {turn.status === 'running' && parts.length === 0 && !turn.refusal && <Working label="正在思考" />}
           {parts.map((s, i) => {
             const last = i === parts.length - 1
             if (s.kind === 'text') return <Markdown key={i} text={s.text} streaming={last && turn.status === 'running'} />
@@ -157,6 +163,15 @@ export function TurnView({ turn, ctx, last: newest }: { turn: Turn; ctx: TurnCon
           {/* The model is working but the last thing on screen is finished: say that something is still coming. */}
           {turn.status === 'running' && parts.at(-1)?.kind === 'view' && <Working label="继续中" />}
 
+          {turn.refusal && (
+            <div className="flex items-start gap-2.5 rounded-2xl border bg-card px-3.5 py-3 text-sm">
+              <ShieldAlert className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+              <div className="min-w-0">
+                <div className="font-medium">这个问题我没法回答</div>
+                <p className="mt-0.5 text-muted-foreground">DeepSeek 的安全检查拦下了这次提问。重新回答也会得到同样的结果，可以换个问法，或换一个模型。</p>
+              </div>
+            </div>
+          )}
           {turn.status === 'failed' && (
             <Notice
               tone="error"
@@ -436,16 +451,59 @@ function gist(input: unknown) {
   return ''
 }
 
-const stepTitle = (step: Step, tools: ToolIndex) => (step.kind === 'thinking' ? '思考' : (tools.get(step.call.name)?.title ?? step.call.name))
+const stepTitle = (step: Step, tools: ToolIndex) =>
+  step.kind === 'thinking' ? '思考' : step.kind === 'native' ? nativeLabel[step.step.action].title : (tools.get(step.call.name)?.title ?? step.call.name)
+
+// ── DeepSeek's own searches and page reads (roadmap-7 C2) ──
+
+const nativeLabel: Record<NativeStep['action'], { title: string; doing: string; icon: typeof Globe }> = {
+  search: { title: '联网搜索', doing: '正在搜索', icon: Search },
+  image_search: { title: '搜索图片', doing: '正在搜索图片', icon: ImageIcon },
+  open_page: { title: '阅读网页', doing: '正在阅读', icon: BookOpen },
+  read_link: { title: '读取链接', doing: '正在读取链接', icon: BookOpen },
+  find_in_page: { title: '在网页中查找', doing: '正在网页中查找', icon: Search },
+}
+const nativeErrors: Record<string, string> = { unavailable: '搜索暂时不可用', url_not_accessible: '网页打不开', timeout: '超时' }
+
+const hostOfUrl = (url: string) => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    return url
+  }
+}
+/** What a native step is about: its queries, the page, or the text it looked for. */
+const nativeGist = (s: NativeStep) => (s.queries?.length ? s.queries.join(' · ') : s.pattern ? `“${s.pattern}”` : s.url ? hostOfUrl(s.url) : '')
+
+const isRead = (s: NativeStep) => s.action === 'open_page' || s.action === 'read_link'
 
 function Steps({ steps, tools, live }: { steps: Step[]; tools: ToolIndex; live: boolean }) {
   const [open, setOpen] = useState(false)
   const calls = steps.flatMap((s) => (s.kind === 'tool' ? [s.call] : []))
-  const failed = calls.filter((c) => c.status === 'failed').length
+  const native = steps.flatMap((s) => (s.kind === 'native' ? [s.step] : []))
+  const failed = calls.filter((c) => c.status === 'failed').length + native.filter((n) => n.status === 'failed').length
+  const searches = native.filter((n) => !isRead(n) && n.action !== 'find_in_page').length
+  const reads = native.filter(isRead).length
   const last = steps.at(-1)!
-  const summary = [steps.some((s) => s.kind === 'thinking') && '思考', calls.length > 0 && `${calls.length} 次工具调用`].filter(Boolean).join(' · ')
-  const current = last.kind === 'thinking' ? '正在思考' : last.call.status === 'running' ? `正在使用 ${stepTitle(last, tools)}` : '正在继续'
-  const detail = live && last.kind === 'tool' ? gist(last.call.input) : ''
+  const summary = [
+    steps.some((s) => s.kind === 'thinking') && '思考',
+    searches > 0 && `搜索 ${searches} 次`,
+    reads > 0 && `阅读 ${reads} 个网页`,
+    calls.length > 0 && `${calls.length} 次工具调用`,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  const current =
+    last.kind === 'thinking'
+      ? '正在思考'
+      : last.kind === 'native'
+        ? last.step.status === 'running'
+          ? nativeLabel[last.step.action].doing
+          : '正在继续'
+        : last.call.status === 'running'
+          ? `正在使用 ${stepTitle(last, tools)}`
+          : '正在继续'
+  const detail = !live ? '' : last.kind === 'tool' ? gist(last.call.input) : last.kind === 'native' ? nativeGist(last.step) : ''
 
   return (
     <div className="min-w-0 text-sm">
@@ -464,7 +522,9 @@ function Steps({ steps, tools, live }: { steps: Step[]; tools: ToolIndex; live: 
       {open && (
         <ol className="mt-2 ml-3 flex animate-rise flex-col gap-0.5 border-l pl-4">
           {steps.map((s, i) => (
-            <li key={s.kind === 'tool' ? s.call.id : `t${i}`}>{s.kind === 'thinking' ? <ThinkingStep text={s.text} /> : <ToolStep call={s.call} meta={tools.get(s.call.name)} />}</li>
+            <li key={s.kind === 'tool' ? s.call.id : s.kind === 'native' ? `n${s.step.id}` : `t${i}`}>
+              {s.kind === 'thinking' ? <ThinkingStep text={s.text} /> : s.kind === 'native' ? <NativeStepRow step={s.step} /> : <ToolStep call={s.call} meta={tools.get(s.call.name)} />}
+            </li>
           ))}
         </ol>
       )}
@@ -512,6 +572,50 @@ function ToolStep({ call, meta }: { call: ToolCall; meta: ToolMeta | undefined }
         </div>
       )}
     </div>
+  )
+}
+
+function NativeStepRow({ step }: { step: NativeStep }) {
+  const [open, setOpen] = useState(false)
+  const label = nativeLabel[step.action]
+  const results = step.results ?? []
+  const about = nativeGist(step)
+  const expandable = results.length > 0 || step.status === 'failed'
+  return (
+    <div>
+      <button type="button" aria-expanded={open} disabled={!expandable} onClick={() => setOpen(!open)} className="-ml-1.5 flex w-full min-w-0 items-center gap-2 rounded-lg px-1.5 py-1 text-left enabled:hover:bg-hover">
+        {step.status === 'running' ? <Spinner className="shrink-0" /> : step.status === 'failed' ? <X className="size-4 shrink-0 text-destructive" /> : <label.icon className="size-4 shrink-0 text-muted-foreground" />}
+        <span className="shrink-0 font-medium">{label.title}</span>
+        <span className="min-w-0 flex-1 truncate text-muted-foreground">{about}</span>
+        {step.status === 'done' && !isRead(step) && results.length > 0 && <span className="shrink-0 text-xs text-muted-foreground">{results.length} 个结果</span>}
+      </button>
+      {open && (
+        <div className="mt-1 mb-2 rounded-xl bg-muted/60 p-1.5 text-[13px]">
+          {step.status === 'failed' && <p className="px-1.5 py-1 text-destructive">{nativeErrors[step.error ?? ''] ?? step.error ?? '没有完成'}</p>}
+          <ol>
+            {results.map((r) => (
+              <li key={r.url}>
+                <SourceLink source={r} />
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SourceLink({ source: r }: { source: NativeSource }) {
+  const site = r.site || hostOfUrl(r.url)
+  return (
+    <a href={r.url} target="_blank" rel="noreferrer noopener" className="flex flex-col gap-0.5 rounded-lg px-1.5 py-1.5 hover:bg-hover">
+      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <SiteBadge site={site} className="size-4 ring-0" /> <span className="truncate">{site}</span>
+        {r.publishedAt && <span className="shrink-0">· {r.publishedAt.slice(0, 10)}</span>}
+      </span>
+      <span className="line-clamp-1">{r.title || r.url}</span>
+      {r.snippet && <span className="line-clamp-2 text-xs text-muted-foreground">{r.snippet}</span>}
+    </a>
   )
 }
 
@@ -607,8 +711,13 @@ function UserMessage({
       })}
       {turn.attachments?.map((f) => (
         <span key={f.id} className={chip} title={f.id}>
-          <FileText /> <span className="truncate">{f.name}</span>
+          {f.parsed?.how === 'ocr' ? <ScanText /> : <FileText />} <span className="truncate">{f.name}</span>
           {f.size != null && <span className="shrink-0 text-xs text-muted-foreground">{formatBytes(f.size)}</span>}
+          {f.parsed && (
+            <span className="shrink-0 text-xs text-muted-foreground" title="服务器把它转成了文字，模型读的是文字版">
+              · {f.parsed.how === 'ocr' ? `已识别${f.parsed.pages ? ` ${f.parsed.pages} 页` : ''}` : '已解析'}
+            </span>
+          )}
         </span>
       ))}
     </div>

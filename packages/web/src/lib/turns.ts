@@ -1,7 +1,7 @@
 // Projects a pi-durable conversation view onto the UI's turns: a user entry opens a turn and the assistant and tool
 // entries after it fill it. `pi.live` adds the streaming answer, `pi.inbox` the inputs still waiting. An Event (R46) or a
 // request the app made for the user (R40) opens a turn too, shown as a card instead of the user's message.
-import { BRIEF_KIND, COMPACTION_KIND, EVENT_KIND, RUN_ERROR_KIND, compactionSummaryText, parseNote, type BriefData, type CompactionFailure, type CompactionReason, type CompactionStatus, type EventData, type Mention, type RunErrorData } from '@gense/protocol'
+import { BRIEF_KIND, COMPACTION_KIND, EVENT_KIND, NATIVE_KIND, RUN_ERROR_KIND, compactionSummaryText, parseNote, type BriefData, type CompactionFailure, type CompactionReason, type CompactionStatus, type EventData, type Mention, type NativeSource, type NativeTrace, type RunErrorData } from '@gense/protocol'
 import { baseName } from './format'
 import type { Attachment, CommandRef, ToolCall, Turn, WebSource } from './types'
 
@@ -43,7 +43,10 @@ function userInput(content: unknown) {
       text += b.text ?? ''
       continue
     }
-    for (const path of note.attachments) attachments.push({ id: path, name: baseName(path) })
+    for (const path of note.attachments) {
+      const parsed = note.parsedAttachments.find((p) => p.path === path)
+      attachments.push({ id: path, name: baseName(path), ...(parsed && { parsed: { how: parsed.how, ...(parsed.pages && { pages: parsed.pages }) } }) })
+    }
     command ??= note.command
     mentions.push(...note.mentions)
   }
@@ -59,12 +62,34 @@ function withInput(turn: Turn, input: ReturnType<typeof userInput>) {
 
 const reasonText: Record<string, string> = { stale: '服务重启，这条消息没有完成', aborted: '已停止' }
 
-export function toTurns(view: View): Turn[] {
+const siteOf = (s: NativeSource) => {
+  if (s.site) return s.site
+  try {
+    return new URL(s.url).hostname.replace(/^www\./, '')
+  } catch {
+    return s.url
+  }
+}
+
+/**
+ * Puts what DeepSeek did for one assistant message into the turn: its steps before that message's own blocks
+ * (`at`; it searches, then answers), its citations among the sources, and a refusal.
+ */
+function applyNative(t: Turn, trace: NativeTrace, at: number) {
+  t.blocks.splice(at, 0, ...trace.steps.map((step) => ({ kind: 'native' as const, step })))
+  for (const c of trace.citations) if (c.url && !t.sources.some((x) => x.url === c.url)) t.sources.push({ url: c.url, title: c.title || c.url, site: siteOf(c) })
+  if (trace.refusal) t.refusal = true
+}
+
+/** `native`: the trace the server streams for the answer being written, when it belongs to this view's branch. */
+export function toTurns(view: View, native?: NativeTrace): Turn[] {
   const turns: Turn[] = []
   const calls = new Map<string, ToolCall>()
   // Where the last assistant entry's blocks start, while it ended `aborted`: a restart asks the model again, and the
   // new answer replaces the cut-off one.
   let abortedFrom: { blocks: number; text: number } | undefined
+  // Where the last assistant entry's blocks start, for the native trace saved after it.
+  let assistantAt: { turn: Turn; blocks: number } | undefined
   const open = (id: string, userMessage: string, createdAt: number): Turn => {
     const turn: Turn = { id, status: 'succeeded', userMessage, assistantMessage: '', blocks: [], sources: [], createdAt }
     turns.push(turn)
@@ -113,6 +138,7 @@ export function toTurns(view: View): Turn[] {
         t.error = undefined
       }
       abortedFrom = m.stopReason === 'aborted' ? { blocks: t.blocks.length, text: t.assistantMessage.length } : undefined
+      assistantAt = { turn: t, blocks: t.blocks.length }
       append(t, m)
       if (m.provider && m.model) t.model = `${m.provider}:${m.model}`
       if (m.stopReason === 'error') Object.assign(t, { status: 'failed', error: m.errorMessage || '模型请求失败' })
@@ -128,6 +154,9 @@ export function toTurns(view: View): Turn[] {
       // Web tools list the pages they used; the turn shows them once each.
       const found = (m.details as { sources?: WebSource[] } | undefined)?.sources
       if (t && Array.isArray(found)) for (const src of found) if (src?.url && !t.sources.some((x) => x.url === src.url)) t.sources.push(src)
+    } else if (e.kind === NATIVE_KIND && assistantAt) {
+      applyNative(assistantAt.turn, e.data as NativeTrace, assistantAt.blocks)
+      assistantAt = undefined
     } else if (e.kind === COMPACTION_KIND && turns.length) {
       // pi writes the summary after the entries it replaces; the turn that was last then shows the divider.
       const t = turns.at(-1)!
@@ -149,7 +178,9 @@ export function toTurns(view: View): Turn[] {
     last.error = undefined
     cut(last)
     // The answer being written; pi-ai parses tool arguments as they stream (R72).
+    const at = last.blocks.length
     if (live.generation?.message) append(last, live.generation.message)
+    if (native) applyNative(last, native, at)
     if (live.generation?.retry) last.error = live.generation.retry.error
   }
   for (const t of turns)

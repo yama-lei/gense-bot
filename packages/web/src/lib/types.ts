@@ -1,5 +1,5 @@
 // What the UI draws: a conversation's turns, projected from the server's view (lib/turns.ts).
-import type { CompactionReason, EventData, Mention, ToolCallResult } from '@gense/protocol'
+import type { CompactionReason, EventData, Mention, NativeStep, ToolCallResult } from '@gense/protocol'
 
 export type TurnStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'interrupted'
 export type ToolStatus = 'running' | 'succeeded' | 'failed'
@@ -21,13 +21,16 @@ export interface ToolCall {
 }
 
 /** One piece of an answer, in the order the model produced it. */
-export type TurnBlock = { kind: 'text'; text: string } | { kind: 'thinking'; text: string } | { kind: 'tool'; call: ToolCall }
+/** `native`: a search or page read DeepSeek ran itself (roadmap-7 C2); the transcript has no tool call for it. */
+export type TurnBlock = { kind: 'text'; text: string } | { kind: 'thinking'; text: string } | { kind: 'tool'; call: ToolCall } | { kind: 'native'; step: NativeStep }
 
 /** A file sent with a message; `id` is the upload's id, or the file's path once it is in the workspace. */
 export interface Attachment {
   id: string
   name: string
   size?: number
+  /** The server read it into text before the turn (roadmap-7 C6). */
+  parsed?: { how: 'text' | 'ocr'; pages?: number }
 }
 
 export interface CommandRef {
@@ -70,6 +73,8 @@ export interface Turn {
   event?: EventData
   /** Set when the app asked on the user's behalf (R40); the label it shows. */
   brief?: string
+  /** DeepSeek's safety check refused the question (roadmap-7 C4): no answer, and asking again gives none. */
+  refusal?: boolean
   /** Context compactions placed after this turn's content (roadmap-6 C4). */
   compactions?: Compaction[]
 }

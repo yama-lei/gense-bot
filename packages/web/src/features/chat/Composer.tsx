@@ -394,7 +394,7 @@ export function Composer({ treeId, placeholder, onSend, busy, onStop, autoFocus,
           value={text}
           autoFocus={autoFocus}
           aria-label="消息"
-          placeholder={dictation.listening ? '正在听…说完点一下麦克风' : placeholder}
+          placeholder={dictation.listening ? '正在听…说完点一下麦克风' : dictation.transcribing ? '正在识别…' : placeholder}
           className="block w-full resize-none bg-transparent px-5 pt-4 pb-1 text-base leading-relaxed outline-none placeholder:text-muted-foreground"
           onChange={(e) => {
             setText(e.target.value)
@@ -485,8 +485,8 @@ export function Composer({ treeId, placeholder, onSend, busy, onStop, autoFocus,
           <div className="min-w-0 flex-1" />
           <ModelPicker />
           {dictation.supported && (
-            <Tooltip label={dictation.listening ? '停止听写' : '语音输入'} side="top">
-              <button type="button" aria-label="语音输入" aria-pressed={dictation.listening} onClick={dictation.toggle} className={cn(toolButton, dictation.listening && 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent')}>
+            <Tooltip label={dictation.listening ? '停止听写' : dictation.transcribing ? '正在识别' : '语音输入'} side="top">
+              <button type="button" aria-label="语音输入" aria-pressed={dictation.listening} aria-busy={dictation.transcribing} disabled={dictation.transcribing} onClick={dictation.toggle} className={cn(toolButton, (dictation.listening || dictation.transcribing) && 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent', dictation.transcribing && 'animate-pulse')}>
                 {dictation.listening ? <Wave /> : <Mic />}
               </button>
             </Tooltip>

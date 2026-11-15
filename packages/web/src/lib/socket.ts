@@ -17,6 +17,7 @@ import type {
   ProviderState,
   ScheduleInfo,
   ServerMessage,
+  NativeTrace,
   Suggestions,
   SkillInfo,
   TreeMeta,
@@ -48,6 +49,8 @@ export interface SocketState {
   feedback: Record<string, Record<string, Feedback>>
   /** Per watched tree, follow-ups for its newest answer (D2). */
   suggestions: Record<string, Suggestions>
+  /** What DeepSeek is doing for the answer being written, per tree (roadmap-7 C2); the entry replaces it once saved. */
+  native: Record<string, { branchId: string; trace: NativeTrace }>
   /** Inbox items read on any device (D3); null until the server sends them. */
   inboxRead: string[] | null
   exports: ExportInfo[]
@@ -88,6 +91,7 @@ export class HostSocket {
     shares: null,
     feedback: {},
     suggestions: {},
+    native: {},
     inboxRead: null,
     exports: [],
     schedules: [],
@@ -186,6 +190,8 @@ export class HostSocket {
         return this.#set({ shares: m.shares })
       case 'feedback':
         return this.#set({ feedback: { ...this.state.feedback, [m.treeId]: Object.fromEntries(m.feedback.map((f) => [f.turnId, f])) } })
+      case 'native':
+        return this.#set({ native: { ...this.state.native, [m.treeId]: { branchId: m.branchId, trace: m.trace } } })
       case 'suggestions': {
         const { t: _, treeId, ...s } = m
         return this.#set({ suggestions: { ...this.state.suggestions, [treeId]: s } })

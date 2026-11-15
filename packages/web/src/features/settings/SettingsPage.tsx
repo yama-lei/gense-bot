@@ -151,7 +151,7 @@ interface Run {
 
 function Models() {
   const client = useClient()
-  const { providers, models } = useHost()
+  const { providers, models, prefs } = useHost()
   const signedIn = providers.filter((p) => p.configured)
   const [picked, setPicked] = useState('')
   const [run, setRun] = useState<Run | null>(null)
@@ -201,6 +201,13 @@ function Models() {
                   </div>
                   <p className="text-xs text-muted-foreground">{models.filter((m) => m.provider === p.id).length} 个模型</p>
                 </div>
+                {/* Your own DeepSeek account (roadmap-7 C4): the safety check is yours to turn off; shared ones always have it. */}
+                {p.id === 'deepseek' && (
+                  <label className="flex shrink-0 items-center gap-2 text-sm text-muted-foreground" title="DeepSeek 在回答前检查提问，拦下不安全的内容。">
+                    安全检查
+                    <Switch checked={prefs?.deepseekSafety ?? true} disabled={!prefs} onCheckedChange={(v) => client.setPrefs({ deepseekSafety: v })} aria-label="DeepSeek 安全检查" />
+                  </label>
+                )}
                 <Button variant="ghost" size="sm" onClick={() => void client.request({ t: 'auth.logout', provider: p.id }).catch(report)}>
                   退出
                 </Button>

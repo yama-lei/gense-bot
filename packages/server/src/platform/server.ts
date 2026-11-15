@@ -192,6 +192,7 @@ async function openServer(config: HostConfig, unlock: () => Promise<void>) {
             if (request.method === 'DELETE') { await app.deleteProvider(provider[1]!); return json(200, {}) }
           }
           if (path === '/api/admin/usage' && request.method === 'GET') return json(200, await app.usage(url.searchParams.get('from') ?? undefined, url.searchParams.get('to') ?? undefined))
+          if (path === '/api/admin/feedback' && request.method === 'GET') return json(200, await app.feedback.summary(url.searchParams.get('from') ?? undefined, url.searchParams.get('to') ?? undefined))
         } catch (error) { return json(400, { error: error instanceof Error ? error.message : String(error) }) }
         return json(404, { error: 'not found' })
       }

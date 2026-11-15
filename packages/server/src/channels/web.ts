@@ -44,6 +44,7 @@ export class Connection {
     this.#send({ t: 'channels', channels: space.channels.list() })
     this.#unsubscribe.push(space.channels.subscribe(() => this.#send({ t: 'channels', channels: space.channels.list() })))
     this.#send({ t: 'prefs', prefs: space.preferences.get() })
+    this.#unsubscribe.push(space.feedback.subscribe((treeId, feedback) => this.#send({ t: 'feedback', treeId, feedback })))
     this.#unsubscribe.push(space.preferences.subscribe(() => this.#send({ t: 'prefs', prefs: space.preferences.get() })))
     this.#unsubscribe.push(space.memories.subscribe(memories => this.#send({ t: 'memories', memories })))
     this.#send({ t: 'memories', memories: await space.memories.list() })
@@ -245,6 +246,8 @@ export class Connection {
         return space.projects.readFile(r.projectId, r.path)
       case 'trees.search':
         return space.searchTrees(r.query, r.limit)
+      case 'feedback.set':
+        return space.feedback.set(r.treeId, r)
       case 'plugin.set':
         return space.plugins.set(r.pluginId, {
           ...(r.enabled !== undefined && { enabled: r.enabled }),
@@ -303,6 +306,7 @@ export class Connection {
     this.#send({ t: 'branches', treeId, ...(await space.branches(treeId)) })
     const enc = encoder()
     this.#send({ t: 'view', treeId, branchId: shown, value: watch.value })
+    this.#send({ t: 'feedback', treeId, feedback: await space.feedback.list(treeId) })
     const trace = nativeState(space).traces.get(shown)
     if (trace) this.#send({ t: 'native', treeId, branchId: shown, trace })
     let previous: { running: CompactionStatus[]; failure?: CompactionFailure } | undefined

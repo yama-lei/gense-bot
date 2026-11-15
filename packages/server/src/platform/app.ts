@@ -7,6 +7,7 @@ import { count, deepseekModels, DEEPSEEK_MODELS, nativeUsage } from '../agent/de
 import { Sealer } from '../plugins/store.ts'
 import type { DeepSeekService } from '../agent/deepseek-services.ts'
 import { initializeServiceUsage, recordServiceUsage } from './service-usage.ts'
+import { FeedbackStats } from './feedback.ts'
 
 const migrations = [{ version: 1, statements: [
   'CREATE TABLE shared_providers (id TEXT PRIMARY KEY, name TEXT NOT NULL, baseUrl TEXT NOT NULL, modelIds TEXT NOT NULL, sealed TEXT NOT NULL)',
@@ -23,6 +24,7 @@ type ProviderRow = { id: string; kind: 'openai' | 'deepseek'; name: string; base
 const publicProvider = (r: ProviderRow): SharedProviderInfo => ({ id: r.id, kind: r.kind, name: r.name, baseUrl: r.baseUrl, modelIds: JSON.parse(r.modelIds), hasKey: !!r.sealed })
 
 export class AppStore {
+  feedback!: FeedbackStats
   readonly #db: SqliteDatabase
   readonly #sealer?: Sealer
   #models: ModelSetup = { providers: [], options: [], defaultModel: null }
@@ -34,6 +36,7 @@ export class AppStore {
     await applySqliteMigrations(db, migrations, { table: 'host_migrations' })
     await initializeServiceUsage(db)
     const store = new AppStore(db, key)
+    store.feedback = await FeedbackStats.open(db)
     await store.#reload()
     return store
   }

@@ -1,6 +1,6 @@
 // Drives a real host over HTTP and WebSocket, as the browser does.
 import { applyImmutable, decoder, type Decoder } from '@earendil-works/chord/delta'
-import type { PluginInfo as PluginState } from '@gense/protocol'
+import type { Feedback, Suggestions, PluginInfo as PluginState } from '@gense/protocol'
 import { parseNote } from '@gense/protocol/notes'
 import { EVENT_KIND, type BranchesState, type BranchMeta, type ClientRequest, type EventData, type ExportInfo, type FileEntry, type LoginPrompt, type Memory, type ModelInfo, type Preferences, type Project, type ProviderState, type ScheduleInfo, type ServerMessage, type ShareInfo, type SkillInfo, type TreeMeta, type UploadedFile, type WebhookInfo } from '@gense/protocol'
 import assert from 'node:assert/strict'
@@ -45,6 +45,9 @@ export class Client {
   projects: Project[] = []
   shares: ShareInfo[] = []
   exports: ExportInfo[] = []
+  readonly feedback = new Map<string, Feedback[]>()
+  readonly suggestions = new Map<string, Suggestions>()
+  inboxRead: string[] | undefined
   prefs: Preferences | undefined
   plugins: PluginState[] = []
   skills: SkillInfo[] = []
@@ -86,6 +89,9 @@ export class Client {
     if (m.t === 'projects') this.projects = m.projects
     if (m.t === 'shares') this.shares = m.shares
     if (m.t === 'exports') this.exports = m.exports
+    if (m.t === 'feedback') this.feedback.set(m.treeId, m.feedback)
+    if (m.t === 'suggestions') this.suggestions.set(m.treeId, { turnId: m.turnId, items: m.items })
+    if (m.t === 'inboxRead') this.inboxRead = m.ids
     if (m.t === 'prefs') this.prefs = m.prefs
     if (m.t === 'plugins') this.plugins = m.plugins
     if (m.t === 'skills') this.skills = m.skills

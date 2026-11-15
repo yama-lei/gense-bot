@@ -101,6 +101,12 @@ export const migrations = [
       'CREATE INDEX trees_expiry ON trees (expiresAt) WHERE expiresAt IS NOT NULL',
     ],
   },
+  {
+    version: 7,
+    statements: [
+      'CREATE TABLE feedback (treeId TEXT NOT NULL, turnId TEXT NOT NULL, value TEXT NOT NULL, reasons TEXT NOT NULL, comment TEXT, model TEXT NOT NULL, updatedAt INTEGER NOT NULL, PRIMARY KEY (treeId, turnId))',
+    ],
+  },
 ]
 
 /** Who the assistant is and how it answers (roadmap-6 A10). Only the date changes, once a day, so the prompt cache holds. */
@@ -167,6 +173,7 @@ export interface SpaceOptions {
   userId?: string
   /** Public snapshot storage belongs to app.sqlite; direct standalone Harness tests need no public host. */
   shares?: import('../platform/shares.ts').ShareStore
+  feedback?: (treeId: string, turnId: string, feedback: import('@gense/protocol').Feedback | null) => Promise<void>
   meterModels?: (models: import('@earendil-works/pi-ai').MutableModels, source: (provider: string) => import('@gense/protocol').ModelSource) => void
   deepseekService?: () => Promise<import('./deepseek-services.ts').DeepSeekService | undefined>
   serviceUsage?: (service: import('@gense/protocol').ServiceKind, units: number) => Promise<void>

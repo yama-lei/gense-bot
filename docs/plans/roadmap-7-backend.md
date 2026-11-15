@@ -233,6 +233,12 @@
 - 验证：提示词快照单测通过；`taskset -c 0 env -u https_proxy -u http_proxy -u all_proxy -u HTTPS_PROXY -u HTTP_PROXY -u ALL_PROXY npm run check:server` 在 `a79caa8` 基线上通过，104 项全部通过，无跳过，包含真实 Docker、本地飞书平台及 C-5 用量回归。最终日志 `/tmp/r7-b3-check.log`。
 - 未改 web 或 protocol，无新的协议问题。资料库和导出仍沿用 B-2 已说明的验证边界。阶段 B 完成，汇报后停下。
 
+### D-1 反馈（2026-11-15）
+
+- 从集成提交 `d9b7292` 创建 `feat/r7-d-server`。`space.sqlite` 迁移 v7 新增 feedback，校验所属树、理由集合及投票值，down 备注截断 500 字，up 丢弃理由和备注，null 清除；模型名取真实助手消息，支持分支历史。
+- watch 必发反馈列表，修改后向该用户全部连接推送；删除树清理本地反馈。`app.sqlite.feedback_stats` 只记用户/树/轮次标识、UTC 日、模型、投票与理由，不含问答或备注；改值覆盖、清除删除，删树保留汇总。新增仅管理员可读的 `/api/admin/feedback`，支持日期筛选。
+- 验证：真实双用户/双设备 HTTP、WebSocket、SQLite 重启专项通过；按要求 taskset 单核并清代理运行 `npm run check:server`，109/109 全过，无跳过，日志 `/tmp/r7-d1-check.log`。未改 protocol/web 或提示词，无协议问题或设计偏离。
+
 ## 协议问题
 
 

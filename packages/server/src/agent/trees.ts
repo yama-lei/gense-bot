@@ -137,6 +137,7 @@ export async function deleteTree(this: UserSpace, treeId: string, ctx: Context =
     for (const b of branches) nativeState(this).traces.delete(b.id)
     await this.db.run('DELETE FROM deepseek_titles WHERE treeId = ?', treeId)
     await this.db.run('DELETE FROM attachment_parses WHERE path LIKE ?', treeDir(treeId) + '/%')
+    await this.db.run('DELETE FROM feedback WHERE treeId = ?', treeId)
     await this.db.run('DELETE FROM branches WHERE treeId = ?', treeId)
     await this.db.run('DELETE FROM trees WHERE id = ?', treeId)
     await this.workspace.deleteTree(treeId, ctx)
@@ -199,6 +200,7 @@ export async function close(this: UserSpace, ctx: Context = BACKGROUND_CONTEXT):
     this.closed = true
     await this.stopTemporaryCleanup()
     await this.shares?.flush()
+    await this.feedback.close()
     this.listeners.clear()
     this.branchListeners.clear()
     this.automationListeners.clear()

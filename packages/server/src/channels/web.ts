@@ -8,6 +8,7 @@ import type { UserSpace } from '../agent/space.ts'
 import { fromBase64 } from '../agent/workspace.ts'
 import { discoverCatalog } from '../plugins/discover.ts'
 import { nativeState } from '../agent/deepseek.ts'
+import { btw } from '../agent/btw.ts'
 
 export interface ConnectionOptions {
   space: UserSpace
@@ -21,6 +22,8 @@ export class Connection {
   /** Logins this socket runs, and the prompts they wait on; closing the socket cancels them. */
   readonly #logins = new Map<string, AbortController>()
   readonly #prompts = new Map<string, (value: string | undefined) => void>()
+  /** Side questions this socket asked, by request id; closing the socket stops them. */
+  readonly #asides = new Map<string, AbortController>()
   #unsubscribe: (() => void)[] = []
   #closed = false
 
@@ -97,7 +100,7 @@ export class Connection {
     const reply = this.#reply(request)
     // A login waits on the user's answers, which arrive as later requests, and a compaction asked to wait can take
     // minutes: neither may hold up the host's queue.
-    if (request.t !== 'auth.login' && !(request.t === 'compact' && request.wait)) await reply
+    if (request.t !== 'auth.login' && request.t !== 'btw' && !(request.t === 'compact' && request.wait)) await reply
   }
 
   async #reply(request: ClientRequest) {
@@ -143,16 +146,25 @@ export class Connection {
         const admitted = await space.compact(r.treeId, r.branchId, r.instructions)
         return r.wait ? { ...admitted, outcome: await compactionOutcome(space, admitted.taskId) } : admitted
       }
-      case 'branch.fork':
-        return space.fork(r.treeId, r.branchId, r.at)
       case 'regenerate':
         return space.regenerate(r.treeId, r.branchId, r.entryId, {
           requestId: r.requestId,
           ...(r.model && { model: r.model }),
           ...(r.effort && { effort: r.effort }),
         })
-      case 'branch.summarize':
-        return space.summarize(r.treeId, r.branchId, r.requestId)
+      case 'btw': {
+        if (this.#asides.has(r.requestId)) throw new Error('这个问题已经在回答了')
+        const abort = new AbortController()
+        this.#asides.set(r.requestId, abort)
+        try {
+          const text = await btw(space, r.treeId, { question: r.question, ...(r.branchId && { branchId: r.branchId }), ...(r.model && { model: r.model }) }, (text) => this.#send({ t: 'btw', requestId: r.requestId, text }), abort.signal)
+          return { text }
+        } finally {
+          this.#asides.delete(r.requestId)
+        }
+      }
+      case 'btw.cancel':
+        return void this.#asides.get(r.requestId)?.abort()
       case 'schedule.create':
         return space.createSchedule(r.treeId, { name: r.name, prompt: r.prompt, rule: r.rule, tz: r.tz })
       case 'schedule.update':
@@ -366,6 +378,7 @@ export class Connection {
   async close() {
     this.#closed = true
     for (const login of this.#logins.values()) login.abort()
+    for (const aside of this.#asides.values()) aside.abort()
     for (const u of this.#unsubscribe.splice(0)) u()
     await Promise.all([...this.#watches.values()].map((w) => w.stop()))
     this.#watches.clear()

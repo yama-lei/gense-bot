@@ -176,7 +176,7 @@ test('C3: a manual compaction asked to wait says whether it placed a summary; a 
   } finally { await f.close() }
 })
 
-test('C5: compaction preserves full streamed history and old/new forks, edits and regeneration', async () => {
+test('C5: compaction preserves full streamed history and old/new edits and regeneration', async () => {
   const f = await setup({ auto: false })
   try {
     for (let i = 0; i < 4; i++) await f.send(`OLD-FACT-${i} ` + 'x'.repeat(4000))
@@ -189,25 +189,26 @@ test('C5: compaction preserves full streamed history and old/new forks, edits an
     assert.equal(f.view.entries.length, before.length + 1)
     const oldUser = before.find(e => e.kind === 'pi.user')!
     const oldAnswer = before.find(e => e.kind === 'pi.assistant')!
-    const oldFork = await f.space.fork(f.tree.id, f.branch.id, oldAnswer.id)
-    const oldConv = await f.space.open((await f.space.branchRow(f.tree.id, oldFork.id)).branch, ctx)
-    assert.deepEqual((await historyEntries(oldConv, ctx)).map(e => e.id), before.slice(0, before.indexOf(oldAnswer) + 1).map(e => e.id))
+    // An edit of the message after the old answer is a version that inherits history from before compaction.
+    const nextUser = before.find(e => e.kind === 'pi.user' && e.id > oldAnswer.id)!
+    const oldEdit = await f.space.send(f.tree.id, { branchId: f.branch.id, replace: nextUser.id, text: 'edited before compaction', requestId: 'old-edit' })
+    await f.space.harness.waitForIdle(ctx)
+    const oldConv = await f.space.open((await f.space.branchRow(f.tree.id, oldEdit.branchId)).branch, ctx)
+    assert.deepEqual((await historyEntries(oldConv, ctx)).slice(0, before.indexOf(oldAnswer) + 1).map(e => e.id), before.slice(0, before.indexOf(oldAnswer) + 1).map(e => e.id))
     const again = await f.space.regenerate(f.tree.id, f.branch.id, oldUser.id, { requestId: 'again' })
     await f.space.harness.waitForIdle(ctx)
     assert.ok((await f.space.branches(f.tree.id)).versions.start?.includes(again.id))
     await f.send('new turn after compaction')
-    const tail = (await historyEntries(f.conv, ctx)).at(-1)!
-    const newFork = await f.space.fork(f.tree.id, f.branch.id, tail.id)
-    const newConv = await f.space.open((await f.space.branchRow(f.tree.id, newFork.id)).branch, ctx)
+    const postUser = (await historyEntries(f.conv, ctx)).findLast(e => e.kind === 'pi.user')!
+    const newEdit = await f.space.send(f.tree.id, { branchId: f.branch.id, replace: postUser.id, text: 'edited after compaction', requestId: 'edit' })
+    await f.space.harness.waitForIdle(ctx)
+    const newConv = await f.space.open((await f.space.branchRow(f.tree.id, newEdit.branchId)).branch, ctx)
     assert.ok((await newConv.context(ctx)).head)
     assert.ok((await historyEntries(newConv, ctx)).some(e => e.id === oldUser.id))
-    const postUser = (await historyEntries(f.conv, ctx)).findLast(e => e.kind === 'pi.user')!
-    await f.space.send(f.tree.id, { branchId: f.branch.id, replace: postUser.id, text: 'edited after compaction', requestId: 'edit' })
-    await f.space.harness.waitForIdle(ctx)
     const versions = (await f.space.branches(f.tree.id)).versions
     assert.ok(Object.values(versions).some(ids => ids.length >= 2))
     // Manual compaction targets the chosen branch even while the main one remains available.
-    await f.request({ t: 'compact', treeId: f.tree.id, branchId: newFork.id })
+    await f.request({ t: 'compact', treeId: f.tree.id, branchId: newEdit.branchId })
     await f.space.harness.waitForIdle(ctx)
   } finally { await f.close() }
 })

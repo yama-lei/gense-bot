@@ -1,8 +1,7 @@
-import type { SubmissionId } from '@earendil-works/pi-durable'
 // One user's conversations: a pi-durable Harness plus the sidebar index, in the same SQLite database (roadmap-3 D2).
 // A tree is a main conversation and the branches forked from it, all ownerless; tree and branch ids are ours,
 // conversation ids are pi-durable's. Each tree has one workspace directory, every branch's cwd (D6).
-import { BACKGROUND_CONTEXT,type Context } from '@earendil-works/chord/context'
+import type { Context } from '@earendil-works/chord/context'
 
 import {
 type ConversationId,
@@ -19,7 +18,6 @@ type RunErrorData
 import {
 agentBrief,
 MAX_AGENTS,
-SUMMARIZE_PROMPT,
 type AgentEnd,
 type AgentInput
 } from '../events/tasks.ts'
@@ -115,16 +113,4 @@ export async function finishAgent(this: UserSpace, input: AgentInput, end: Agent
       ctx,
     )
     this.branchesChanged(input.treeId)
-  }
-
-export async function summarize(this: UserSpace, treeId: string, branchId: string, requestId: string, ctx: Context = BACKGROUND_CONTEXT): Promise<{ branchId: string; submissionId: SubmissionId; }> {
-    const { tree, branch } = await this.branchRow(treeId, branchId)
-    if (branch.role !== 'user') throw new Error('只有分叉可以总结给主线')
-    const conv = await this.open(branch, ctx)
-    const submission = await conv.submit(
-      { type: 'input', content: [{ type: 'text', text: SUMMARIZE_PROMPT }], requestId, entry: { kind: BRIEF_KIND, data: { label: '总结给主线' } } },
-      ctx,
-    )
-    await this.answered(tree, branch, conv, submission, '', ctx)
-    return { branchId: branch.id, submissionId: submission.id }
   }

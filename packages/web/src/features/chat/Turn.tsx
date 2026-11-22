@@ -61,11 +61,10 @@ export interface TurnContext {
   treeId: string
   tools: ToolIndex
   models: ModelInfo[]
-  /** A turn is running: versions stay put and history cannot branch until it settles. */
+  /** A turn is running: versions stay put and messages cannot be retried or edited until it settles. */
   busy: boolean
   onRegenerate: (turn: Turn) => void
   onEdit: (turn: Turn, text: string) => void
-  onFork: (turn: Turn) => void
   onShowBranch: (branchId: string) => void
   onSend: (text: string) => void
   /** Opens a call's view in the side panel, or brings it back inline. */
@@ -224,11 +223,6 @@ export function TurnView({ turn, ctx, last: newest }: { turn: Turn; ctx: TurnCon
                   </DropdownMenuTrigger>
                 </Tooltip>
                 <DropdownMenuContent align="start" className="w-52">
-                  {turn.lastEntryId !== undefined && (
-                    <DropdownMenuItem disabled={ctx.busy} onSelect={() => ctx.onFork(turn)}>
-                      <GitBranch /> 从这里分叉
-                    </DropdownMenuItem>
-                  )}
                   {turn.assistantMessage && (
                     <DropdownMenuItem onSelect={() => remember(client, turn.assistantMessage, ctx.treeId)}>
                       <BookmarkPlus /> 存入记忆
@@ -793,7 +787,6 @@ function UserMessage({
 // ── Events and sources ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 const eventSource: Record<EventData['source']['kind'], { label: string; icon: typeof Clock; named: boolean }> = {
-  branch: { label: '分叉', icon: GitBranch, named: true },
   agent: { label: '子代理', icon: Bot, named: true },
   schedule: { label: '定时任务', icon: Clock, named: true },
   webhook: { label: 'Webhook', icon: Webhook, named: false },

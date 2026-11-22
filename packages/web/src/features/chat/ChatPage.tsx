@@ -1,4 +1,4 @@
-import { ArrowDown, Check, ChevronDown, Copy, Download, FolderInput, ExternalLink, FolderOpen, Ghost, GitBranch, Globe, Link2, Minimize2, Pencil, Pin, PinOff, Radio, RefreshCw, Share, Trash2, X } from 'lucide-react'
+import { ArrowDown, Check, ChevronDown, Copy, Download, FolderInput, ExternalLink, FolderOpen, Ghost, Globe, Link2, Minimize2, Pencil, Pin, PinOff, Radio, RefreshCw, Share, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { report, useChat, useClient, useFiles, useHost, useTools, projectOf, useProjects, useShares, findTree } from '../../app/client'
 import { SidebarToggle } from '../../app/Shell'
@@ -16,8 +16,8 @@ import { Skeleton, Spinner } from '../../ui/feedback'
 import { Input } from '../../ui/input'
 import { DropdownMenu, DropdownMenuCheckItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '../../ui/menu'
 import { Tooltip } from '../../ui/tooltip'
-import { BranchMap, branchName } from './BranchMap'
-import { compactCommand } from '../../lib/commands'
+import { useAside } from './Aside'
+import { btwCommand, compactCommand } from '../../lib/commands'
 import { CompactionLine } from './Compaction'
 import { Composer } from './Composer'
 import { footnote } from './HomePage'
@@ -91,7 +91,7 @@ export function ChatPage({ treeId }: { treeId: string }) {
   const { models } = useHost()
   const tools = useTools()
   const phone = useMediaQuery(phoneQuery)
-  const { tree, loaded, turns, branches, branch, running, entryCount, compaction } = useChat(treeId)
+  const { tree, loaded, turns, running, entryCount, compaction } = useChat(treeId)
   const { wide } = useLab()
   const [panel, setPanel] = useState<Panel | null>(null)
   const [sharing, setSharing] = useState(false)
@@ -101,14 +101,17 @@ export function ChatPage({ treeId }: { treeId: string }) {
   const temporary = !!tree?.temporary
   useLeaveTemporary(treeId, temporary)
 
+  const aside = useAside(treeId)
   const send = useCallback(
     (message: Outgoing) => {
+      // `/顺便问` is answered beside the chat, which stays where it is.
+      if (message.command?.id === btwCommand.id) return aside.ask(message.text)
       toBottom()
       // `/压缩上下文` runs here; what was typed with it says what the summary should keep.
       if (message.command?.id === compactCommand.id) client.compact(treeId, message.text)
       else client.send(treeId, message).catch(report)
     },
-    [client, treeId, toBottom],
+    [client, treeId, toBottom, aside.ask],
   )
 
   const ctx = useMemo<TurnContext>(
@@ -119,7 +122,6 @@ export function ChatPage({ treeId }: { treeId: string }) {
       busy: running,
       onRegenerate: (turn) => client.regenerate(treeId, turn),
       onEdit: (turn, text) => client.edit(treeId, turn, text),
-      onFork: (turn) => client.fork(treeId, turn),
       onShowBranch: (id) => client.showBranch(treeId, id),
       onSend: (text) => send({ text }),
       onDisplayMode: (call, mode) => setPanel(mode === 'inline' ? null : { kind: 'view', callId: call.id }),
@@ -138,8 +140,6 @@ export function ChatPage({ treeId }: { treeId: string }) {
     if (loaded && panel?.kind === 'view' && !panelCall) setPanel(null)
   }, [loaded, panel, panelCall])
 
-  const main = branches?.branches.find((b) => b.role === 'main')
-  const onSide = branch && branch.role !== 'main'
   const empty = loaded && turns.length === 0
 
   return (
@@ -154,7 +154,6 @@ export function ChatPage({ treeId }: { treeId: string }) {
             </Badge>
           )}
           <span className="flex-1" />
-          {branches && branch && <BranchMap state={branches} shown={branch.id} onShow={(id) => client.showBranch(treeId, id)} />}
           {!temporary && (
             <Button variant="ghost" size="sm" disabled={turns.length === 0} onClick={() => setSharing(true)} className="gap-1.5 text-muted-foreground max-sm:hidden">
               <Share /> 分享
@@ -183,34 +182,13 @@ export function ChatPage({ treeId }: { treeId: string }) {
           </div>
         )}
 
-        {onSide && (
-          <div className={cn('mx-auto flex w-full shrink-0 flex-wrap items-center gap-2 px-4 pb-2 text-sm md:px-6', column)}>
-            <GitBranch className="size-4 shrink-0 text-accent" />
-            <span className="min-w-0 flex-1 truncate text-muted-foreground">
-              {branch.role === 'agent' ? '子代理分支' : '分叉'}：<span className="text-foreground">{branchName(branch)}</span>
-            </span>
-            {branch.role === 'user' && (
-              <Tooltip label="让这个分叉总结自己，并把结论报告给主线">
-                <Button size="sm" disabled={running || turns.length === 0} onClick={() => client.summarize(treeId)}>
-                  总结给主线
-                </Button>
-              </Tooltip>
-            )}
-            {main && (
-              <Button size="sm" onClick={() => client.showBranch(treeId, main.id)}>
-                返回主线
-              </Button>
-            )}
-          </div>
-        )}
-
         <div className="relative min-h-0 flex-1">
           <div ref={scroller} onScroll={onScroll} className="h-full overflow-y-auto [scrollbar-gutter:stable_both-edges]">
             <div ref={content} className={cn('mx-auto flex w-full flex-col gap-10 px-4 pt-4 pb-12 md:px-6', column)}>
               {!loaded ? (
                 <Loading />
               ) : empty ? (
-                <p className="py-20 text-center text-sm text-muted-foreground">{onSide ? '这个分叉还没有消息。从这里问点别的，主线不受影响。' : '发一条消息开始对话。'}</p>
+                <p className="py-20 text-center text-sm text-muted-foreground">发一条消息开始对话。</p>
               ) : (
                 turns.map((t, i) => <TurnView key={t.id} turn={t} ctx={ctx} last={i === turns.length - 1} />)
               )}
@@ -230,8 +208,9 @@ export function ChatPage({ treeId }: { treeId: string }) {
         </div>
 
         <div className={cn('mx-auto w-full shrink-0 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:px-6', column)}>
+          {aside.card}
           <CompactionLine running={compaction.running} failure={compaction.failure} onRetry={() => client.compact(treeId)} />
-          <Composer treeId={treeId} placeholder={onSide ? '在这个分叉里继续…' : '回复…'} onSend={send} busy={running} onStop={() => client.stop(treeId)} autoFocus={!phone} />
+          <Composer treeId={treeId} placeholder="回复…" onSend={send} busy={running} onStop={() => client.stop(treeId)} autoFocus={!phone} />
           {footnote}
         </div>
       </div>

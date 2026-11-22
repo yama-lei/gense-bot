@@ -90,7 +90,7 @@ test('D1: feedback syncs, changes and clears; the server derives models and keep
   assert.equal((await host.spaces.get(a.user.id)!.db.all('SELECT * FROM feedback')).length, 0)
 })
 
-test('D2: JSON suggestions are metered and replayed only to the owner, including temporary chats; garbage, errors, forks and Feishu are silent', async t => {
+test('D2: JSON suggestions are metered and replayed only to the owner, including temporary chats; garbage, errors, versions and Feishu are silent', async t => {
   const faux = fauxProvider({ models: [{ id: 'suggest-model', name: 'Suggest model' }], tokensPerSecond: 100_000 })
   const calls: { messages: Message[]; options?: SimpleStreamOptions }[] = []
   const reply = (context: { messages: Message[] }) => {
@@ -132,12 +132,11 @@ test('D2: JSON suggestions are metered and replayed only to the owner, including
     const history = (await (await space.open((await space.branchRow(tree.id)).branch, ctx)).entries({}, 100, undefined, ctx)).items
     assert.ok(!JSON.stringify(history).includes('Compare the approaches'), 'the side result is absent from durable history')
     const main = a.client.branches.get(tree.id)!.branches.find(branch => branch.role === 'main')!
-    const answer = a.client.views.get(tree.id)!.entries.find(e => e.kind === 'pi.assistant')!
-    const fork = await a.client.request<{ id: string }>({ t: 'branch.fork', treeId: tree.id, branchId: main.id, at: answer.id })
+    const asked = a.client.views.get(tree.id)!.entries.find(e => e.kind === 'pi.user')!
     const before = calls.length
-    await a.client.request({ t: 'send', treeId: tree.id, branchId: fork.id, text: 'Fork only', requestId: 'fork' })
+    await a.client.request({ t: 'send', treeId: tree.id, branchId: main.id, replace: asked.id, text: 'Fork only', requestId: 'fork' })
     await space.harness.waitForIdle(ctx)
-    assert.equal(calls.length, before + 1, 'user branches have no side call')
+    assert.equal(calls.length, before + 1, 'versions have no side call')
     assert.equal(space.suggestions.get(tree.id), undefined, 'a new turn clears the previous suggestions')
   }
   for (const text of ['garbage', 'side-error']) {

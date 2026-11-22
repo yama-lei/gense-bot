@@ -108,6 +108,8 @@ export class HostSocket {
   #watched = new Map<string, string | undefined>()
   #listeners = new Set<() => void>()
   #logins = new Map<string, LoginHandlers>()
+  /** Side questions in flight: each one's answer so far arrives whole. */
+  #asides = new Map<string, (text: string) => void>()
   #promptLogins = new Map<string, string>()
   #retry = 0
   #closed = false
@@ -162,6 +164,8 @@ export class HostSocket {
         return this.#set({ providers: m.providers })
       case 'auth.event':
         return this.#logins.get(m.loginId)?.event(m.event)
+      case 'btw':
+        return this.#asides.get(m.requestId)?.(m.text)
       case 'auth.prompt':
         this.#promptLogins.set(m.promptId, m.loginId)
         return this.#logins.get(m.loginId)?.prompt(m.promptId, m.prompt)
@@ -247,6 +251,15 @@ export class HostSocket {
     const done = this.request<void>({ t: 'auth.login', loginId, provider, type })
     void done.finally(() => this.#logins.delete(loginId)).catch(() => {})
     return { done, cancel: () => void this.request({ t: 'auth.cancel', loginId }).catch(() => {}) }
+  }
+
+  /** Asks a side question about a branch; `onText` gets the answer so far as it streams. Resolves to the whole answer. */
+  aside(r: { treeId: string; branchId?: string; question: string; model?: ModelInfo }, onText: (text: string) => void) {
+    const requestId = crypto.randomUUID()
+    this.#asides.set(requestId, onText)
+    const done = this.request<{ text: string }>({ t: 'btw', requestId, ...r }).then((v) => v.text)
+    void done.finally(() => this.#asides.delete(requestId)).catch(() => {})
+    return { done, cancel: () => void this.request({ t: 'btw.cancel', requestId }).catch(() => {}) }
   }
 
   /** Keeps exactly these trees watched. */

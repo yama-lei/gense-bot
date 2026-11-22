@@ -34,7 +34,7 @@ function pairs(view: View) {
   }
 }
 
-test('C2/C3/C6: real WebSocket progress is throttled and branch-scoped; fork, edit, regenerate and versions keep answer/trace pairs', async t => {
+test('C2/C3/C6: real WebSocket progress is throttled and branch-scoped; edit, regenerate and versions keep answer/trace pairs', async t => {
   const remote = await deepseekPlatform(async (_body, res, ordinal) => {
     res.writeHead(200, { 'content-type': 'text/event-stream' })
     if (ordinal === 2) { res.end(await fixture('read-link')); return }
@@ -79,12 +79,16 @@ test('C2/C3/C6: real WebSocket progress is throttled and branch-scoped; fork, ed
     url: 'https://example.com/a', title: 'Source A', site: 'Example', icon: 'https://example.com/icon.png',
     snippet: 'A source snippet', publishedAt: '2026-11-14T00:00:00Z',
   }])
-  const fork = await client.request<BranchMeta>({ t: 'branch.fork', treeId: tree.id, branchId: main, at: first.id })
-  assert.equal(fork.forkEntryId, first.id)
+  // A version of the first message: another branch of the tree, for the other socket to watch.
+  const firstUser = initial.entries.find(e => e.kind === 'pi.user')!
+  const fork = { id: (await client.request<{ branchId: string }>({ t: 'send', treeId: tree.id, branchId: main, replace: firstUser.id, text: 'First search again', requestId: 'native-version' })).branchId }
+  await client.request({ t: 'watch', treeId: tree.id, branchId: fork.id })
+  const version = await settled(fork.id, 1)
+  pairs(version)
   await other.request({ t: 'watch', treeId: tree.id, branchId: fork.id })
   await other.until(() => other.shown.get(tree.id) === fork.id && traceEntries(other.views.get(tree.id)!).length === 1)
-  pairs(other.views.get(tree.id)!)
   const otherBefore = other.raw.filter(raw => JSON.parse(raw).t === 'native').length
+  await client.request({ t: 'watch', treeId: tree.id, branchId: main })
   await client.request({ t: 'send', treeId: tree.id, branchId: main, text: 'Second search', requestId: 'native-second' })
   const original = await settled(main, 2), second = original.entries.filter(e => e.kind === 'pi.user')[1]!
   for (let i = 1; i < published.length; i++) assert.ok(published[i]! - published[i - 1]! >= 250, 'the throttle also spans consecutive responses')
@@ -100,7 +104,7 @@ test('C2/C3/C6: real WebSocket progress is throttled and branch-scoped; fork, ed
   pairs(regenerated)
   await client.until(() => client.branches.get(tree.id)?.versions[String(first.id)]?.length === 3)
   assert.deepEqual(client.branches.get(tree.id)!.versions[String(first.id)], [main, edit.branchId, again.id])
-  const expected = new Map([[main, original], [edit.branchId, edited], [again.id, regenerated], [fork.id, initial]])
+  const expected = new Map([[main, original], [edit.branchId, edited], [again.id, regenerated], [fork.id, version]])
   for (const [branchId, previous] of expected) {
     await client.request({ t: 'watch', treeId: tree.id, branchId })
     await client.until(() => client.shown.get(tree.id) === branchId)
@@ -132,7 +136,6 @@ test('C2/C3/C6: signed blocks replay only to their provider/model; compaction dr
   }
   await send('Read https://example.com/a')
   const first = (await historyEntries(conv, ctx)).find(e => e.kind === 'pi.assistant')!
-  const fork = await space.fork(tree.id, branch.id, first.id)
   assert.doesNotMatch(JSON.stringify(await send('Use Pro', 'shared-one', 'deepseek-v4-pro')), /signed-page-for-next-turn/)
   assert.doesNotMatch(JSON.stringify(await send('Use another provider', 'shared-two')), /signed-page-for-next-turn/)
   assert.match(JSON.stringify(await send('Back to the original provider')), /signed-page-for-next-turn/)
@@ -147,7 +150,11 @@ test('C2/C3/C6: signed blocks replay only to their provider/model; compaction dr
   assert.equal(summary.title, undefined)
   assert.ok(!summary.tools?.some((tool: any) => tool.type?.startsWith('deepseek_')))
   assert.doesNotMatch(JSON.stringify(await send('Continue after compaction')), /signed-page-for-next-turn/)
-  assert.match(JSON.stringify(await send('Continue old fork', 'shared-one', 'deepseek-flash', fork.id)), /signed-page-for-next-turn/)
+  // A version of the second message inherits the first turn from before compaction, with its signed page.
+  const second = (await historyEntries(conv, ctx)).filter(e => e.kind === 'pi.user')[1]!
+  await space.send(tree.id, { text: 'Continue old fork', requestId: 'old-version', branchId: branch.id, replace: second.id, model: { provider: 'shared-one', id: 'deepseek-flash', name: 'deepseek-flash' } })
+  await space.harness.waitForIdle(ctx)
+  assert.match(JSON.stringify(remote.requests.at(-1)), /signed-page-for-next-turn/)
   const full = await historyEntries(conv, ctx)
   assert.equal(full[full.findIndex(e => e.id === first.id) + 1]!.kind, NATIVE_KIND, 'compaction preserves the full displayed history')
 })

@@ -67,7 +67,7 @@ test('R51, R52, R56: the main line spawns subagents and answers at once; each re
   assert.ok(child.some((e) => text(e).includes('先说背景')))
   const brief = child.find((e) => e.kind === BRIEF_KIND)!
   assert.match(text(brief), /^你是子 agent「/)
-  assert.equal(first!.parentId, main)
+  assert.equal(first!.role, 'agent')
   await space.close()
 })
 

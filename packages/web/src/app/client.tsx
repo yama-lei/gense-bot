@@ -92,16 +92,11 @@ export class Client {
   edit = (treeId: string, turn: Turn, text: string) =>
     void this.#send(treeId, { text }, Number(turn.id)).then((r) => this.showBranch(treeId, r.branchId), report)
 
-  /** A side branch that continues from the end of `turn`. */
-  fork = (treeId: string, turn: Turn) => {
+  /** A side question about the shown branch (btw), with the chosen model; nothing is written to the chat. */
+  btw = (treeId: string, question: string, onText: (text: string) => void) => {
     const branchId = this.socket.state.shown[treeId]
-    if (!branchId || turn.lastEntryId === undefined) return
-    void this.request<BranchMeta>({ t: 'branch.fork', treeId, branchId, at: turn.lastEntryId }).then((b) => this.showBranch(treeId, b.id), report)
-  }
-
-  summarize = (treeId: string) => {
-    const branchId = this.socket.state.shown[treeId]
-    if (branchId) void this.request({ t: 'branch.summarize', treeId, branchId, requestId: crypto.randomUUID() }).catch(report)
+    const model = this.model()
+    return this.socket.aside({ treeId, ...(branchId && { branchId }), question, ...(model && { model }) }, onText)
   }
 
   /** Compacts the shown branch's context now (roadmap-6 C3); progress and the summary arrive in its view. */

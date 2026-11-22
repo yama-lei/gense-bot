@@ -60,19 +60,17 @@ export async function deliver(this: UserSpace, row: EventRow, ctx: Context): Pro
     await this.triggers.delivered(event.id)
   }
 
-export async function report(this: UserSpace, conversationId: number, report: { title: string; body: string }, ctx: Context): Promise<"已交给主线；用户回到主线时能看到，主线下一轮对话会读到它。" | "已汇报给主线，你的任务完成了；简短收尾即可，不要再做别的。"> {
+export async function report(this: UserSpace, conversationId: number, report: { title: string; body: string }, ctx: Context): Promise<string> {
     const branch = await this.db.get<BranchRow>(`SELECT ${BRANCH_COLUMNS} FROM branches WHERE conversationId = ?`, conversationId)
     if (!branch) throw new Error('这个会话不在任何会话树里')
-    if (branch.role === 'main') throw new Error('你已经在主线上，直接回答用户即可，不需要 report')
-    // A subagent's report wakes the main line (R52); a user branch's waits for its next turn (R40).
-    const agent = branch.role === 'agent'
+    if (branch.role !== 'agent') throw new Error('只有子 agent 需要 report；直接回答用户即可')
+    // A subagent's report wakes the main line (R52).
     await this.emit(
       branch.treeId,
-      { source: { kind: agent ? 'agent' : 'branch', id: branch.id, label: branch.title || '分叉' }, type: 'report', title: report.title, body: report.body, wake: agent },
+      { source: { kind: 'agent', id: branch.id, label: branch.title }, type: 'report', title: report.title, body: report.body, wake: true },
       { key: `report:${conversationId}:${report.title}:${report.body.length}` },
       ctx,
     )
-    if (!agent) return '已交给主线；用户回到主线时能看到，主线下一轮对话会读到它。'
     await this.db.run("UPDATE branches SET status = 'done' WHERE id = ?", branch.id)
     this.branchesChanged(branch.treeId)
     return '已汇报给主线，你的任务完成了；简短收尾即可，不要再做别的。'

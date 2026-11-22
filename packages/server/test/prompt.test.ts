@@ -10,6 +10,7 @@ import { pluginDefaultsFromEnv, UserSpace } from '../src/index.ts'
 import { diskEnv } from './fixtures.ts'
 import { COMPACTION_INSTRUCTIONS } from '../src/agent/compaction.ts'
 import { SUGGEST_SYSTEM, suggestInput } from '../src/agent/suggest-prompt.ts'
+import { BTW_SYSTEM, btwInput } from '../src/agent/btw-prompt.ts'
 import { projectDir } from '@gense/protocol'
 import { deepseekModels } from '../src/agent/deepseek.ts'
 import { deepseekPlatform, fixture } from './deepseek-platform.ts'
@@ -133,7 +134,13 @@ test('A8 (roadmap-6), A2/A8/A9/A10/B5/C2/D2 (roadmap-7): conversation and follow
     '## System', '', fence + 'text', SUGGEST_SYSTEM, fence, '',
     '## User', '', fence + 'text', suggestInput('How do these two approaches compare?', 'The first approach is faster for small datasets. The second keeps memory bounded when the dataset grows.'), fence, '',
   ]
-  const text = render(system) + '\n' + difference.join('\n') + '\n' + temporaryScene.join('\n') + '\n' + native.join('\n') + '\n' + suggestions.join('\n')
+  const aside = [
+    '# Side question (btw)', '',
+    'A separate request for a quick question beside the conversation: its text without tool calls, and no tools. Nothing is written back.', '',
+    '## System', '', fence + 'text', BTW_SYSTEM, fence, '',
+    '## User', '', fence + 'text', btwInput('用户：帮我把这个函数改成异步的\n\n助手：改好了，现在它返回一个 Promise。', '顺便问一下，async 和 Promise 有什么区别？'), fence, '',
+  ]
+  const text = render(system) + '\n' + difference.join('\n') + '\n' + temporaryScene.join('\n') + '\n' + native.join('\n') + '\n' + suggestions.join('\n') + '\n' + aside.join('\n')
   if (process.env.UPDATE_SNAPSHOT) writeFileSync(SNAPSHOT, text)
   assert.equal(text, readFileSync(SNAPSHOT, 'utf8'), 'the prompt changed: review the diff and rerun with UPDATE_SNAPSHOT=1')
   // A10: the date is the user's, not the server's: 20:00 UTC on 11 Nov is already 12 Nov in Shanghai.

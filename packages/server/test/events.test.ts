@@ -3,7 +3,7 @@ import { openNodeSqliteDatabase } from '@earendil-works/chord/sqlite/node'
 import assert from 'node:assert/strict'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { test } from 'node:test'
-import { BRIEF_KIND, EVENT_KIND, fauxModels, hmac, nextRun, UserSpace, type EventData } from '../src/index.ts'
+import { EVENT_KIND, fauxModels, hmac, nextRun, UserSpace, type EventData } from '../src/index.ts'
 import { diskEnv } from './fixtures.ts'
 
 /** A space on a clock the test moves; sleeping tasks run when it calls `harness.resume()`. */
@@ -86,30 +86,18 @@ test('R46–R48: an Event that does not wake waits for the next turn; one that w
   await space.harness.waitForIdle(ctx)
 })
 
-test('R40: a branch summarizes itself to the main line; report is refused on the main line', async () => {
+test('R52: only a subagent may report; the main line and its versions are refused', async () => {
   const { space } = await open()
   const t = await space.createTree()
-  const { branchId: main } = await space.send(t.id, { text: '开始', requestId: 'a' })
+  const { branchId: main } = await space.send(t.id, { text: '[工具 report] {"title":"x","body":"y"}', requestId: 'a' })
   await space.harness.waitForIdle(ctx)
-  const b = (await space.fork(t.id, main, (await space.branches(t.id)).branches[0]!.lastEntryId!)).id
-  await space.send(t.id, { text: '查一下资料', requestId: 'b', branchId: b })
+  assert.match(text((await entries(space, t.id, main)).at(-1)!), /只有子 agent 需要 report/)
+  const first = (await entries(space, t.id, main)).find((e) => e.kind === 'pi.user') as unknown as { id: number }
+  const { branchId: version } = await space.send(t.id, { text: '[工具 report] {"title":"x","body":"y"}', requestId: 'b', replace: first.id })
   await space.harness.waitForIdle(ctx)
-
-  await assert.rejects(space.summarize(t.id, main, 'm'), /只有分叉/)
-  await space.summarize(t.id, b, 's')
-  await space.harness.waitForIdle(ctx)
-  const branch = await entries(space, t.id, b)
-  assert.ok(branch.some((e) => e.kind === BRIEF_KIND))
-  assert.match(text(branch.at(-1)!), /已交给主线/)
-  const report = (await entries(space, t.id, main)).at(-1)!
-  assert.equal(report.kind, EVENT_KIND)
-  const data = report.data as EventData
-  assert.deepEqual([data.type, data.source.kind, data.title, data.wake], ['report', 'branch', '分叉总结', false])
-  assert.match(data.body, /查一下资料/)
-
-  await space.send(t.id, { text: '[工具 report] {"title":"x","body":"y"}', requestId: 'c', branchId: main })
-  await space.harness.waitForIdle(ctx)
-  assert.match(text((await entries(space, t.id, main)).at(-1)!), /已经在主线上/)
+  assert.notEqual(version, main)
+  assert.match(text((await entries(space, t.id, version)).at(-1)!), /只有子 agent 需要 report/)
+  assert.ok(!(await entries(space, t.id, main)).some((e) => e.kind === EVENT_KIND))
 })
 
 test('R49: a schedule fires on its clock, pauses, resumes and is removed with its tree', async () => {

@@ -27,7 +27,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEv
 import { flushSync } from 'react-dom'
 import { localPrefs, modelKey, useClient, useHost, useLocalPrefs } from '../../app/client'
 import { cn } from '../../lib/cn'
-import { availableCommands, localSkillNames, toOutgoingCommand, type Command } from '../../lib/commands'
+import { availableCommands, btwCommand, localSkillNames, toOutgoingCommand, type Command } from '../../lib/commands'
 import { baseName, errorText } from '../../lib/format'
 import { modKey } from '../../lib/hooks'
 import { drafts, useLab } from '../../lib/lab'
@@ -222,11 +222,20 @@ export function Composer({ treeId, placeholder, onSend, busy, onStop, autoFocus,
 
   const uploading = files.some((f) => !f.file && !f.error)
   const ready = files.flatMap((f) => (f.file ? [f.file] : []))
-  const canSend = !busy && !uploading && (text.trim() !== '' || ready.length > 0 || !!command)
+  // A side question needs its text, and can be asked while an answer is still being written.
+  const aside = command?.id === btwCommand.id
+  const canSend = aside ? text.trim() !== '' : !busy && !uploading && (text.trim() !== '' || ready.length > 0 || !!command)
 
   const send = () => {
     if (!canSend) return
     dictation.stop()
+    if (aside) {
+      onSend({ text: text.trim(), command: toOutgoingCommand(command) })
+      setText('')
+      saveDraft(draftKey, '')
+      setCommand(null)
+      return
+    }
     onSend({
       text: text.trim(),
       ...(ready.length && { attachments: ready }),
@@ -491,7 +500,7 @@ export function Composer({ treeId, placeholder, onSend, busy, onStop, autoFocus,
               </button>
             </Tooltip>
           )}
-          {busy ? (
+          {busy && !aside ? (
             <Tooltip label="停止生成" side="top">
               <button type="button" aria-label="停止" onClick={onStop} className="ml-1 grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground transition-colors hover:bg-primary/85">
                 <Square className="size-3.5 fill-current" />

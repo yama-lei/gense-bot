@@ -115,6 +115,14 @@ export const migrations = [
     version: 9,
     statements: ['CREATE TABLE exports (id TEXT PRIMARY KEY, status TEXT NOT NULL, size INTEGER, error TEXT, createdAt INTEGER NOT NULL, finishedAt INTEGER)'],
   },
+  {
+    // No more forks or tree map: a user branch is only a version of a message, and every tree opens on its main line.
+    version: 10,
+    statements: [
+      "UPDATE branches SET role = 'version' WHERE role = 'user'",
+      "UPDATE trees SET activeBranchId = (SELECT b.id FROM branches b WHERE b.treeId = trees.id AND b.role = 'main')",
+    ],
+  },
 ]
 
 /** Who the assistant is and how it answers (roadmap-6 A10). Only the date changes, once a day, so the prompt cache holds. */
@@ -228,10 +236,7 @@ export type BranchRow = {
 
 export const BRANCH_COLUMNS = 'id, treeId, conversationId, parentId, forkEntryId, role, mode, title, status, createdAt'
 
-export /** How much of a branch's newest answer the tree map shows. */
-const PREVIEW_CHARS = 160
-
-export /** Newest entries searched for that answer. */
+export /** Newest entries searched for a branch's latest answer. */
 const PREVIEW_ENTRIES = 20
 
 export const entryText = (e: EntryRecord) =>

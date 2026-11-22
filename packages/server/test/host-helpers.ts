@@ -124,7 +124,7 @@ export class Client {
   }
 
   request<T = unknown>(r: DistributiveOmit<ClientRequest, 'id'>): Promise<T> {
-    if (r.t === 'send' || r.t === 'regenerate' || r.t === 'branch.summarize') r = { ...r, requestId: r.treeId + ':' + r.requestId }
+    if (r.t === 'send' || r.t === 'regenerate') r = { ...r, requestId: r.treeId + ':' + r.requestId }
     const id = this.#next++
     return new Promise((resolve, reject) => {
       this.#pending.set(id, { resolve: resolve as (v: unknown) => void, reject })
@@ -499,17 +499,24 @@ export async function branchesScenario(client: Client) {
   assert.deepEqual(versions, [main, edit.branchId, again.id])
   await idle(again.id)
 
-  // Fork after the first answer, and go back to the main line (R41).
-  const fork = await client.request<BranchMeta>({ t: 'branch.fork', treeId: tree.id, branchId: main, at: firstAnswer.id })
-  assert.equal(fork.parentId, main)
-  await client.request({ t: 'watch', treeId: tree.id, branchId: fork.id })
-  await client.until(() => client.shown.get(tree.id) === fork.id && client.views.get(tree.id)!.entries.filter((e) => e.kind === 'pi.user').length === 1, 5000, 'fork shown')
+  // A side question reads the shown branch, streams its answer to this socket and writes nothing.
+  const count = () => client.views.get(tree.id)!.entries.length
+  const entriesBefore = count()
+  const aside = await client.request<{ text: string }>({ t: 'btw', treeId: tree.id, branchId: again.id, requestId: 'side', question: '顺便问问' })
+  assert.match(aside.text, /^顺便回答：[\s\S]*乙[\s\S]*顺便问问/)
+  const pushes = client.raw.map((raw) => JSON.parse(raw) as ServerMessage).filter((m) => m.t === 'btw' && m.requestId === 'side')
+  assert.equal((pushes.at(-1) as { text: string }).text, aside.text)
+  await assert.rejects(client.request({ t: 'btw', treeId: tree.id, requestId: 'empty', question: '' }), /不能为空/)
+  assert.equal(count(), entriesBefore)
+
+  // Go back to the main line (R41).
   await client.request({ t: 'watch', treeId: tree.id, branchId: main })
   await client.until(() => client.shown.get(tree.id) === main && client.branches.get(tree.id)!.activeBranchId === main, 5000, 'main shown')
   assert.deepEqual(client.views.get(tree.id)!.entries.filter((e) => e.kind === 'pi.user').map(textOf), ['甲', '乙'])
 
   const state = client.branches.get(tree.id)!
-  assert.equal(state.branches.length, 4)
+  assert.equal(state.branches.length, 3)
+  assert.deepEqual(state.branches.map((b) => b.role).sort(), ['main', 'version', 'version'])
   assert.equal(client.trees.filter((t) => t.id === tree.id).length, 1)
   assert.equal(client.trees.find((t) => t.id === tree.id)!.title, '甲')
   await client.request({ t: 'tree.delete', treeId: tree.id })
@@ -536,8 +543,10 @@ export async function ledgerScenario(client: Client) {
   }
   const { branchId: main } = await client.request<{ branchId: string }>({ t: 'send', treeId: tree.id, text: '开始', requestId: 'l0' })
   await client.until(() => client.branches.get(tree.id)?.branches.find((b) => b.id === main)?.status === 'idle' && client.views.get(tree.id)?.entries.some((e) => e.kind === 'pi.assistant'), 15_000, 'first answer')
-  const at = client.views.get(tree.id)!.entries.findLast((e) => e.kind === 'pi.assistant')!.id
-  const fork = await client.request<BranchMeta>({ t: 'branch.fork', treeId: tree.id, branchId: main, at })
+  // A version of the first message is a second branch in the same directory.
+  const asked = client.views.get(tree.id)!.entries.find((e) => e.kind === 'pi.user')!.id
+  const fork = { id: (await client.request<{ branchId: string }>({ t: 'send', treeId: tree.id, branchId: main, replace: asked, text: '另一个开始', requestId: 'l-version' })).branchId }
+  await client.until(() => client.branches.get(tree.id)?.branches.find((b) => b.id === fork.id)?.status === 'idle', 15_000, 'version answer')
 
   assert.match(await tool(main, 'write', { path: 'f.txt', content: 'one' }), /Successfully wrote/)
   // R42: the fork sees the file; R43: it must read it first.
@@ -551,7 +560,7 @@ export async function ledgerScenario(client: Client) {
   await client.request({ t: 'tree.delete', treeId: tree.id })
 }
 
-/** Stage 6: a signed webhook call, "summarize to the main line", and a one-off schedule, each an Event in the main branch. */
+/** Stage 6: a signed webhook call and a one-off schedule, each an Event in the main branch. */
 export async function eventsScenario(client: Client, url: string) {
   const tree = await client.request<TreeMeta>({ t: 'tree.create' })
   await client.request({ t: 'watch', treeId: tree.id })
@@ -580,23 +589,6 @@ export async function eventsScenario(client: Client, url: string) {
   assert.match(textOf(answer), /构建失败/)
   assert.equal((entries().find((e) => e.kind === EVENT_KIND)!.data as EventData).title, '构建失败')
 
-  // R40: a fork's summary lands in the main branch without starting a run there.
-  await client.until(() => idle(main), 15_000, 'main idle')
-  const at = entries().findLast((e) => e.kind === 'pi.assistant')!.id
-  const fork = await client.request<BranchMeta>({ t: 'branch.fork', treeId: tree.id, branchId: main, at })
-  await client.request({ t: 'watch', treeId: tree.id, branchId: fork.id })
-  await client.request({ t: 'send', treeId: tree.id, branchId: fork.id, text: '比较两个方案', requestId: 'e1' })
-  await client.until(() => idle(fork.id) && entries().some((e) => textOf(e) === '收到：比较两个方案'), 15_000, 'fork answer')
-  await client.request({ t: 'branch.summarize', treeId: tree.id, branchId: fork.id, requestId: 'e2' })
-  await client.until(() => entries().some((e) => e.kind === 'pi.assistant' && textOf(e).includes('已交给主线')), 15_000, 'report sent')
-  await client.request({ t: 'watch', treeId: tree.id, branchId: main })
-  const report = await client.until(
-    () => client.shown.get(tree.id) === main && entries().find((e) => e.kind === EVENT_KIND && (e.data as EventData).type === 'report'),
-    15_000,
-    'report in main',
-  )
-  assert.match((report.data as EventData).body, /比较两个方案/)
-
   // R49: a one-off schedule fires on the host's own clock .
   const schedule = await client.request<ScheduleInfo>({
     t: 'schedule.create',
@@ -615,7 +607,7 @@ export async function eventsScenario(client: Client, url: string) {
   await client.until(() => !client.schedules.some((s) => s.treeId === tree.id) && !client.webhooks.some((w) => w.treeId === tree.id), 5000, 'automations removed')
 }
 
-/** R51–R55 through the socket: subagents appear as branches of the tree, report back, and can be stopped. */
+/** R51–R55 through the socket: subagents run as internal branches of the tree, report back, and can be stopped. */
 export async function agentsScenario(client: Client) {
   const tree = await client.request<TreeMeta>({ t: 'tree.create' })
   await client.request({ t: 'watch', treeId: tree.id })
@@ -628,7 +620,6 @@ export async function agentsScenario(client: Client) {
   await client.until(() => reports().length === 2, 20_000, 'two reports')
   assert.deepEqual(agents().filter((b) => b.status === 'done').map((b) => b.title).sort(), ['乙公司', '甲公司'])
   const slow = agents().find((b) => b.title === '丙公司')!
-  assert.equal(slow.parentId, main)
   await client.request({ t: 'abort', treeId: tree.id, branchId: slow.id })
   const notice = await client.until(() => entries().find((e) => e.kind === EVENT_KIND && (e.data as EventData).source.kind === 'system'), 20_000, 'stop notice')
   assert.match((notice.data as EventData).title, /丙公司.*未完成/)

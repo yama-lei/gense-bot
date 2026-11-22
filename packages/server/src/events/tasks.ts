@@ -16,10 +16,6 @@ const escape = (s: string) => s.replace(/[&"<>]/g, (c) => ({ '&': '&amp;', '"': 
 export const eventText = (e: EventData) =>
   `<event source="${e.source.kind}" from="${escape(e.source.label)}" type="${e.type}">\n${e.title}\n\n${e.body}\n</event>`
 
-/** Asked of a user branch for "summarize to the main line" (R40); the answer goes to the main branch through `report`. */
-export const SUMMARIZE_PROMPT =
-  '请把这个分叉从分叉点到现在的内容整理成：目标、结论、关键决定、改过的文件、未解决的问题。然后调用 report 工具把它交给主线，title 写一句话的结论。'
-
 // --- Schedules (R49) ---
 
 const MINUTE = 60_000
@@ -244,7 +240,7 @@ export const spawnTool = (spawn: () => Spawn) =>
     },
   }) as unknown as ToolRegistration
 
-// --- report (R40, R52) ---
+// --- report (R52) ---
 
 /** Where a `report` from a conversation goes; throws when it has nowhere to go. */
 export type Report = (conversationId: number, report: { title: string; body: string }, ctx: Context) => Promise<string>
@@ -253,7 +249,7 @@ export const reportTool = (report: () => Report) =>
   defineTool({
     name: 'report',
     description:
-      'Hand a result to the main line of this conversation tree. Call it in a branch when your task there is done, or when the user asks to summarize the branch for the main line. The main line gets it as an <event>. Not available on the main line itself.',
+      'Hand your result to the main conversation that spawned you, when your task as a subagent is done. The main conversation gets it as an <event>. Only subagents can use it.',
     parameters: Type.Object({
       title: Type.String({ description: 'The conclusion, in one sentence' }),
       body: Type.String({ description: 'What the main line needs to know, in Markdown: findings, sources, files written, open questions' }),

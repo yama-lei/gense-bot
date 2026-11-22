@@ -246,7 +246,7 @@ test('A7/A9/A10/A11: projects, membership, files and deletion choices synchroniz
   assert.equal(first.projects.length, 0)
 })
 
-test('A8/A10/A11: existing conversations, forks and moves use current project instructions, files and scoped memory', async t => {
+test('A8/A10/A11: existing conversations, versions and moves use current project instructions, files and scoped memory', async t => {
   const captured = capturedModels()
   const space = await UserSpace.open(await openNodeSqliteDatabase(':memory:'), { models: captured.models, env: await diskEnv() })
   t.after(() => space.close())
@@ -280,8 +280,11 @@ test('A8/A10/A11: existing conversations, forks and moves use current project in
   assert.match(updated.sections.project!, /cite sources/); assert.doesNotMatch(updated.sections.project!, /reference\.md/)
   const { branch, tree: row } = await space.branchRow(tree.id)
   const { watch } = await space.watch(tree.id, branch.id); await watch.stop()
-  const fork = await space.fork(tree.id, branch.id, watch.value.entries.find(entry => entry.kind === 'pi.user')!.id)
-  const forked = await ask('from fork', fork.id)
+  // A version of a later message inherits the conversation before it.
+  const later = watch.value.entries.filter(entry => entry.kind === 'pi.user')[1]!
+  const fork = { id: (await space.send(tree.id, { text: 'from fork', requestId: 'fork', branchId: branch.id, replace: later.id })).branchId }
+  await space.harness.waitForIdle(ctx)
+  const forked = captured.requests.at(-1)!
   assert.match(forked.sections.project!, /cite sources/); assert.equal(row.projectId, project.id)
   await space.preferences.set({ useMemory: false })
   const noMemory = await ask('memory disabled', fork.id)

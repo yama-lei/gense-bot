@@ -29,7 +29,11 @@ test('R43, R44: a branch changes a file only as it last read it', async () => {
   const t = await space.createTree()
   const { branchId: a } = await space.send(t.id, { text: '开始', requestId: 'a' })
   await space.harness.waitForIdle(ctx)
-  const b = (await space.fork(t.id, a, (await space.branches(t.id)).branches[0]!.lastEntryId!)).id
+  // A version of the first message is another branch of the same conversation.
+  const { watch } = await space.watch(t.id, a); await watch.stop()
+  const first = (watch.value as unknown as { entries: { id: number; kind: string }[] }).entries.find((e) => e.kind === 'pi.user')!
+  const { branchId: b } = await space.send(t.id, { text: '另一个版本', requestId: 'b', replace: first.id })
+  await space.harness.waitForIdle(ctx)
   const env = await files(treeDir(t.id))
   const content = async () => {
     const r = await env.readTextFile(`${treeDir(t.id)}/f.txt`, ctx)

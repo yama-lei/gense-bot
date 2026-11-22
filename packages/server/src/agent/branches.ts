@@ -14,7 +14,7 @@ type EntryRecord,
 type Submission
 } from '@earendil-works/pi-durable'
 
-import type { ImageContent,TextContent } from '@earendil-works/pi-ai'
+import type { ImageContent,Message,TextContent } from '@earendil-works/pi-ai'
 
 import {
 RUN_ERROR_KIND,
@@ -29,7 +29,7 @@ import { toBase64,treeDir } from './workspace.ts'
 
 import { attachmentsText,commandText,mentionsText,parseNote,type CommandNote,type Mention } from '@gense/protocol'
 
-import { BRANCH_COLUMNS,type BranchRow,DEFAULT_TITLE,entryText,MENTIONED_CHAT_CHARS,PREVIEW_CHARS,PREVIEW_ENTRIES,titleOf,type TreeRow } from './shared.ts'
+import { BRANCH_COLUMNS,type BranchRow,DEFAULT_TITLE,MENTIONED_CHAT_CHARS,titleOf,type TreeRow } from './shared.ts'
 
 import type { UserSpace } from './space.ts'
 import { parsedAttachments } from './attachments.ts'
@@ -40,26 +40,20 @@ export async function branches(this: UserSpace, treeId: string, ctx: Context = B
     const tree = await this.row(treeId)
     const rows = await this.db.all<BranchRow>(`SELECT ${BRANCH_COLUMNS} FROM branches WHERE treeId = ? ORDER BY createdAt, rowid`, treeId)
     const branches = await Promise.all(rows.map((r) => this.branchMeta(r, ctx)))
-    return { branches, activeBranchId: rows.some((r) => r.id === tree.activeBranchId) ? tree.activeBranchId : rows[0]!.id, versions: await this.versions(rows, ctx) }
+    // A branch the user can no longer reach (a subagent's, say) is not where the tree opens.
+    const active = rows.find((r) => r.id === tree.activeBranchId && r.role !== 'agent') ?? rows.find((r) => r.role === 'main')!
+    return { branches, activeBranchId: active.id, versions: await this.versions(rows, ctx) }
   }
 
 export async function branchMeta(this: UserSpace, row: BranchRow, ctx: Context): Promise<BranchMeta> {
-    const conv = await this.harness.conversation(row.conversationId as ConversationId, ctx)
     const live = await this.harness.snapshot(LiveDoc, row.conversationId as ConversationId, ctx)
-    const { items } = conv ? await conv.entries({}, PREVIEW_ENTRIES, undefined, ctx) : { items: [] }
-    const answer = items.find((e) => e.kind === 'pi.assistant' && entryText(e))
-    const { treeId: _, mode: __, ...meta } = row
-    return {
-      ...meta,
-      status: live?.run ? 'running' : row.status,
-      lastEntryId: items[0]?.id ?? row.forkEntryId,
-      preview: answer ? entryText(answer).replace(/\s+/g, ' ').slice(0, PREVIEW_CHARS) : '',
-    }
+    const { treeId: _, mode: __, parentId: ___, ...meta } = row
+    return { ...meta, status: live?.run ? 'running' : row.status }
   }
 
 export async function versions(this: UserSpace, rows: BranchRow[], ctx: Context): Promise<Record<string, string[]>> {
     const groups = new Map<string, BranchRow[]>()
-    for (const r of rows) if (r.role === 'user' && r.title) groups.set(String(r.forkEntryId ?? 'start'), [...(groups.get(String(r.forkEntryId ?? 'start')) ?? []), r])
+    for (const r of rows) if (r.role === 'version' && r.title) groups.set(String(r.forkEntryId ?? 'start'), [...(groups.get(String(r.forkEntryId ?? 'start')) ?? []), r])
     const out: Record<string, string[]> = {}
     for (const [key, forks] of groups) {
       const owner = key === 'start' ? rows.find((r) => r.role === 'main' && r.title) : await this.continuing(rows, forks[0]!, ctx)
@@ -90,7 +84,7 @@ export async function addBranch(this: UserSpace, tree: TreeRow, from: BranchRow,
       conversationId: conv.id,
       parentId: from.id,
       forkEntryId: boundary?.at ?? null,
-      role: 'user',
+      role: 'version',
       mode: at === null ? 'new' : 'fork',
       title: '',
       status: 'idle',
@@ -112,13 +106,6 @@ export async function emptyLike(this: UserSpace, treeId: string, like: Conversat
       },
       ctx,
     )
-  }
-
-export async function fork(this: UserSpace, treeId: string, branchId: string, at: number, ctx: Context = BACKGROUND_CONTEXT): Promise<BranchMeta> {
-    const { tree, branch: from } = await this.branchRow(treeId, branchId)
-    const { branch } = await this.addBranch(tree, from, at, ctx)
-    this.branchesChanged(treeId)
-    return this.branchMeta(branch, ctx)
   }
 
 export async function userEntry(this: UserSpace, conv: Conversation, entryId: number, ctx: Context): Promise<{ entry: EntryRecord; before: EntryId | null; }> {
@@ -255,16 +242,21 @@ export async function mentioned(this: UserSpace, treeId: string, mentions: Menti
 
 export async function transcript(this: UserSpace, treeId: string, ctx: Context): Promise<string> {
     const { messages } = await (await this.open((await this.branchRow(treeId)).branch, ctx)).context(ctx)
-    const lines: string[] = []
-    for (const m of messages) {
-      if (m.role !== 'user' && m.role !== 'assistant') continue
-      const blocks = typeof m.content === 'string' ? [{ type: 'text' as const, text: m.content }] : m.content
-      const text = blocks
-        .flatMap((b) => (b.type === 'text' && !parseNote(b.text) ? [b.text] : []))
-        .join('\n')
-        .trim()
-      if (text) lines.push(`${m.role === 'user' ? '用户' : '助手'}：${text}`)
-    }
-    const all = lines.join('\n\n')
-    return all.length > MENTIONED_CHAT_CHARS ? `…\n${all.slice(-MENTIONED_CHAT_CHARS)}` : all || '（空会话）'
+    return chatText(messages, MENTIONED_CHAT_CHARS)
   }
+
+/** The user's and the assistant's words in `messages`, without notes or tool calls; the last `limit` characters. */
+export function chatText(messages: readonly Message[], limit: number): string {
+  const lines: string[] = []
+  for (const m of messages) {
+    if (m.role !== 'user' && m.role !== 'assistant') continue
+    const blocks = typeof m.content === 'string' ? [{ type: 'text' as const, text: m.content }] : m.content
+    const text = blocks
+      .flatMap((b) => (b.type === 'text' && !parseNote(b.text) ? [b.text] : []))
+      .join('\n')
+      .trim()
+    if (text) lines.push(`${m.role === 'user' ? '用户' : '助手'}：${text}`)
+  }
+  const all = lines.join('\n\n')
+  return all.length > limit ? `…\n${all.slice(-limit)}` : all || '（空会话）'
+}

@@ -155,7 +155,7 @@ test('B4: trusted proxy mode buckets the rightmost valid hop; spoofed prefixes c
   assert.equal(await read(), 429, 'invalid or absent forwarded IPs use the same socket bucket')
 })
 
-test('B5: temporary roots, inherited forks and empty regenerated branches never read or offer memory', async t => {
+test('B5: temporary roots, inherited versions and empty regenerated branches never read or offer memory', async t => {
   const models = fauxModels(), requests: { sections: Record<string, string>; tools: Set<string> }[] = []
   const provider = models.providers[0] as unknown as Record<'stream' | 'streamSimple', (model: unknown, context: { messages: Message[] }, options: unknown) => unknown>
   for (const key of ['stream', 'streamSimple'] as const) {
@@ -178,11 +178,12 @@ test('B5: temporary roots, inherited forks and empty regenerated branches never 
   let n = 0
   const ask = async (text: string, branchId?: string) => { await space.send(tree.id, { text, requestId: String(++n), ...(branchId && { branchId }) }); await space.harness.waitForIdle(ctx) }
   await ask('Temporary first message')
+  await ask('Temporary second message')
   const { watch, branchId } = await space.watch(tree.id); await watch.stop()
-  const first = watch.value.entries.find(entry => entry.kind === 'pi.user')!
-  const fork = await space.fork(tree.id, branchId, first.id)
-  await ask('Inherited fork', fork.id)
-  const regenerated = await space.regenerate(tree.id, branchId, first.id, { requestId: 'empty-regenerated' })
+  const [first, second] = watch.value.entries.filter(entry => entry.kind === 'pi.user')
+  // A version of the second message inherits the first.
+  await space.send(tree.id, { text: 'Inherited fork', requestId: 'inherited', branchId, replace: second!.id }); await space.harness.waitForIdle(ctx)
+  const regenerated = await space.regenerate(tree.id, branchId, first!.id, { requestId: 'empty-regenerated' })
   await space.harness.waitForIdle(ctx)
   await space.preferences.set({ memoryWrites: 'explicit' })
   await ask('[工具 memory] {"action":"add","text":"Temporary secret must not be saved"}', regenerated.id)
@@ -229,7 +230,6 @@ test('B5/B6: deletion and expiry make temporary content unreachable through cont
     const tree = await client.request<TreeMeta>({ t: 'tree.create', temporary: true })
     await client.request({ t: 'tree.update', treeId: tree.id, title: marker })
     await client.request({ t: 'watch', treeId: tree.id })
-    const branchId = client.shown.get(tree.id)!
     await client.request({ t: 'send', treeId: tree.id, text: marker, requestId: String(++n) }); await space.harness.waitForIdle(ctx)
     await client.request({ t: 'send', treeId: tree.id, text: '[工具 write] ' + JSON.stringify({ path: marker + '.txt', content: marker }), requestId: String(++n) }); await space.harness.waitForIdle(ctx)
     const path = (await client.request<FileEntry[]>({ t: 'files.list', treeId: tree.id })).find(file => !file.readOnly && file.path.includes(marker))!.path
@@ -266,7 +266,7 @@ test('B5/B6: deletion and expiry make temporary content unreachable through cont
     for (const request of [
       { t: 'watch', treeId: tree.id }, { t: 'files.list', treeId: tree.id }, { t: 'files.read', treeId: tree.id, path }, { t: 'files.preview', treeId: tree.id, path },
       { t: 'send', treeId: tree.id, text: 'continue', requestId: String(++n) }, { t: 'share.create', treeId: tree.id, snapshot: snapshot() },
-      { t: 'memory.add', source: 'saved', treeId: tree.id, text: marker }, { t: 'branch.fork', treeId: tree.id, branchId, at: 1 },
+      { t: 'memory.add', source: 'saved', treeId: tree.id, text: marker },
     ] as const) await assert.rejects(client.request(request), /会话不存在/)
     const fileResponse = await fetch(host.url + `/api/users/${owner.user.id}/files/${tree.id}?path=` + encodeURIComponent(path), { headers: { cookie: owner.cookie } })
     assert.equal(fileResponse.status, 404)

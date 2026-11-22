@@ -47,9 +47,10 @@ test('C2/C3/C5: authored SSE traverses the SDK, native progress, atomic SQLite t
   assert.ok(body.messages.some((m: any) => m.content?.some?.((b: any) => b.signature === 'signed-page-for-next-turn')))
   assert.equal(body.title, undefined)
   assert.deepEqual(body.output_config, { effort: 'high' }, 'the conversation retains its selected effort')
-  const before = entries[position]!.id
-  const fork = await space.fork(tree.id, branch.id, before)
-  await space.send(tree.id, { text: 'Fork follow-up', branchId: fork.id, requestId: 'fork' })
+  // An edit of the second message is a version that inherits the signed first turn.
+  const reopened = await space.open((await space.branchRow(tree.id)).branch, ctx)
+  const second = (await reopened.context(ctx)).entries.filter(e => e.kind === 'pi.user')[1]!
+  await space.send(tree.id, { text: 'Fork follow-up', branchId: branch.id, replace: second.id, requestId: 'fork' })
   await space.harness.waitForIdle(ctx)
   assert.match(JSON.stringify(remote.requests.at(-1)), /signed-page-for-next-turn/)
 })

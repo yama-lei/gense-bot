@@ -22,7 +22,10 @@ import type { ShareInfo, ShareSnapshot } from './share.ts'
 import type { NativeTrace } from './deepseek.ts'
 import type { ExportInfo, Feedback, FeedbackReason, FileKind, Suggestions } from './activity.ts'
 
-/** A conversation as the sidebar lists it: a tree of branches, titled by its main branch (roadmap-3 R35). */
+/**
+ * A conversation as the sidebar lists it, titled by its main branch. Internally a tree of branches: the main one,
+ * versions of a message (retry, edit) and subagents; the user sees only the main line and `‹ 2/3 ›` versions.
+ */
 export interface TreeMeta {
   id: string
   title: string
@@ -68,13 +71,13 @@ export interface Preferences {
   deepseekSafety?: boolean
 }
 
-export type BranchRole = 'main' | 'user' | 'agent'
+/** `version`: another version of one of the main line's messages, from a retry or an edit. `agent`: a subagent. */
+export type BranchRole = 'main' | 'version' | 'agent'
 export type BranchStatus = 'idle' | 'running' | 'done' | 'failed' | 'aborted'
 
-/** One conversation of a tree (roadmap-3 D2). Entry ids are global, so they order fork points across branches. */
+/** One conversation of a tree (roadmap-3 D2). Entry ids are global, so they order versions across branches. */
 export interface BranchMeta {
   id: string
-  parentId: string | null
   /** pi-durable conversation id; view entries carry it, so a client tells which branch wrote an entry. */
   conversationId: number
   /** Entry of the parent's transcript it continues from; null when it starts empty (a version of the first message). */
@@ -83,9 +86,6 @@ export interface BranchMeta {
   /** Its first message; empty while it has none. */
   title: string
   status: BranchStatus
-  /** Newest entry, and the start of its newest answer, for the tree map. */
-  lastEntryId: number | null
-  preview: string
   createdAt: number
 }
 
@@ -165,13 +165,13 @@ export interface ToolCallResult {
 
 /** Kind of an entry the app places for a message that is not the user's own input (roadmap-3 D4); data is EventData. */
 export const EVENT_KIND = 'app.event'
-/** Kind of an input the app asks the model on the user's behalf, such as "summarize to the main line" (D3); data is BriefData. */
+/** Kind of an input the app asks the model on the user's behalf, such as a subagent's task (D3); data is BriefData. */
 export const BRIEF_KIND = 'app.brief'
 
 /** An Event as its card shows it (R46): where it came from, a title and a body. */
 export interface EventData {
   id: string
-  source: { kind: 'branch' | 'agent' | 'schedule' | 'webhook' | 'system' | 'channel'; id: string; label: string }
+  source: { kind: 'agent' | 'schedule' | 'webhook' | 'system' | 'channel'; id: string; label: string }
   type: 'report' | 'tick' | 'webhook' | 'notice'
   title: string
   body: string
@@ -274,9 +274,7 @@ export type ClientRequest =
    * admitted, or with `wait` when it settles, adding `outcome` (CompactionOutcome).
    */
   | { t: 'compact'; id: number; treeId: string; branchId?: string; instructions?: string; wait?: boolean }
-  /** A new branch continuing `at` (an entry of `branchId`'s transcript); resolves to its BranchMeta (R36). */
-  | { t: 'branch.fork'; id: number; treeId: string; branchId: string; at: number }
-  /** Asks the user entry `entryId` again in a new branch beside it; resolves to its BranchMeta (R37). */
+  /** Retry: asks the user entry `entryId` again as a new version beside it; resolves to its BranchMeta (R37). */
   | { t: 'regenerate'; id: number; treeId: string; branchId: string; entryId: number; requestId: string; model?: ModelInfo; effort?: Effort }
   /** Streams one branch of the tree (`branchId`, or the active one) and makes it the active one. */
   | { t: 'watch'; id: number; treeId: string; branchId?: string }
@@ -328,8 +326,13 @@ export type ClientRequest =
   | { t: 'auth.answer'; id: number; promptId: string; value?: string }
   | { t: 'auth.cancel'; id: number; loginId: string }
   | { t: 'auth.logout'; id: number; provider: string }
-  /** Asks a user branch to summarize itself and `report` to the main branch (R40). */
-  | { t: 'branch.summarize'; id: number; treeId: string; branchId: string; requestId: string }
+  /**
+   * A side question about the shown branch ("btw"): answered from its conversation so far, with no tools, and never
+   * written to it. Streams `btw` messages to this socket; resolves to `{ text }`. `model` defaults to the branch's.
+   */
+  | { t: 'btw'; id: number; treeId: string; branchId?: string; requestId: string; question: string; model?: ModelInfo }
+  /** Stops a side question; its request rejects. */
+  | { t: 'btw.cancel'; id: number; requestId: string }
   | { t: 'schedule.create'; id: number; treeId: string; name: string; prompt: string; rule: ScheduleRule; tz: string }
   | { t: 'schedule.update'; id: number; scheduleId: string; enabled: boolean }
   | { t: 'schedule.delete'; id: number; scheduleId: string }
@@ -395,6 +398,8 @@ export type ServerMessage =
   | { t: 'compaction_end'; treeId: string; branchId: string; taskId: number; reason: CompactionReason; error?: string }
   /** A placed summary, replayed on watch. `entryId` is its position in the full-history view; deduplicate by it. */
   | ({ t: 'compaction_summary'; treeId: string; branchId: string } & CompactionSummary)
+  /** A side question's answer so far, to the socket that asked it. */
+  | { t: 'btw'; requestId: string; text: string }
   | { t: 'reply'; id: number; value?: unknown; error?: string }
 
 export type CompactionReason = 'manual' | 'threshold' | 'overflow'

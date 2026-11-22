@@ -167,7 +167,6 @@ export function toTurns(view: View, native?: NativeTrace): Turn[] {
       if (reason === 'aborted') t.status = 'interrupted'
       else if (t.status !== 'failed') Object.assign(t, { status: 'failed', error: reasonText[reason ?? ''] ?? detail ?? reason ?? '请求失败' })
     }
-    if (turns.length) turns.at(-1)!.lastEntryId = e.id
     previous = e
   }
 

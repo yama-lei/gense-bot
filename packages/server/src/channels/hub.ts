@@ -44,7 +44,7 @@ export class ChannelHub {
   }
   subscribe(listener: () => void) { this.#listeners.add(listener); return () => { this.#listeners.delete(listener) } }
   #notify() { for (const l of this.#listeners) l() }
-  isAllowed(source: string, actorId: string) { return this.#definitions.has(source) ? !!this.#actors.get(source)?.some(a => a.id === actorId) : ['web', 'schedule', 'webhook', 'agent', 'branch', 'system'].includes(source) && actorId === 'owner' }
+  isAllowed(source: string, actorId: string) { return this.#definitions.has(source) ? !!this.#actors.get(source)?.some(a => a.id === actorId) : ['web', 'schedule', 'webhook', 'agent', 'system'].includes(source) && actorId === 'owner' }
   async set(id: string, patch: PluginPatch) {
     const d = this.#definition(id), current = this.#config(id)
     const next: Config = { enabled: patch.enabled ?? current.enabled, values: { ...current.values }, secrets: { ...current.secrets } }

@@ -37,8 +37,9 @@ test('D5/D6: exports contain main Markdown, files, projects, memory and preferen
   await first.request({ t: 'tree.update', treeId: tree.id, title: 'Report / ..' })
   await first.request({ t: 'send', treeId: tree.id, text: 'Make a report', requestId: 'report' }); await space.harness.waitForIdle(ctx)
   const main = await space.mainBranch(tree.id), conv = await space.open(main, ctx), answer = (await conv.entries({}, 100, undefined, ctx)).items.find(e => e.kind === 'pi.assistant' && e.model?.[0]?.role === 'assistant' && e.model[0].stopReason === 'stop')!
-  const fork = await space.fork(tree.id, main.id, answer.id)
-  await space.send(tree.id, { text: 'fork-content-sentinel', requestId: 'fork', branchId: fork.id }); await space.harness.waitForIdle(ctx)
+  assert.ok(answer)
+  const asked = (await conv.entries({}, 100, undefined, ctx)).items.find(e => e.kind === 'pi.user')!
+  await space.send(tree.id, { text: 'fork-content-sentinel', requestId: 'fork', branchId: main.id, replace: asked.id }); await space.harness.waitForIdle(ctx)
   const temp = await space.createTree(undefined, ctx, true), removed = await space.createTree()
   for (const [chat, marker] of [[temp, 'live-temporary-sentinel'], [removed, 'deleted-tree-sentinel']] as const) {
     await space.send(chat.id, { text: marker, requestId: marker }); await space.harness.waitForIdle(ctx)

@@ -57,14 +57,23 @@ export function localSkillNames(files: FileEntry[] = []): string[] {
   return files.flatMap((f) => (f.readOnly ? [] : (/^\/data\/sessions\/[^/]+\/skills\/([^/]+)\/SKILL\.md$/.exec(f.path)?.[1] ?? [])))
 }
 
+/** Runs in the browser: the message's text is a side question about this chat, answered beside it and never added to it. */
+export const btwCommand: Command = {
+  id: 'btw',
+  label: '顺便问',
+  hint: '就当前对话快速问一句；回答不进对话、不影响后续，也不用工具',
+  prompt: '',
+  client: true,
+}
+
 /**
- * Commands offered in a composer: built-ins whose plugin is on (compaction only in an existing chat), the enabled
+ * Commands offered in a composer: built-ins whose plugin is on (side questions and compaction only in an existing chat), the enabled
  * skills, then the chat's own skills (which win on a name clash).
  */
 export function availableCommands(enabledPlugins: string[], skills: SkillInfo[], local: string[] = [], inChat = false): Command[] {
   return [
     ...builtinCommands.filter((c) => !c.plugin || enabledPlugins.includes(c.plugin)),
-    ...(inChat ? [compactCommand] : []),
+    ...(inChat ? [btwCommand, compactCommand] : []),
     ...skills.filter((s) => s.enabled && (!s.plugin || enabledPlugins.includes(s.plugin)) && !local.includes(s.name)).map(skillCommand),
     ...local.map((name) => skillCommand({ name, description: '本会话的 Skill' })),
   ]

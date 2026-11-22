@@ -60,8 +60,6 @@ export interface Turn {
   createdAt: number
   /** Edits and regenerations of the message (R37). */
   versions?: Versions
-  /** Last entry of the turn; a fork continues from here (R36). */
-  lastEntryId?: number
   /** The entry before the user message (`start` for the first), where its versions branch off. */
   anchor?: string
   /** The conversation that wrote the user message. */

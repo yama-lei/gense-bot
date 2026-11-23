@@ -59,19 +59,3 @@ export async function deliver(this: UserSpace, row: EventRow, ctx: Context): Pro
     }
     await this.triggers.delivered(event.id)
   }
-
-export async function report(this: UserSpace, conversationId: number, report: { title: string; body: string }, ctx: Context): Promise<string> {
-    const branch = await this.db.get<BranchRow>(`SELECT ${BRANCH_COLUMNS} FROM branches WHERE conversationId = ?`, conversationId)
-    if (!branch) throw new Error('这个会话不在任何会话树里')
-    if (branch.role !== 'agent') throw new Error('只有子 agent 需要 report；直接回答用户即可')
-    // A subagent's report wakes the main line (R52).
-    await this.emit(
-      branch.treeId,
-      { source: { kind: 'agent', id: branch.id, label: branch.title }, type: 'report', title: report.title, body: report.body, wake: true },
-      { key: `report:${conversationId}:${report.title}:${report.body.length}` },
-      ctx,
-    )
-    await this.db.run("UPDATE branches SET status = 'done' WHERE id = ?", branch.id)
-    this.branchesChanged(branch.treeId)
-    return '已汇报给主线，你的任务完成了；简短收尾即可，不要再做别的。'
-  }

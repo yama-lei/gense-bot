@@ -37,7 +37,6 @@ import { fileTools } from './ledger.ts'
 
 import {
 agentTask,
-reportTool,
 scheduleTask,
 spawnTool
 } from '../events/tasks.ts'
@@ -267,7 +266,6 @@ function eventsExtension(space: () => UserSpace) {
     extension: defineExtension({
       name: 'events',
       tools: [
-        reportTool(() => (conversationId, report, ctx) => space().report(conversationId, report, ctx)),
         spawnTool(() => (api, args, ctx) => space().spawn(api, args, ctx)),
       ],
       tasks: [schedule, agent],

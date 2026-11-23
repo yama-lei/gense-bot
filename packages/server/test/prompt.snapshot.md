@@ -271,39 +271,13 @@ Find tools that are not loaded yet, such as the tools of MCP servers the user co
 }
 ````
 
-## Tool: report
-
-````text
-Hand your result to the main conversation that spawned you, when your task as a subagent is done. The main conversation gets it as an <event>. Only subagents can use it.
-````
-
-````json
-{
-  "type": "object",
-  "required": [
-    "title",
-    "body"
-  ],
-  "properties": {
-    "title": {
-      "type": "string",
-      "description": "The conclusion, in one sentence"
-    },
-    "body": {
-      "type": "string",
-      "description": "What the main line needs to know, in Markdown: findings, sources, files written, open questions"
-    }
-  }
-}
-````
-
 ## Tool: agent_spawn
 
 ````text
-Start a subagent that works on a self-contained task in the background, in its own branch of this conversation tree, and reports back with `report`.
+Start a subagent that works on a self-contained task in the background, in its own branch of this conversation tree. Its final answer is reported back to you.
 - Use it when work splits into independent parts that each take many steps, such as researching several companies separately, so they run in parallel.
 - Do simple or step-by-step work yourself; a subagent is a whole extra conversation.
-- Write `task` as a complete brief: the goal, what you already know, and exactly what to report.
+- Write `task` as a complete brief: the goal, what you already know, and exactly what to report back.
 - Returns at once. Tell the user what you started and end your turn; each report arrives later as an <event> and wakes you. Answer once all reports are in.
 - At most 3 run at once. Only the main line can spawn; subagents cannot.
 ````
@@ -318,7 +292,7 @@ Start a subagent that works on a self-contained task in the background, in its o
   "properties": {
     "task": {
       "type": "string",
-      "description": "Everything the subagent needs to know to do the task and what to report"
+      "description": "Everything the subagent needs to know to do the task and what to report back"
     },
     "title": {
       "type": "string",
@@ -732,7 +706,6 @@ A temporary conversation with a global memory stored. It has no memory section o
 - edit
 - delete
 - tool_search
-- report
 - agent_spawn
 - artifact_create
 - email_draft
@@ -767,10 +740,6 @@ Actual Messages request with the web plugin enabled. The web section is omitted;
   },
   {
     "name": "tool_search",
-    "type": "client"
-  },
-  {
-    "name": "report",
     "type": "client"
   },
   {

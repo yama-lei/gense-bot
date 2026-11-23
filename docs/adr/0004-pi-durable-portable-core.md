@@ -1,6 +1,6 @@
 # ADR-0004：以 pi-durable 为核心，Cloudflare 与自部署两种部署方式
 
-状态：已决定，2026-10-22。替代 [ADR-0002](0002-think-google-drive.md) 中“运行时用 Think”的部分，并修改 [ADR-0001](0001-cloudflare-free-tier.md)：Cloudflare Free 计划不再是唯一的部署方式，而是其中一种部署方式的约束。行为与开发顺序见[路线图 3](../plans/roadmap-3.md)。
+状态：已决定，2026-10-22。替代 [ADR-0002](0002-think-google-drive.md) 中“运行时用 Think”的部分，并修改 [ADR-0001](0001-cloudflare-free-tier.md)：Cloudflare Free 计划不再是唯一的部署方式，而是其中一种部署方式的约束。行为与开发顺序见路线图 3（已删除，见 git 历史）。
 
 ## 背景
 

@@ -296,7 +296,6 @@ export class UserSpace {
   mainBranch: OmitThisParameter<typeof events.mainBranch> = events.mainBranch.bind(this)
   emit: OmitThisParameter<typeof events.emit> = events.emit.bind(this)
   deliver: OmitThisParameter<typeof events.deliver> = events.deliver.bind(this)
-  report: OmitThisParameter<typeof events.report> = events.report.bind(this)
   spawn: OmitThisParameter<typeof subagents.spawn> = subagents.spawn.bind(this)
   spawnAgent: OmitThisParameter<typeof subagents.spawnAgent> = subagents.spawnAgent.bind(this)
   runAgent: OmitThisParameter<typeof subagents.runAgent> = subagents.runAgent.bind(this)

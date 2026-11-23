@@ -4,7 +4,7 @@
 //   "[错误] ..."    a provider error
 //   "[工具 name] {json}"  calls the tool, then answers "工具结果：<its text>"
 //   "[派出] a|b|c"  calls `agent_spawn` once for each task, in one message
-//   a subagent's brief  works on its task by these same rules, except that a task "[汇报] ..." calls `report`
+//   a subagent's brief  works on its task by these same rules; its answer is its report
 //   a side question (btw)  "顺便回答：<the side call's whole user message>"
 //   anything else   "收到：<text>"
 import type { Message } from '@earendil-works/pi-ai'
@@ -38,7 +38,7 @@ export function fauxModels(): ModelSetup {
     let text = lastUserText(context.messages)
     const brief = /^你是子 agent「(.+?)」。任务：\n([\s\S]*?)\n\n完成后/.exec(text)
     const task = brief?.[2] ?? text
-    if (brief && task.startsWith('[汇报]')) return fauxAssistantMessage([fauxToolCall('report', { title: `完成：${brief[1]}`, body: `${task.slice(4).trim()} 的结果` })], { stopReason: 'toolUse' })
+    if (brief && task.startsWith('[汇报]')) return fauxAssistantMessage([fauxText(`${task.slice(4).trim()} 的结果`)])
     if (brief) text = task
     const spawn = /^\[派出\]\s*(.+)$/.exec(text)
     if (spawn) return fauxAssistantMessage(spawn[1]!.split('|').map((t) => fauxToolCall('agent_spawn', { task: t.trim(), title: t.replace(/^\[\S+\]/, '').trim() })), { stopReason: 'toolUse' })

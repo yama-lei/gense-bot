@@ -176,7 +176,7 @@ export const MAX_AGENTS = 3
 
 /** The brief a subagent starts from (D3); the faux model recognizes it. */
 export const agentBrief = (title: string, task: string) =>
-  `你是子 agent「${title}」。任务：\n${task}\n\n完成后必须调用 report 工具把结果交给主线（title 写一句话的结论，body 写详细结果）；你不能调用 agent_spawn。`
+  `你是子 agent「${title}」。任务：\n${task}\n\n完成后，你最后的回答就是交给主线的汇报：先用一句话写结论，再写详细结果（发现、来源、写过的文件、未决问题），用 Markdown。你不能调用 agent_spawn。`
 
 export type AgentInput = { treeId: string; branchId: string; conversationId: number; title: string; task: string }
 /** How a subagent's run ended. */
@@ -216,15 +216,15 @@ export const spawnTool = (spawn: () => Spawn) =>
     name: 'agent_spawn',
     description:
       [
-        'Start a subagent that works on a self-contained task in the background, in its own branch of this conversation tree, and reports back with `report`.',
+        'Start a subagent that works on a self-contained task in the background, in its own branch of this conversation tree. Its final answer is reported back to you.',
         '- Use it when work splits into independent parts that each take many steps, such as researching several companies separately, so they run in parallel.',
         '- Do simple or step-by-step work yourself; a subagent is a whole extra conversation.',
-        '- Write `task` as a complete brief: the goal, what you already know, and exactly what to report.',
+        '- Write `task` as a complete brief: the goal, what you already know, and exactly what to report back.',
         `- Returns at once. Tell the user what you started and end your turn; each report arrives later as an <event> and wakes you. Answer once all reports are in.`,
         `- At most ${MAX_AGENTS} run at once. Only the main line can spawn; subagents cannot.`,
       ].join('\n'),
     parameters: Type.Object({
-      task: Type.String({ description: 'Everything the subagent needs to know to do the task and what to report' }),
+      task: Type.String({ description: 'Everything the subagent needs to know to do the task and what to report back' }),
       title: Type.String({ description: 'A short name for the subagent, shown to the user' }),
       mode: Type.Optional(
         Type.Union([Type.Literal('fork'), Type.Literal('new')], {
@@ -236,26 +236,6 @@ export const spawnTool = (spawn: () => Spawn) =>
     replay: 'unsafe',
     async execute({ task, title, mode }, api, ctx) {
       const text = await spawn()(api as ToolExecutionApi, { task, title, mode: mode ?? 'fork' }, ctx)
-      return { output: [{ type: 'text', text }] }
-    },
-  }) as unknown as ToolRegistration
-
-// --- report (R52) ---
-
-/** Where a `report` from a conversation goes; throws when it has nowhere to go. */
-export type Report = (conversationId: number, report: { title: string; body: string }, ctx: Context) => Promise<string>
-
-export const reportTool = (report: () => Report) =>
-  defineTool({
-    name: 'report',
-    description:
-      'Hand your result to the main conversation that spawned you, when your task as a subagent is done. The main conversation gets it as an <event>. Only subagents can use it.',
-    parameters: Type.Object({
-      title: Type.String({ description: 'The conclusion, in one sentence' }),
-      body: Type.String({ description: 'What the main line needs to know, in Markdown: findings, sources, files written, open questions' }),
-    }),
-    async execute({ title, body }, api, ctx) {
-      const text = await report()(api.conversationId, { title, body }, ctx)
       return { output: [{ type: 'text', text }] }
     },
   }) as unknown as ToolRegistration

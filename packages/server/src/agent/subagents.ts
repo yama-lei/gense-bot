@@ -35,7 +35,7 @@ export async function spawnAgent(this: UserSpace, api: ToolExecutionApi, { task,
     const from = await this.db.get<BranchRow>(`SELECT ${BRANCH_COLUMNS} FROM branches WHERE conversationId = ?`, api.conversationId)
     if (!from) throw new Error('这个会话不在任何会话树里')
     // Refused rather than hidden, so every branch keeps the same tool list and prompt prefix (R54, D3).
-    if (from.role === 'agent') throw new Error('子 agent 不能再派生子 agent；请自己完成任务，然后用 report 汇报')
+    if (from.role === 'agent') throw new Error('子 agent 不能再派生子 agent；请自己完成任务，最后的回答会汇报给主线')
     if (from.role !== 'main') throw new Error('只有主线可以派出子 agent')
     if (!task.trim()) throw new Error('任务说明不能为空')
     const running = await this.db.get<{ n: number }>("SELECT count(*) AS n FROM branches WHERE treeId = ? AND role = 'agent' AND status = 'running'", from.treeId)
@@ -65,7 +65,7 @@ export async function spawnAgent(this: UserSpace, api: ToolExecutionApi, { task,
     // Background: the main line's Esc and idle waits do not reach the subagent (R51).
     await api.createTask(this.agentTask, input, { ownership: { kind: 'conversation' }, background: true }, ctx)
     this.branchesChanged(from.treeId)
-    return `已派出子 agent「${branch.title}」。它完成后会用 report 汇报，汇报到达时会唤醒你。现在告诉用户你派出了什么，不要等待结果。`
+    return `已派出子 agent「${branch.title}」。它完成后，最后的回答会汇报给你，汇报到达时会唤醒你。现在告诉用户你派出了什么，不要等待结果。`
   }
 
 export async function runAgent(this: UserSpace, input: AgentInput, ctx: Context): Promise<AgentEnd> {
@@ -96,10 +96,22 @@ export async function finishAgent(this: UserSpace, input: AgentInput, end: Agent
     if (!branch || branch.status !== 'running') return
     const aborted = end.status === 'unanswered' && end.reason === 'aborted'
     await this.db.run('UPDATE branches SET status = ? WHERE id = ?', aborted ? 'aborted' : 'failed', branch.id)
-    const why = end.status === 'done' ? '它结束了，但没有调用 report 汇报' : aborted ? '它被中止了' : `它运行出错了（${end.reason}）`
     const conv = await this.harness.conversation(input.conversationId as ConversationId, ctx)
     const { items } = conv ? await conv.entries({}, PREVIEW_ENTRIES, undefined, ctx) : { items: [] }
     const last = items.find((e) => e.kind === 'pi.assistant' && entryText(e))
+    // Its final answer is its report (R52): it wakes the main line.
+    if (end.status === 'done') {
+      await this.db.run("UPDATE branches SET status = 'done' WHERE id = ?", branch.id)
+      await this.emit(
+        input.treeId,
+        { source: { kind: 'agent', id: branch.id, label: branch.title }, type: 'report', title: branch.title, body: last ? entryText(last) : '（没有回答）', wake: true },
+        { key: `agent-end:${branch.id}` },
+        ctx,
+      )
+      this.branchesChanged(input.treeId)
+      return
+    }
+    const why = aborted ? '它被中止了' : `它运行出错了（${end.reason}）`
     await this.emit(
       input.treeId,
       {

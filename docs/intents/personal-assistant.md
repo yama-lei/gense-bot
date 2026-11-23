@@ -15,7 +15,7 @@
 - **I3，持续积累**：助手应逐步利用个人资料和用户纠正。持久化聊天记录不等于已经实现长期记忆，具体行为需要另行定义。
 - **I4，可组合能力**：新功能通过明确的工具接口接入，并能组合使用。模型可以调用哪些能力由产品授予，而不是由检索内容决定。
 - **I5，Cloudflare 与自部署都支持**：（2026-10-22 修改，原为“纯云端、Cloudflare 免费计划起步，不做自托管”）用户的话：“我预感未来我们会选择自己部署，而非用 cloudflare 部署（当然都要支持）”。Cloudflare 部署仍只用 Free 计划，不依赖付费套餐，因此没有 sandbox；自部署提供完整 sandbox。模型由用户自己提供，费用由用户的模型供应商结算。不主动设置用量配额，但必须有兜底限制，防止失控循环。见 [ADR-0004](../adr/0004-pi-durable-portable-core.md)。
-- **I6，拥抱 Google 生态**：（2026-10-22：Google Drive 改为插件，见[路线图 3](../plans/roadmap-3.md) H10）用户文件存放在用户自己的 Google Drive。后续的日历、Tasks 等能力优先接入 Google 服务，共用一个 Google 授权。（2026-10-21 确认，见 [ADR-0002](../adr/0002-think-google-drive.md)）
+- **I6，拥抱 Google 生态**：（2026-10-22：Google Drive 改为插件，见路线图 3（已删除，见 git 历史） H10）用户文件存放在用户自己的 Google Drive。后续的日历、Tasks 等能力优先接入 Google 服务，共用一个 Google 授权。（2026-10-21 确认，见 [ADR-0002](../adr/0002-think-google-drive.md)）
 
 ## 已决定的事项
 

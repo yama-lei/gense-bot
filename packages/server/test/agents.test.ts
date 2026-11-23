@@ -53,7 +53,8 @@ test('R51, R52, R56: the main line spawns subagents and answers at once; each re
     return found.length === 3 && found
   }, 'three reports')
   assert.deepEqual(reports.map((r) => [r.source.kind, r.type, r.wake]), Array(3).fill(['agent', 'report', true]))
-  assert.deepEqual(reports.map((r) => r.title).sort(), ['完成：丙公司', '完成：乙公司', '完成：甲公司'])
+  assert.deepEqual(reports.map((r) => r.title).sort(), ['丙公司', '乙公司', '甲公司'])
+  assert.deepEqual(reports.map((r) => r.body).sort(), ['丙公司 的结果', '乙公司 的结果', '甲公司 的结果'])
   await until(async () => (await agents(space, t.id)).every((b) => b.status === 'done') && (await space.harness.waitForIdle(ctx), true), 'idle')
 
   // The spawn turn ended before any report; then each report woke the main line in turn, none while another ran.
@@ -88,13 +89,13 @@ test('R56: a `new` subagent sees only its task', async () => {
   await space.close()
 })
 
-test('R53, R55: a subagent that ends without reporting, or is stopped, is reported for by the system', async () => {
+test('R53, R55: a subagent reports its final answer; one that is stopped is reported for by the system', async () => {
   const space = await open()
   const t = await space.createTree()
   await space.send(t.id, { text: '[派出] 普通任务|[长回答] 慢任务', requestId: 'a' })
-  const notice = await until(async () => (await events(space, t.id)).find((e) => e.title.includes('普通任务')), 'notice')
-  assert.deepEqual([notice.source.kind, notice.type, notice.wake], ['system', 'notice', true])
-  assert.match(notice.body, /没有调用 report[\s\S]*收到：普通任务/)
+  const report = await until(async () => (await events(space, t.id)).find((e) => e.title === '普通任务'), 'report')
+  assert.deepEqual([report.source.kind, report.type, report.wake], ['agent', 'report', true])
+  assert.equal(report.body, '收到：普通任务')
 
   const slow = await until(async () => (await agents(space, t.id)).find((b) => b.title === '慢任务' && b.status === 'running'), 'slow agent')
   await until(async () => (await entries(space, t.id, slow.id)).some((e) => e.kind === BRIEF_KIND), 'slow brief')
@@ -104,7 +105,7 @@ test('R53, R55: a subagent that ends without reporting, or is stopped, is report
   assert.deepEqual(
     (await agents(space, t.id)).map((b) => [b.title, b.status]),
     [
-      ['普通任务', 'failed'],
+      ['普通任务', 'done'],
       ['慢任务', 'aborted'],
     ],
   )
@@ -123,7 +124,7 @@ test('R54: the limit, and spawning from a subagent, are refused with the same to
   await until(async () => (await agents(space, t.id)).every((b) => b.status === 'aborted'), 'stopped')
 
   await space.send(t.id, { text: '[工具 agent_spawn] {"task":"[工具 agent_spawn] {\\"task\\":\\"x\\",\\"title\\":\\"孙\\"}","title":"子"}', requestId: 'b' })
-  const child = await until(async () => (await agents(space, t.id)).find((b) => b.title === '子' && b.status === 'failed'), 'the child ends')
+  const child = await until(async () => (await agents(space, t.id)).find((b) => b.title === '子' && b.status === 'done'), 'the child ends')
   assert.ok((await entries(space, t.id, child.id)).some((e) => text(e).includes('子 agent 不能再派生')))
   assert.equal((await agents(space, t.id)).length, 4)
   await space.harness.waitForIdle(ctx)

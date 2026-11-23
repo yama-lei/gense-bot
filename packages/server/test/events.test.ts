@@ -86,20 +86,6 @@ test('R46–R48: an Event that does not wake waits for the next turn; one that w
   await space.harness.waitForIdle(ctx)
 })
 
-test('R52: only a subagent may report; the main line and its versions are refused', async () => {
-  const { space } = await open()
-  const t = await space.createTree()
-  const { branchId: main } = await space.send(t.id, { text: '[工具 report] {"title":"x","body":"y"}', requestId: 'a' })
-  await space.harness.waitForIdle(ctx)
-  assert.match(text((await entries(space, t.id, main)).at(-1)!), /只有子 agent 需要 report/)
-  const first = (await entries(space, t.id, main)).find((e) => e.kind === 'pi.user') as unknown as { id: number }
-  const { branchId: version } = await space.send(t.id, { text: '[工具 report] {"title":"x","body":"y"}', requestId: 'b', replace: first.id })
-  await space.harness.waitForIdle(ctx)
-  assert.notEqual(version, main)
-  assert.match(text((await entries(space, t.id, version)).at(-1)!), /只有子 agent 需要 report/)
-  assert.ok(!(await entries(space, t.id, main)).some((e) => e.kind === EVENT_KIND))
-})
-
 test('R49: a schedule fires on its clock, pauses, resumes and is removed with its tree', async () => {
   const { space, clock } = await open()
   const t = await space.createTree()

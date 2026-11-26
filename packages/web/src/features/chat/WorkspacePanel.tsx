@@ -1,12 +1,15 @@
 // A conversation's files: what the assistant wrote or the user attached, and the Skills it can read.
 import type { FileEntry, FilePreview } from '@gense/protocol'
 import { ChevronLeft, Download, FileText, Trash2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import type { PDFDocumentProxy } from 'pdfjs-dist'
+import { useEffect, useRef, useState } from 'react'
 import { report, useClient } from '../../app/client'
+import { cn } from '../../lib/cn'
 import { baseName, errorText, formatBytes, formatTime } from '../../lib/format'
 import { Button } from '../../ui/button'
 import { ConfirmDialog } from '../../ui/dialog'
 import { Notice, Skeleton, Spinner } from '../../ui/feedback'
+import { fileUrl, isImage, isPdf, PdfPage, pdfDocument, useLoaded } from './embed'
 
 /** A file's path as the panel shows it: inside the workspace, or inside the Skills folder. */
 function shortPath(f: FileEntry, treeId: string) {
@@ -15,11 +18,11 @@ function shortPath(f: FileEntry, treeId: string) {
   return f.path.replace(/^\/data\/(skills\/)?/, '')
 }
 
-export function WorkspacePanel({ treeId, files, open, onOpen }: { treeId: string; files: FileEntry[] | undefined; open: string | null; onOpen: (path: string | null) => void }) {
+export function WorkspacePanel({ treeId, files, open, page, onOpen }: { treeId: string; files: FileEntry[] | undefined; open: string | null; page?: number; onOpen: (path: string | null) => void }) {
   // The file may be deleted by the assistant or the user while it is open.
   const current = open ? files?.find((f) => f.path === open) : undefined
   // Keyed by mtime so a rewrite by the assistant reloads the preview.
-  if (current) return <Preview key={current.path + current.mtime} treeId={treeId} file={current} onBack={() => onOpen(null)} />
+  if (current) return <Preview key={current.path + current.mtime} treeId={treeId} file={current} page={page} onBack={() => onOpen(null)} />
   if (!files)
     return (
       <div className="flex flex-col gap-2 p-4">
@@ -59,14 +62,16 @@ export function WorkspacePanel({ treeId, files, open, onOpen }: { treeId: string
   )
 }
 
-function Preview({ treeId, file, onBack }: { treeId: string; file: FileEntry; onBack: () => void }) {
+function Preview({ treeId, file, page, onBack }: { treeId: string; file: FileEntry; page?: number; onBack: () => void }) {
   const client = useClient()
   const [preview, setPreview] = useState<FilePreview | null>(null)
   const [error, setError] = useState('')
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
 
+  const visual = isImage(file.path) || isPdf(file.path)
   useEffect(() => {
+    if (visual) return
     let live = true
     client.previewFile(treeId, file.path).then(
       (p) => live && setPreview(p),
@@ -75,7 +80,7 @@ function Preview({ treeId, file, onBack }: { treeId: string; file: FileEntry; on
     return () => {
       live = false
     }
-  }, [client, treeId, file.path])
+  }, [client, treeId, file.path, visual])
 
   const remove = () => {
     setBusy(true)
@@ -110,7 +115,11 @@ function Preview({ treeId, file, onBack }: { treeId: string; file: FileEntry; on
         )}
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-4">
-        {error ? (
+        {isPdf(file.path) ? (
+          <PdfPages treeId={treeId} file={file} page={page} />
+        ) : isImage(file.path) ? (
+          <ImageView treeId={treeId} file={file} />
+        ) : error ? (
           <Notice tone="error">{error}</Notice>
         ) : !preview ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -128,6 +137,44 @@ function Preview({ treeId, file, onBack }: { treeId: string; file: FileEntry; on
       <ConfirmDialog open={confirming} onOpenChange={setConfirming} title={`删除 ${baseName(file.path)}？`} confirm="删除" onConfirm={remove}>
         删除后不能恢复，助手也读不到它了。
       </ConfirmDialog>
+    </div>
+  )
+}
+
+function ImageView({ treeId, file }: { treeId: string; file: FileEntry }) {
+  const client = useClient()
+  const { value: url, error } = useLoaded(() => fileUrl(client, treeId, file.path, String(file.mtime)), [client, treeId, file.path, file.mtime])
+  if (error) return <Notice tone="error">读取图片失败，请下载查看。</Notice>
+  if (!url) return <Skeleton className="aspect-[4/3] w-full" />
+  return <img src={url} alt={baseName(file.path)} className="mx-auto block max-w-full rounded-lg border" />
+}
+
+/** Every page of a PDF, drawn as they scroll into view; `page` is scrolled to first. */
+function PdfPages({ treeId, file, page }: { treeId: string; file: FileEntry; page?: number }) {
+  const client = useClient()
+  const { value: doc, error } = useLoaded(() => pdfDocument(client, treeId, file.path, String(file.mtime)), [client, treeId, file.path, file.mtime])
+  if (error) return <Notice tone="error">无法打开这个 PDF，请下载查看。</Notice>
+  if (!doc) return <Skeleton className="aspect-[1/1.414] w-full" />
+  return <PdfDoc doc={doc} page={page} />
+}
+
+function PdfDoc({ doc, page }: { doc: PDFDocumentProxy; page?: number }) {
+  const target = useRef<HTMLDivElement>(null)
+  // Braces: newer browsers return a promise here, and React would call it as a cleanup.
+  useEffect(() => {
+    target.current?.scrollIntoView({ block: 'start' })
+  }, [page])
+  const pages = Array.from({ length: doc.numPages }, (_, i) => i + 1)
+  return (
+    <div className="flex flex-col gap-4">
+      {pages.map((n) => (
+        <div key={n} ref={n === page ? target : undefined} className={cn('scroll-mt-2', n === page && 'rounded-sm ring-2 ring-accent ring-offset-4 ring-offset-background')}>
+          <PdfPage doc={doc} page={n} className="rounded-sm border shadow-sm" />
+          <div className="mt-1 text-center text-xs text-muted-foreground">
+            {n} / {doc.numPages}
+          </div>
+        </div>
+      ))}
     </div>
   )
 }

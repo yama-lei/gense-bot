@@ -24,12 +24,13 @@ import { footnote } from './HomePage'
 import { TurnView, type TurnContext } from './Turn'
 import { ViewSlot } from './ViewSlot'
 import { WorkspacePanel } from './WorkspacePanel'
+import { absolutePath, FileRefsContext, type FileRefs } from './embed'
 import { buildSnapshot } from '../share/snapshot'
 import { sharePath } from '@gense/protocol'
 import { toast } from 'sonner'
 
 /** What the side panel holds: one call's view, or the conversation's files. */
-type Panel = { kind: 'view'; callId: string } | { kind: 'files'; path: string | null }
+type Panel = { kind: 'view'; callId: string } | { kind: 'files'; path: string | null; page?: number }
 
 const NEAR_BOTTOM = 80
 
@@ -140,102 +141,107 @@ export function ChatPage({ treeId }: { treeId: string }) {
     if (loaded && panel?.kind === 'view' && !panelCall) setPanel(null)
   }, [loaded, panel, panelCall])
 
+  // Embedded and linked workspace files in replies open here, at their page.
+  const fileRefs = useMemo<FileRefs>(() => ({ treeId, open: (path, page) => setPanel({ kind: 'files', path: absolutePath(treeId, path), page }) }), [treeId])
+
   const empty = loaded && turns.length === 0
 
   return (
-    <div className="relative flex h-full min-w-0">
-      <div className={cn('flex h-full min-w-0 flex-1 flex-col', panel && phone && 'hidden')}>
-        <header className="flex h-13 shrink-0 items-center gap-1 px-2 md:px-3">
-          <SidebarToggle />
-          <TitleMenu treeId={treeId} title={tree?.title ?? ''} pinned={!!tree?.pinned} temporary={temporary} canCompact={turns.length > 0 && !running} onExport={() => saveBlob(`${tree?.title || '对话'}.md`, new Blob([toMarkdown(tree?.title ?? '', turns)], { type: 'text/markdown' }))} />
-          {tree?.source && (
-            <Badge variant="outline" className="max-sm:hidden">
-              <Radio /> {tree.source.label || tree.source.kind}
-            </Badge>
-          )}
-          <span className="flex-1" />
-          {!temporary && (
-            <Button variant="ghost" size="sm" disabled={turns.length === 0} onClick={() => setSharing(true)} className="gap-1.5 text-muted-foreground max-sm:hidden">
-              <Share /> 分享
-            </Button>
-          )}
-          <Tooltip label="文件">
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="文件"
-              aria-pressed={panel?.kind === 'files'}
-              className={cn('text-muted-foreground', panel?.kind === 'files' && 'bg-hover text-foreground')}
-              onClick={() => setPanel(panel?.kind === 'files' ? null : { kind: 'files', path: null })}
-            >
-              <FolderOpen className="size-5!" />
-            </Button>
-          </Tooltip>
-        </header>
-
-        {temporary && (
-          <div className={cn('mx-auto flex w-full shrink-0 items-center gap-2 px-4 pb-2 text-sm text-muted-foreground md:px-6', column)}>
-            <Ghost className="size-4 shrink-0 text-accent" />
-            <span className="min-w-0 flex-1">
-              <span className="font-medium text-foreground">临时对话</span> · 不进历史、不读写记忆；离开这个页面或 24 小时后删除
-            </span>
-          </div>
-        )}
-
-        <div className="relative min-h-0 flex-1">
-          <div ref={scroller} onScroll={onScroll} className="h-full overflow-y-auto [scrollbar-gutter:stable_both-edges]">
-            <div ref={content} className={cn('mx-auto flex w-full flex-col gap-10 px-4 pt-4 pb-12 md:px-6', column)}>
-              {!loaded ? (
-                <Loading />
-              ) : empty ? (
-                <p className="py-20 text-center text-sm text-muted-foreground">发一条消息开始对话。</p>
-              ) : (
-                turns.map((t, i) => <TurnView key={t.id} turn={t} ctx={ctx} last={i === turns.length - 1} />)
-              )}
-            </div>
-          </div>
-          {!panel && turns.length > 2 && <Outline turns={turns} scroller={scroller} />}
-          {away && (
-            <Button
-              size="icon"
-              aria-label="回到底部"
-              onClick={() => toBottom(true)}
-              className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-card shadow-float animate-in fade-in-0 slide-in-from-bottom-2"
-            >
-              <ArrowDown />
-            </Button>
-          )}
-        </div>
-
-        <div className={cn('mx-auto w-full shrink-0 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:px-6', column)}>
-          {aside.card}
-          <CompactionLine running={compaction.running} failure={compaction.failure} onRetry={() => client.compact(treeId)} />
-          <Composer treeId={treeId} placeholder="回复…" onSend={send} busy={running} onStop={() => client.stop(treeId)} autoFocus={!phone} />
-          {footnote}
-        </div>
-      </div>
-
-      <ShareDialog open={sharing} onOpenChange={setSharing} treeId={treeId} title={tree?.title ?? ''} turns={turns} />
-
-      {panel && (
-        <aside
-          aria-label={panel.kind === 'files' ? '文件' : '视图'}
-          className={cn('flex h-full min-w-0 flex-col bg-background', phone ? 'absolute inset-0 z-20' : 'w-[min(48%,640px)] shrink-0 border-l')}
-        >
-          <SidePanel
-            title={panel.kind === 'files' ? '文件' : (tools.get(panelCall?.name ?? '')?.title ?? '视图')}
-            onClose={() => setPanel(null)}
-            flush={panel.kind === 'files'}
-          >
-            {panel.kind === 'files' ? (
-              <WorkspacePanel treeId={treeId} files={files} open={panel.path} onOpen={(path) => setPanel({ kind: 'files', path })} />
-            ) : (
-              panelCall && <PanelView treeId={treeId} call={panelCall} ctx={ctx} />
+    <FileRefsContext.Provider value={fileRefs}>
+      <div className="relative flex h-full min-w-0">
+        <div className={cn('flex h-full min-w-0 flex-1 flex-col', panel && phone && 'hidden')}>
+          <header className="flex h-13 shrink-0 items-center gap-1 px-2 md:px-3">
+            <SidebarToggle />
+            <TitleMenu treeId={treeId} title={tree?.title ?? ''} pinned={!!tree?.pinned} temporary={temporary} canCompact={turns.length > 0 && !running} onExport={() => saveBlob(`${tree?.title || '对话'}.md`, new Blob([toMarkdown(tree?.title ?? '', turns)], { type: 'text/markdown' }))} />
+            {tree?.source && (
+              <Badge variant="outline" className="max-sm:hidden">
+                <Radio /> {tree.source.label || tree.source.kind}
+              </Badge>
             )}
-          </SidePanel>
-        </aside>
-      )}
-    </div>
+            <span className="flex-1" />
+            {!temporary && (
+              <Button variant="ghost" size="sm" disabled={turns.length === 0} onClick={() => setSharing(true)} className="gap-1.5 text-muted-foreground max-sm:hidden">
+                <Share /> 分享
+              </Button>
+            )}
+            <Tooltip label="文件">
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="文件"
+                aria-pressed={panel?.kind === 'files'}
+                className={cn('text-muted-foreground', panel?.kind === 'files' && 'bg-hover text-foreground')}
+                onClick={() => setPanel(panel?.kind === 'files' ? null : { kind: 'files', path: null })}
+              >
+                <FolderOpen className="size-5!" />
+              </Button>
+            </Tooltip>
+          </header>
+
+          {temporary && (
+            <div className={cn('mx-auto flex w-full shrink-0 items-center gap-2 px-4 pb-2 text-sm text-muted-foreground md:px-6', column)}>
+              <Ghost className="size-4 shrink-0 text-accent" />
+              <span className="min-w-0 flex-1">
+                <span className="font-medium text-foreground">临时对话</span> · 不进历史、不读写记忆；离开这个页面或 24 小时后删除
+              </span>
+            </div>
+          )}
+
+          <div className="relative min-h-0 flex-1">
+            <div ref={scroller} onScroll={onScroll} className="h-full overflow-y-auto [scrollbar-gutter:stable_both-edges]">
+              <div ref={content} className={cn('mx-auto flex w-full flex-col gap-10 px-4 pt-4 pb-12 md:px-6', column)}>
+                {!loaded ? (
+                  <Loading />
+                ) : empty ? (
+                  <p className="py-20 text-center text-sm text-muted-foreground">发一条消息开始对话。</p>
+                ) : (
+                  turns.map((t, i) => <TurnView key={t.id} turn={t} ctx={ctx} last={i === turns.length - 1} />)
+                )}
+              </div>
+            </div>
+            {!panel && turns.length > 2 && <Outline turns={turns} scroller={scroller} />}
+            {away && (
+              <Button
+                size="icon"
+                aria-label="回到底部"
+                onClick={() => toBottom(true)}
+                className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-card shadow-float animate-in fade-in-0 slide-in-from-bottom-2"
+              >
+                <ArrowDown />
+              </Button>
+            )}
+          </div>
+
+          <div className={cn('mx-auto w-full shrink-0 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:px-6', column)}>
+            {aside.card}
+            <CompactionLine running={compaction.running} failure={compaction.failure} onRetry={() => client.compact(treeId)} />
+            <Composer treeId={treeId} placeholder="回复…" onSend={send} busy={running} onStop={() => client.stop(treeId)} autoFocus={!phone} />
+            {footnote}
+          </div>
+        </div>
+
+        <ShareDialog open={sharing} onOpenChange={setSharing} treeId={treeId} title={tree?.title ?? ''} turns={turns} />
+
+        {panel && (
+          <aside
+            aria-label={panel.kind === 'files' ? '文件' : '视图'}
+            className={cn('flex h-full min-w-0 flex-col bg-background', phone ? 'absolute inset-0 z-20' : 'w-[min(48%,640px)] shrink-0 border-l')}
+          >
+            <SidePanel
+              title={panel.kind === 'files' ? '文件' : (tools.get(panelCall?.name ?? '')?.title ?? '视图')}
+              onClose={() => setPanel(null)}
+              flush={panel.kind === 'files'}
+            >
+              {panel.kind === 'files' ? (
+                <WorkspacePanel treeId={treeId} files={files} open={panel.path} page={panel.page} onOpen={(path) => setPanel({ kind: 'files', path })} />
+              ) : (
+                panelCall && <PanelView treeId={treeId} call={panelCall} ctx={ctx} />
+              )}
+            </SidePanel>
+          </aside>
+        )}
+      </div>
+    </FileRefsContext.Provider>
   )
 }
 

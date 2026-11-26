@@ -109,7 +109,9 @@ export function monitorChannel(this: UserSpace, triggerId: string, treeId: strin
       const workspace = await this.workspace.list(treeId)
       for (const file of workspace.filter(f => !f.readOnly && f.size <= 50 * 1024 * 1024)) {
         const relative = file.path.slice(`/data/sessions/${treeId}/`.length)
-        if (text.includes(file.path) || text.includes('](' + relative + ')') || text.includes('`' + relative + '`')) items.push({ id: triggerId + ':file:' + relative, channelId: row.source, triggerId, treeId, kind: 'file', payload: { ...trigger.destination, path: file.path, file: await this.workspace.read(treeId, file.path) } })
+        // A Markdown link or embed may carry `#page=N` and may wrap the path in <…>.
+        const linked = ['](' + relative + ')', '](' + relative + '#', '](<' + relative + '>', '](<' + relative + '#'].some(s => text.includes(s))
+        if (text.includes(file.path) || linked || text.includes('`' + relative + '`')) items.push({ id: triggerId + ':file:' + relative, channelId: row.source, triggerId, treeId, kind: 'file', payload: { ...trigger.destination, path: file.path, file: await this.workspace.read(treeId, file.path) } })
       }
       await this.triggers.complete(triggerId, { ...result, final: true }, items)
       void this.outbox.drain()

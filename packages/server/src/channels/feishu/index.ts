@@ -15,6 +15,8 @@ interface Event { event_id?: string; message: Message; sender?: { sender_type?: 
 const silent: Logger = { trace() {}, debug() {}, info() {}, warn() {}, error() {} }
 const uuid = (id: string) => { const h = createHash('sha256').update(id).digest('hex'); return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20,32)}` }
 const json = (text?: string): Record<string, unknown> => { try { const v = JSON.parse(text ?? '{}'); return v && typeof v === 'object' && !Array.isArray(v) ? v : {} } catch { return {} } }
+/** Workspace embeds have no Feishu image key; the files themselves follow the card as messages. */
+const unembed = (text: string) => text.replace(/!\[([^\]]*)\]\((?!https?:\/\/)(?:<[^>]*>|[^)\s]*)\)/g, (_, alt: string) => `（图：${alt.trim() || '见下方附件'}）`)
 const crop = (text: string, max = 22_000) => { const bytes = Buffer.from(text); return bytes.length <= max ? text : new TextDecoder().decode(bytes.subarray(0,max)) + '\n\n（内容较长，完整内容见网页。）' }
 function plain(content: string) {
   const data = json(content)
@@ -225,7 +227,7 @@ export class FeishuChannel implements Channel {
   }
   #card(text: string, treeId?: string, progress = false) {
     const link = treeId ? `\n\n[在网页中打开](${new URL('/c/' + encodeURIComponent(treeId), this.#options.publicUrl!).href})` : ''
-    return JSON.stringify({ config: { wide_screen_mode: true, update_multi: true }, header: { title: { tag: 'plain_text', content: progress ? 'Gense · 回答中' : 'Gense' } }, elements: [{ tag: 'markdown', content: crop(text) + link }] })
+    return JSON.stringify({ config: { wide_screen_mode: true, update_multi: true }, header: { title: { tag: 'plain_text', content: progress ? 'Gense · 回答中' : 'Gense' } }, elements: [{ tag: 'markdown', content: crop(unembed(text)) + link }] })
   }
   async #send(payload: Record<string, unknown>, msgType: string, content: string, id: string) {
     const data = { msg_type: msgType, content, uuid: uuid(id) }

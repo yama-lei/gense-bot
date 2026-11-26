@@ -1,6 +1,8 @@
 import type { SqliteDatabase } from '@earendil-works/chord/sqlite'
 import type { Preferences } from '@gense/protocol'
 
+const MAX_HIDDEN_MODELS = 5000
+
 export class PreferenceStore {
   #value: Preferences = { name: '', instructions: '', useMemory: true, memoryWrites: 'auto', suggestions: true }
   #listeners = new Set<() => void>()
@@ -24,6 +26,11 @@ export class PreferenceStore {
     if (patch.deepseekSafety !== undefined) {
       if (typeof patch.deepseekSafety !== 'boolean') throw new Error('偏好无效')
       next.deepseekSafety = patch.deepseekSafety
+    }
+    if (patch.hiddenModels !== undefined) {
+      const list = patch.hiddenModels
+      if (!Array.isArray(list) || list.length > MAX_HIDDEN_MODELS || !list.every(k => typeof k === 'string' && k.length > 0 && k.length <= 300)) throw new Error('模型开关无效')
+      next.hiddenModels = [...new Set(list)]
     }
     for (const key of ['name', 'instructions', 'timeZone'] as const) {
       if (patch[key] === undefined) continue

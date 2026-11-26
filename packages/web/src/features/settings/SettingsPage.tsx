@@ -5,7 +5,7 @@ import { sharePath } from '@gense/protocol'
 import { Archive, Check, Cpu, Database, Download, ExternalLink, Gauge, Keyboard, Link2, LogOut, Monitor, Moon, Palette, ShieldCheck, Sun, UserRound } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { report, useClient, useHost, useMemories, useShares, useUser } from '../../app/client'
+import { modelKey, report, useClient, useHost, useMemories, useShares, useUser } from '../../app/client'
 import { Page } from '../../app/Shell'
 import { cn } from '../../lib/cn'
 import { errorText, formatBytes, formatTime, saveBlob } from '../../lib/format'
@@ -244,23 +244,76 @@ function Models() {
           {error && <Notice tone="error">{error}</Notice>}
         </div>
       </Section>
-      <Section title="可用模型" description="“共享”的模型由管理员提供，“自带”的用你自己的账户。默认模型在输入框的模型菜单里选择，按浏览器记住。">
+      <Section
+        title="可用模型"
+        description="“共享”的模型由管理员提供，“自带”的用你自己的账户。关掉的模型不出现在输入框的模型菜单里，也不会被选为默认模型；已经在用它的对话不受影响。默认模型在模型菜单里选择，按浏览器记住。"
+      >
         {models.length === 0 ? (
           <Notice tone="warning">还没有可用的模型。登录一个模型服务，或请管理员共享模型。</Notice>
         ) : (
-          <ul className="flex flex-wrap gap-1.5">
-            {models.map((m) => (
-              <li key={`${m.provider}:${m.id}`}>
-                <Badge variant={m.source === 'byok' ? 'accent' : 'outline'} title={m.providerName ?? m.provider}>
-                  {m.name}
-                  {m.source && <span className="font-normal opacity-75">· {m.source === 'shared' ? '共享' : '自带'}</span>}
-                </Badge>
-              </li>
-            ))}
-          </ul>
+          <ModelSwitches />
         )}
       </Section>
     </>
+  )
+}
+
+/** One switch per model, grouped by provider, writing the account preference `hiddenModels`. */
+function ModelSwitches() {
+  const client = useClient()
+  const { models, prefs } = useHost()
+  const hidden = new Set(prefs?.hiddenModels)
+  // Keys of models no longer offered stay hidden, so signing back in to a provider keeps the choice.
+  const save = (next: Set<string>) => client.setPrefs({ hiddenModels: [...next] })
+  const toggle = (keys: string[], on: boolean) => {
+    const next = new Set(hidden)
+    for (const k of keys) on ? next.delete(k) : next.add(k)
+    save(next)
+  }
+  const groups = [...Map.groupBy(models, (m) => m.provider)]
+  const allOff = models.every((m) => hidden.has(modelKey(m)))
+  return (
+    <div className="flex flex-col gap-3">
+      {allOff && <Notice tone="warning">所有模型都关掉了，模型菜单里没有可选的模型；新对话仍会用默认模型。</Notice>}
+      {groups.map(([provider, list]) => {
+        const keys = list.map(modelKey)
+        const on = keys.filter((k) => !hidden.has(k)).length
+        return (
+          <div key={provider} className="overflow-hidden rounded-2xl border bg-card">
+            <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2.5">
+              <span className="min-w-0 truncate font-medium">{list[0]!.providerName ?? provider}</span>
+              {list[0]!.source && <Badge variant={list[0]!.source === 'shared' ? 'neutral' : 'accent'}>{list[0]!.source === 'shared' ? '共享' : '自带'}</Badge>}
+              <span className="text-xs text-muted-foreground tabular-nums">
+                已打开 {on} / {list.length}
+              </span>
+              <span className="ml-auto flex gap-1">
+                <Button variant="ghost" size="sm" disabled={!prefs || on === list.length} onClick={() => toggle(keys, true)}>
+                  全部打开
+                </Button>
+                <Button variant="ghost" size="sm" disabled={!prefs || on === 0} onClick={() => toggle(keys, false)}>
+                  全部关闭
+                </Button>
+              </span>
+            </div>
+            <ul className="max-h-80 divide-y overflow-y-auto">
+              {list.map((m) => {
+                const key = modelKey(m)
+                return (
+                  <li key={key}>
+                    <label className="flex cursor-pointer items-center gap-3 px-4 py-2 text-sm hover:bg-hover">
+                      <span className="min-w-0 flex-1 truncate" title={m.id}>
+                        {m.name}
+                      </span>
+                      <Switch checked={!hidden.has(key)} disabled={!prefs} onCheckedChange={(v) => toggle([key], v)} aria-label={`在模型菜单里显示 ${m.name}`} />
+                    </label>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        )
+      })}
+    </div>
   )
 }
 

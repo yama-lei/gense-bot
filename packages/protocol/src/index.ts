@@ -69,6 +69,11 @@ export interface Preferences {
    * check, whatever this says.
    */
   deepseekSafety?: boolean
+  /**
+   * Models left out of the composer's menu, as `provider:id`. The server's default model skips them unless every
+   * model is hidden; a message may still name one. Default none.
+   */
+  hiddenModels?: string[]
 }
 
 /** `version`: another version of one of the main line's messages, from a retry or an edit. `agent`: a subagent. */
@@ -231,7 +236,7 @@ export type ClientRequest =
   | { t: 'share.delete'; id: number; token: string }
   /** Conversations whose title or messages match; resolves to TreeHit[], best first. */
   | { t: 'trees.search'; id: number; query: string; limit?: number }
-  | { t: 'prefs.set'; id: number; name?: string; instructions?: string; timeZone?: string; useMemory?: boolean; memoryWrites?: 'auto' | 'explicit'; suggestions?: boolean; deepseekSafety?: boolean }
+  | { t: 'prefs.set'; id: number; name?: string; instructions?: string; timeZone?: string; useMemory?: boolean; memoryWrites?: 'auto' | 'explicit'; suggestions?: boolean; deepseekSafety?: boolean; hiddenModels?: string[] }
   /** Resolves to the new Memory. `source` defaults to `manual`; `saved` keeps an answer of `treeId`; `model` restores an entry the model wrote (undo). */
   | { t: 'memory.add'; id: number; text: string; source?: MemorySource; treeId?: string; projectId?: string | null; enabled?: boolean }
   /** Resolves to the changed Memory. */

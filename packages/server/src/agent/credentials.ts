@@ -96,6 +96,8 @@ export interface AccountsOptions {
   secretKey: string | undefined
   /** Whether subscription (OAuth) logins are offered; they need a callback to the host or a code pasted back. */
   oauth: boolean
+  /** Models (`provider:id`) the user switched off; the default model skips them. */
+  hidden?: () => readonly string[]
 }
 
 /** One user's models: the host's providers plus pi-ai's built-in ones signed in with the user's own credentials. */
@@ -143,6 +145,11 @@ export class ModelAccounts {
     return () => void this.#listeners.delete(listener)
   }
 
+  /** Tells subscribers the list or the default changed for a reason outside this class (the hidden models). */
+  notify() {
+    for (const l of this.#listeners) l()
+  }
+
   async #changed() {
     this.#configured = await this.#store.list()
     for (const l of this.#listeners) l()
@@ -172,8 +179,14 @@ export class ModelAccounts {
     return [...this.#host.options.map(m => ({ ...m, source: 'shared' as const })), ...own.flat().map((m) => ({ provider: m.provider, id: m.id, name: m.name, source: 'byok' as const }))]
   }
 
+  /** The host's default, else the first listed model, skipping the hidden ones unless every model is hidden. */
   async defaultModel() {
-    return this.#host.defaultModel ?? (await this.list())[0] ?? null
+    const hidden = new Set(this.#o.hidden?.() ?? [])
+    const shown = (m: { provider: string; id: string }) => !hidden.has(`${m.provider}:${m.id}`)
+    const host = this.#host.defaultModel
+    if (host && shown(host)) return host
+    const list = await this.list()
+    return list.find(shown) ?? host ?? list[0] ?? null
   }
 
   async login(providerId: string, type: AuthType, interaction: AuthInteraction) {

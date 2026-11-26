@@ -150,7 +150,7 @@ export class ExportStore {
         for (const file of await library.files({ path: projectDir(project.id), projectId: project.id })) await archive.file(folder + '/files/' + relative(projectDir(project.id), file.path), file.path, signal)
       }
       await archive.bytes('memories.json', json(await this.#space.memories.list()))
-      const prefs = this.#space.preferences.get(), allowed: (keyof Preferences)[] = ['name', 'instructions', 'timeZone', 'useMemory', 'memoryWrites', 'suggestions', 'deepseekSafety']
+      const prefs = this.#space.preferences.get(), allowed: (keyof Preferences)[] = ['name', 'instructions', 'timeZone', 'useMemory', 'memoryWrites', 'suggestions', 'deepseekSafety', 'hiddenModels']
       await archive.bytes('preferences.json', json(Object.fromEntries(allowed.filter(key => prefs[key] !== undefined).map(key => [key, prefs[key]]))))
       signal.throwIfAborted()
       await archive.end()

@@ -22,6 +22,11 @@ const viewStates = localStore<Record<string, unknown>>('gense.viewStates', {})
 const VIEW_STATES_KEPT = 400
 
 export const modelKey = (m: ModelInfo) => `${m.provider}:${m.id}`
+/** The models the composer offers: all but those switched off in Settings (preference `hiddenModels`). */
+export const shownModels = (models: ModelInfo[], prefs: Preferences | null) => {
+  const hidden = new Set(prefs?.hiddenModels)
+  return hidden.size ? models.filter((m) => !hidden.has(modelKey(m))) : models
+}
 export const report = (e: unknown) => void toast.error(errorText(e))
 
 export class Client {
@@ -37,10 +42,10 @@ export class Client {
 
   request: HostSocket['request'] = (r) => this.socket.request(r)
 
-  /** The model new messages go to: the one chosen here while the server still offers it, else the server's default. */
+  /** The model new messages go to: the one chosen here while it is offered and switched on, else the server's default. */
   model(): ModelInfo | null {
-    const { models, defaultModel } = this.socket.state
-    return models.find((m) => modelKey(m) === localPrefs.get().model) ?? defaultModel
+    const { models, defaultModel, prefs } = this.socket.state
+    return shownModels(models, prefs).find((m) => modelKey(m) === localPrefs.get().model) ?? defaultModel
   }
 
   #send(treeId: string, message: Outgoing, replace?: number) {

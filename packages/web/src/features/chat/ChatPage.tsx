@@ -1,4 +1,4 @@
-import { ArrowDown, Check, ChevronDown, Copy, Download, FolderInput, ExternalLink, FolderOpen, Ghost, Globe, Link2, Minimize2, Pencil, Pin, PinOff, Radio, RefreshCw, Share, Trash2, X } from 'lucide-react'
+import { Activity, ArrowDown, Check, ChevronDown, Copy, Download, FolderInput, ExternalLink, FolderOpen, Ghost, Globe, Link2, Minimize2, Pencil, Pin, PinOff, Radio, RefreshCw, Share, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { report, useChat, useClient, useFiles, useHost, useTools, projectOf, useProjects, useShares, findTree } from '../../app/client'
 import { SidebarToggle } from '../../app/Shell'
@@ -23,14 +23,15 @@ import { Composer } from './Composer'
 import { footnote } from './HomePage'
 import { TurnView, type TurnContext } from './Turn'
 import { ViewSlot } from './ViewSlot'
+import { TracePanel } from './TracePanel'
 import { WorkspacePanel } from './WorkspacePanel'
 import { absolutePath, FileRefsContext, type FileRefs } from './embed'
 import { buildSnapshot } from '../share/snapshot'
 import { sharePath } from '@gense/protocol'
 import { toast } from 'sonner'
 
-/** What the side panel holds: one call's view, or the conversation's files. */
-type Panel = { kind: 'view'; callId: string } | { kind: 'files'; path: string | null; page?: number }
+/** What the side panel holds: one call's view, the conversation's files, or (developer mode) its trace at a turn. */
+type Panel = { kind: 'view'; callId: string } | { kind: 'files'; path: string | null; page?: number } | { kind: 'trace'; turnId?: string }
 
 const NEAR_BOTTOM = 80
 
@@ -93,7 +94,7 @@ export function ChatPage({ treeId }: { treeId: string }) {
   const tools = useTools()
   const phone = useMediaQuery(phoneQuery)
   const { tree, loaded, turns, running, entryCount, compaction } = useChat(treeId)
-  const { wide } = useLab()
+  const { wide, devMode } = useLab()
   const [panel, setPanel] = useState<Panel | null>(null)
   const [sharing, setSharing] = useState(false)
   const column = wide ? 'max-w-5xl' : 'max-w-3xl'
@@ -127,8 +128,9 @@ export function ChatPage({ treeId }: { treeId: string }) {
       onSend: (text) => send({ text }),
       onDisplayMode: (call, mode) => setPanel(mode === 'inline' ? null : { kind: 'view', callId: call.id }),
       panelCallId: panel?.kind === 'view' ? panel.callId : undefined,
+      ...(devMode && { onTrace: (turn: Turn) => setPanel({ kind: 'trace', turnId: turn.id }) }),
     }),
-    [client, treeId, tools, models, running, send, panel],
+    [client, treeId, tools, models, running, send, panel, devMode],
   )
 
   // The call whose view the panel shows; it closes when the branch shown no longer has that call.
@@ -140,6 +142,10 @@ export function ChatPage({ treeId }: { treeId: string }) {
   useEffect(() => {
     if (loaded && panel?.kind === 'view' && !panelCall) setPanel(null)
   }, [loaded, panel, panelCall])
+
+  useEffect(() => {
+    if (!devMode && panel?.kind === 'trace') setPanel(null)
+  }, [devMode, panel])
 
   // Embedded and linked workspace files in replies open here, at their page.
   const fileRefs = useMemo<FileRefs>(() => ({ treeId, open: (path, page) => setPanel({ kind: 'files', path: absolutePath(treeId, path), page }) }), [treeId])
@@ -163,6 +169,20 @@ export function ChatPage({ treeId }: { treeId: string }) {
               <Button variant="ghost" size="sm" disabled={turns.length === 0} onClick={() => setSharing(true)} className="gap-1.5 text-muted-foreground max-sm:hidden">
                 <Share /> 分享
               </Button>
+            )}
+            {devMode && (
+              <Tooltip label="轨迹">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="轨迹"
+                  aria-pressed={panel?.kind === 'trace'}
+                  className={cn('text-muted-foreground', panel?.kind === 'trace' && 'bg-hover text-foreground')}
+                  onClick={() => setPanel(panel?.kind === 'trace' ? null : { kind: 'trace' })}
+                >
+                  <Activity className="size-5!" />
+                </Button>
+              </Tooltip>
             )}
             <Tooltip label="文件">
               <Button
@@ -224,16 +244,18 @@ export function ChatPage({ treeId }: { treeId: string }) {
 
         {panel && (
           <aside
-            aria-label={panel.kind === 'files' ? '文件' : '视图'}
+            aria-label={panel.kind === 'files' ? '文件' : panel.kind === 'trace' ? '轨迹' : '视图'}
             className={cn('flex h-full min-w-0 flex-col bg-background', phone ? 'absolute inset-0 z-20' : 'w-[min(48%,640px)] shrink-0 border-l')}
           >
             <SidePanel
-              title={panel.kind === 'files' ? '文件' : (tools.get(panelCall?.name ?? '')?.title ?? '视图')}
+              title={panel.kind === 'files' ? '文件' : panel.kind === 'trace' ? '轨迹' : (tools.get(panelCall?.name ?? '')?.title ?? '视图')}
               onClose={() => setPanel(null)}
-              flush={panel.kind === 'files'}
+              flush={panel.kind !== 'view'}
             >
               {panel.kind === 'files' ? (
                 <WorkspacePanel treeId={treeId} files={files} open={panel.path} page={panel.page} onOpen={(path) => setPanel({ kind: 'files', path })} />
+              ) : panel.kind === 'trace' ? (
+                <TracePanel treeId={treeId} focus={panel.turnId} />
               ) : (
                 panelCall && <PanelView treeId={treeId} call={panelCall} ctx={ctx} />
               )}

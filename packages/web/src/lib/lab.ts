@@ -33,5 +33,7 @@ export const drafts = localStore<Record<string, string>>('gense.drafts', {})
 export const lab = localStore('gense.lab', {
   sendKey: 'enter' as 'enter' | 'mod-enter',
   wide: false,
+  /** Developer mode: the trace panel of model requests and tool runs beside a chat. */
+  devMode: false,
 })
 export const useLab = () => useLocal(lab)

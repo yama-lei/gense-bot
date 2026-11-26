@@ -432,7 +432,7 @@ const themes: { id: ThemePref; label: string; icon: ReactNode }[] = [
 function Appearance() {
   const pref = useThemePref()
   const accent = useAccent()
-  const { wide } = useLab()
+  const { wide, devMode } = useLab()
   const { prefs } = useHost()
   const client = useClient()
   return (
@@ -483,6 +483,9 @@ function Appearance() {
           </Row>
           <Row title="追问建议" description="在最新的回答下面给出几个可以继续问的方向。会多调用一次模型，所有设备生效。">
             <Switch checked={prefs?.suggestions ?? true} disabled={!prefs} onCheckedChange={(v) => client.setPrefs({ suggestions: v })} aria-label="追问建议" />
+          </Row>
+          <Row title="开发者模式" description="对话右上角多一个「轨迹」面板：每次模型调用的输入输出、系统提示、工具、token 用量和耗时。只对这个浏览器生效。">
+            <Switch checked={devMode} onCheckedChange={(v) => lab.set((l) => ({ ...l, devMode: v }))} aria-label="开发者模式" />
           </Row>
         </div>
       </Section>

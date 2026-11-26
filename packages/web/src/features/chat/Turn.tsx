@@ -1,6 +1,7 @@
 import type { EventData, FeedbackReason, MemoryToolDetails, ModelInfo, NativeSource, NativeStep } from '@gense/protocol'
 import { FEEDBACK_REASONS, MEMORY_LIMITS } from '@gense/protocol'
 import {
+  Activity,
   BookmarkPlus,
   Bot,
   BookOpen,
@@ -71,6 +72,8 @@ export interface TurnContext {
   onDisplayMode: (call: ToolCall, mode: DisplayMode) => void
   /** The call whose view is in the side panel now. */
   panelCallId?: string
+  /** Developer mode: opens the trace panel at this turn. */
+  onTrace?: (turn: Turn) => void
 }
 
 type Step = Exclude<TurnBlock, { kind: 'text' }>
@@ -211,6 +214,13 @@ export function TurnView({ turn, ctx, last: newest }: { turn: Turn; ctx: TurnCon
                 <Tooltip label="重新回答">
                   <Button variant="ghost" size="icon-sm" aria-label="重新回答" onClick={() => ctx.onRegenerate(turn)}>
                     <RefreshCw />
+                  </Button>
+                </Tooltip>
+              )}
+              {ctx.onTrace && (
+                <Tooltip label="查看轨迹">
+                  <Button variant="ghost" size="icon-sm" aria-label="查看轨迹" onClick={() => ctx.onTrace!(turn)}>
+                    <Activity />
                   </Button>
                 </Tooltip>
               )}

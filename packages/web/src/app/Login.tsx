@@ -134,7 +134,7 @@ export function Login({ onLogin }: { onLogin: (user: UserInfo) => void }) {
               '暂不开放注册。需要账号请联系管理员。'
             ) : null}
           </p>
-          {!register && <p className="-mt-2 text-center text-xs text-muted-foreground">忘记密码时，请管理员在服务器上运行 npm run passwd 加你的邮箱重设。</p>}
+          {!register && <p className="-mt-2 text-center text-xs text-muted-foreground">忘记密码？请联系管理员重设。</p>}
         </form>
       </section>
     </main>

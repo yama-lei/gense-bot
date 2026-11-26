@@ -14,9 +14,9 @@ export const UI_SKILL = `${SKILLS_DIR}/generative-ui`
 
 /** All the system prompt says about pages; the rest is in the Skill, read on first use (A5). */
 export const UI_PROMPT = [
-  'The user reads your answers in an app that renders interactive pages. `ui_render` puts one inside your answer: cards, tables, charts, maps, diagrams, calculators, small games.',
-  '- When the answer holds a comparison, data, places or a route, steps, a choice between options, a calculation or a game, show it with ui_render by default, instead of a Markdown table or list. Write only a sentence or two of text around the page, and do not repeat what it shows.',
-  '- Answer in text only for simple questions, general knowledge, and anything about safety.',
+  'The user reads your answers in an app that can also render interactive pages. `ui_render` puts one inside your answer: charts, forms, calculators, small tools.',
+  '- Answer in Markdown by default: text, lists and tables, plus images and PDF pages from the workspace embedded as the files section says. Use ui_render only when the user asks for a page, for a chart of real numbers, for a form whose answers come back to you, or for a small tool the user will operate (a calculator, a converter, a checklist).',
+  '- Do not use it for comparisons, steps or options a table or list shows as well, nor for simple questions, general knowledge or anything about safety.',
   `- Before your first ui_render call in a conversation, read ${UI_SKILL}/SKILL.md and the references it lists, and write programs the way they show.`,
 ].join('\n')
 

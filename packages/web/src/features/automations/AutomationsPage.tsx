@@ -6,7 +6,8 @@ import { report, useClient, useHost } from '../../app/client'
 import { Page } from '../../app/Shell'
 import { cn } from '../../lib/cn'
 import { errorText, formatTime } from '../../lib/format'
-import { Link } from '../../lib/router'
+import { drafts } from '../../lib/lab'
+import { Link, navigate } from '../../lib/router'
 import { Button } from '../../ui/button'
 import { ConfirmDialog, Dialog, DialogBody, DialogContent, DialogFooter } from '../../ui/dialog'
 import { Empty, Notice } from '../../ui/feedback'
@@ -48,6 +49,12 @@ function Section({ title, description, action, children }: { title: string; desc
 
 const card = 'divide-y overflow-hidden rounded-2xl border bg-card'
 
+/** Opens a new conversation with `text` in its composer. */
+function startWith(text: string) {
+  drafts.set((all) => ({ ...all, home: text }))
+  navigate({ name: 'home' })
+}
+
 export default function AutomationsPage() {
   const client = useClient()
   const { schedules, webhooks, canCreateWebhooks, trees } = useHost()
@@ -84,8 +91,18 @@ export default function AutomationsPage() {
         }
       >
         {schedules.length === 0 ? (
-          <Empty icon={<Clock />} title="还没有定时任务">
-            {chats.length ? '例如每天早上让助手汇总待办。也可以直接在对话里说"每天 9 点提醒我…"。' : '先开始一个对话，再为它创建定时任务。'}
+          <Empty
+            icon={<Clock />}
+            title="还没有定时任务"
+            action={
+              !chats.length && (
+                <Button variant="primary" onClick={() => startWith('每天早上 9 点提醒我：')}>
+                  <Plus /> 在新对话里创建
+                </Button>
+              )
+            }
+          >
+            {chats.length ? '例如每天早上让助手汇总待办。也可以直接在对话里说"每天 9 点提醒我…"。' : '在对话里说"每天 9 点提醒我…"，助手会为它创建定时任务；之后也可以在这里新建。'}
           </Empty>
         ) : (
           <ul className={card}>

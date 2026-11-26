@@ -6,7 +6,7 @@ export default definePlugin({
 ...{
   "id": "ui",
   "name": "界面",
-  "description": "用卡片、表格、图表、照片和地图展示回答，还能做计算器、清单等可以直接操作的小页面；表单可以发回给助手。",
+  "description": "在回答里放可以操作的小页面：图表、计算器、清单，表单可以发回给助手。默认只在要求时或确实需要时使用。",
   "sideEffect": false,
   "settings": [
     {
@@ -16,7 +16,7 @@ export default definePlugin({
       "options": [
         {
           "value": "auto",
-          "label": "需要时使用"
+          "label": "只在需要时"
         },
         {
           "value": "often",

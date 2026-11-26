@@ -357,7 +357,7 @@ export function Sidebar({ rail, onNavigate, onToggle }: { rail?: boolean; onNavi
         >
           <SquarePen className="size-4 shrink-0 text-accent" />
           <span className="flex-1">新对话</span>
-          <kbd className="text-[11px] font-normal text-muted-foreground max-md:hidden">{modKey}⇧O</kbd>
+          <kbd className="font-sans text-[11px] font-normal tracking-wide text-muted-foreground max-md:hidden">{modKey} ⇧ O</kbd>
         </Link>
         <Tooltip label={`搜索 · ${modKey} K`}>
           <button type="button" aria-label="搜索" onClick={openPalette} className="grid size-9.5 shrink-0 place-items-center rounded-xl text-muted-foreground transition-colors hover:bg-hover hover:text-foreground">

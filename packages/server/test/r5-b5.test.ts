@@ -122,6 +122,12 @@ test('N8/N9: real image/file downloads enter attachments; generated files/images
     const {watch}=await space.watch(tree.id);await watch.stop()
     assert.ok(watch.value.entries.some(e=>JSON.stringify(e.model).includes('artifact_create')))
     assert.ok((await space.workspace.list(tree.id)).some(f=>f.path.endsWith('/report.txt')))
+    // An embed with <…> and a link with #page=N both send the files; the card shows the embed as text, not a broken image.
+    const imagesBefore=remote.sent.filter(m=>m.type==='image').length,filesBefore=remote.sent.filter(m=>m.type==='file').length
+    await remote.event('embed','![发票](<attachments/image-in-image.png>) 见 [第 2 页](attachments/document.txt#page=2)');await done(space,'embed')
+    await until(()=>remote.sent.filter(m=>m.type==='image').length>imagesBefore&&remote.sent.filter(m=>m.type==='file').length>filesBefore)
+    const embedCard=remote.sent.findLast(m=>m.type==='interactive')!
+    assert.match(textOf(embedCard.content),/（图：发票）/);assert.doesNotMatch(textOf(embedCard.content),/!\[/)
   }finally{await fixture.close()}
 })
 

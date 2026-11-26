@@ -1,4 +1,7 @@
 import 'katex/dist/katex.min.css'
+// Registers \ce and \pu with KaTeX, and copies a selected formula as its $…$ source.
+import 'katex/contrib/mhchem'
+import 'katex/contrib/copy-tex'
 import { Check, Copy } from 'lucide-react'
 import { isValidElement, memo, useRef, type ComponentProps } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
@@ -9,19 +12,8 @@ import remarkMath from 'remark-math'
 import { cn } from '../../lib/cn'
 import { copyText } from '../../lib/format'
 import { useFlash } from '../../lib/hooks'
-
-/** Models also write maths as \( … \) and \[ … \]; remark-math reads dollars. Code is left as it is. */
-function dollars(text: string) {
-  if (!text.includes('\\(') && !text.includes('\\[')) return text
-  return text
-    .split(/(```[\s\S]*?(?:```|$)|`[^`\n]*`)/)
-    .map((part, i) =>
-      i % 2
-        ? part
-        : part.replace(/\\\[([\s\S]+?)\\\]/g, (_, m: string) => `\n$$\n${m.trim()}\n$$\n`).replace(/\\\(([^\n]+?)\\\)/g, (_, m: string) => `$${m.trim()}$`),
-    )
-    .join('')
-}
+import { katexMacros, normalizeMath } from '../../lib/math'
+import { Embed, FileLink, workspaceRef } from './embed'
 
 function CodeBlock({ children }: ComponentProps<'pre'>) {
   const ref = useRef<HTMLPreElement>(null)
@@ -55,18 +47,26 @@ const components: Components = {
       <table {...props} />
     </div>
   ),
-  a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer noopener" />,
+  a: ({ node: _node, href, children, ...props }) =>
+    workspaceRef(href) ? (
+      <FileLink href={href!}>{children}</FileLink>
+    ) : (
+      <a {...props} href={href} target="_blank" rel="noreferrer noopener">
+        {children}
+      </a>
+    ),
+  img: ({ node: _node, src, alt }) => <Embed src={typeof src === 'string' ? src : undefined} alt={alt} />,
 }
 
 const remark = [remarkGfm, remarkMath]
-const rehype: ComponentProps<typeof ReactMarkdown>['rehypePlugins'] = [[rehypeKatex, { throwOnError: false, strict: false }], [rehypeHighlight, { detect: false }]]
+const rehype: ComponentProps<typeof ReactMarkdown>['rehypePlugins'] = [[rehypeKatex, { throwOnError: false, strict: false, macros: katexMacros }], [rehypeHighlight, { detect: false }]]
 
 /** Model output as prose. `streaming` draws a caret after the last block. */
 export const Markdown = memo(function Markdown({ text, streaming, className }: { text: string; streaming?: boolean; className?: string }) {
   return (
     <div className={cn('prose', streaming && 'streaming', className)}>
       <ReactMarkdown remarkPlugins={remark} rehypePlugins={rehype} components={components}>
-        {dollars(text)}
+        {normalizeMath(text)}
       </ReactMarkdown>
     </div>
   )

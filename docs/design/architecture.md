@@ -31,7 +31,7 @@ packages/server/src/
 - 邮箱和密码账号，角色为 admin / user；第一个注册账号是 admin，管理员可关闭注册或停用用户。PBKDF2-SHA256、600,000 次迭代；登录 cookie 为 HttpOnly / SameSite=Lax，HTTPS 加 Secure。`app.sqlite` 只存会话令牌的哈希；连续失败有速率限制。
 - `npm run passwd <email>` 设置指定已注册用户的密码，`npm run user:admin <email>` 用于管理员恢复。`POST /api/password {current,next}` 需有效会话与当前密码；只撤销该用户的旧会话并给当前浏览器新 cookie。写请求和 WebSocket 握手检查来源。
 - `TOKEN_ENCRYPTION_KEY` 通过 Sealer 的 AES-GCM 加密插件密钥、模型凭据、webhook 密钥、MCP headers/OAuth 数据和渠道凭据（各用户的 `space.sqlite`），以及共享模型密钥（`app.sqlite`）。密钥不进 sandbox，浏览器只收到已设置的键名。
-- 模型来自管理员登记的共享提供方和用户自己的 pi-ai providers（BYOK）。共享提供方及按用户记账的用量在 `app.sqlite`，BYOK 凭据在该用户的 `space.sqlite`；共享模型密钥不发给用户。新会话使用默认模型，分叉可单独切换。`GENSE_FAUX=1` 使用本地流式 faux provider。
+- 模型来自管理员登记的共享提供方和用户自己的 pi-ai providers（BYOK）。共享提供方及按用户记账的用量在 `app.sqlite`，BYOK 凭据在该用户的 `space.sqlite`；共享模型密钥不发给用户。新会话使用默认模型，分叉可单独切换。默认模型跳过偏好 `hiddenModels` 里的模型：管理员的默认模型没被关掉时用它，否则取列表里第一个没关掉的；全都关掉时不做过滤，免得飞书、定时任务没有模型可用。`models` 推送仍是完整列表，由网页按偏好过滤菜单；服务器不拒绝发给关掉的模型。`GENSE_FAUX=1` 使用本地流式 faux provider。
 - `prefs` 的称呼与自定义指令作为独立提示词节，下一轮读取最新值。`trees.search` 按标题和各分叉的消息文本搜索，通过 pi-durable 公共 transcript API 读取。
 
 ## 数据、Trigger 与恢复

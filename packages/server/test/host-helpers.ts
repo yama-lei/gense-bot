@@ -52,6 +52,7 @@ export class Client {
   plugins: PluginState[] = []
   skills: SkillInfo[] = []
   models: ModelInfo[] = []
+  defaultModel: ModelInfo | null = null
   providers: ProviderState[] = []
   schedules: ScheduleInfo[] = []
   webhooks: WebhookInfo[] = []
@@ -95,7 +96,7 @@ export class Client {
     if (m.t === 'prefs') this.prefs = m.prefs
     if (m.t === 'plugins') this.plugins = m.plugins
     if (m.t === 'skills') this.skills = m.skills
-    if (m.t === 'models') this.models = m.models
+    if (m.t === 'models') (this.models = m.models), (this.defaultModel = m.defaultModel)
     if (m.t === 'providers') this.providers = m.providers
     if (m.t === 'schedules') this.schedules = m.schedules
     if (m.t === 'webhooks') (this.webhooks = m.webhooks), (this.canCreateWebhooks = m.canCreate)

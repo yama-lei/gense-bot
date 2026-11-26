@@ -25,7 +25,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
-import { localPrefs, modelKey, useClient, useHost, useLocalPrefs } from '../../app/client'
+import { localPrefs, modelKey, shownModels, useClient, useHost, useLocalPrefs } from '../../app/client'
 import { cn } from '../../lib/cn'
 import { availableCommands, btwCommand, localSkillNames, toOutgoingCommand, type Command } from '../../lib/commands'
 import { baseName, errorText } from '../../lib/format'
@@ -600,14 +600,15 @@ function Chip({ icon, label, title, tone, onRemove }: { icon: ReactNode; label: 
 
 /** The model new messages go to and how hard it thinks; both are remembered in this browser. */
 function ModelPicker() {
-  const { models, defaultModel } = useHost()
+  const { models: all, defaultModel, prefs: account } = useHost()
   const client = useClient()
   const prefs = useLocalPrefs()
   const model = client.model()
+  const models = shownModels(all, account)
   if (!models.length)
     return (
       <Link to={{ name: 'settings', section: 'models' }} className="inline-flex h-9 items-center gap-1 rounded-full px-3 text-sm text-warning hover:bg-warning-soft">
-        <CircleAlert className="size-4" /> 登录模型
+        <CircleAlert className="size-4" /> {all.length ? '打开模型' : '登录模型'}
       </Link>
     )
   const groups = Map.groupBy(models, (m) => m.provider)

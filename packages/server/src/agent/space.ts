@@ -191,7 +191,13 @@ export class UserSpace {
     refreshPlugins()
     plugins.subscribe(refreshPlugins)
     const mcp = await McpHost.open(db, plugins, options.secretKey, options.mcp)
-    const accounts = await ModelAccounts.open(db, { host: options.models, secretKey: options.secretKey, oauth: true })
+    const accounts = await ModelAccounts.open(db, { host: options.models, secretKey: options.secretKey, oauth: true, hidden: () => preferences.get().hiddenModels ?? [] })
+    // Switching models off moves the default model: open pickers get it again.
+    let hidden = JSON.stringify(preferences.get().hiddenModels ?? [])
+    preferences.subscribe(() => {
+      const next = JSON.stringify(preferences.get().hiddenModels ?? [])
+      if (next !== hidden) { hidden = next; accounts.notify() }
+    })
     options.meterModels?.(accounts.models, provider => accounts.source(provider))
     const workspace = new Workspace(options.env, async treeId => (await db.get<{ projectId: string | null }>('SELECT projectId FROM trees WHERE id = ?', treeId))?.projectId ?? null)
     const skills = await SkillStore.open(db, async () => workspace.env(DATA_DIR), ctx, options.skillTempDir)

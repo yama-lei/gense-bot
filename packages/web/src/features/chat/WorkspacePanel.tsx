@@ -1,6 +1,6 @@
 // A conversation's files: what the assistant wrote or the user attached, and the Skills it can read.
 import type { FileEntry, FilePreview } from '@gense/protocol'
-import { ChevronLeft, Download, FileText, Trash2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Download, FileText, Trash2 } from 'lucide-react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { useEffect, useRef, useState } from 'react'
 import { report, useClient } from '../../app/client'
@@ -31,33 +31,59 @@ export function WorkspacePanel({ treeId, files, open, page, onOpen }: { treeId: 
         <Skeleton className="h-9" />
       </div>
     )
-  const sections = [
-    { label: '工作区', hint: '本对话的文件，助手可以读写。', empty: '还没有文件。让助手"写成文件"，或者发送附件，它们会出现在这里。', list: files.filter((f) => !f.readOnly) },
-    { label: 'Skills', hint: '只读，来自已启用的 Skill。', empty: '没有启用的 Skill。', list: files.filter((f) => f.readOnly) },
-  ]
+  const own = files.filter((f) => !f.readOnly)
+  const skills = files.filter((f) => f.readOnly)
+  // Skills ship many files; grouped by Skill and folded, so the conversation's own files stay in view.
+  const bySkill = new Map<string, FileEntry[]>()
+  for (const f of skills) {
+    const name = shortPath(f, treeId).split('/')[0]
+    bySkill.set(name, [...(bySkill.get(name) ?? []), f])
+  }
+  const row = (f: FileEntry, label: string) => (
+    <li key={f.path}>
+      <button type="button" title={f.path} onClick={() => onOpen(f.path)} className="flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-hover">
+        <FileText className="size-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        <span className="shrink-0 text-xs text-muted-foreground">{formatBytes(f.size)}</span>
+      </button>
+    </li>
+  )
   return (
     <div className="flex flex-col gap-6 p-4">
-      {sections.map((s) => (
-        <section key={s.label}>
-          <h3 className="text-sm font-medium">{s.label}</h3>
-          <p className="mb-2 text-xs text-muted-foreground">{s.hint}</p>
-          {s.list.length === 0 ? (
-            <p className="rounded-xl border border-dashed px-3 py-4 text-sm text-muted-foreground">{s.empty}</p>
-          ) : (
-            <ul className="-mx-2">
-              {s.list.map((f) => (
-                <li key={f.path}>
-                  <button type="button" title={f.path} onClick={() => onOpen(f.path)} className="flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-hover">
-                    <FileText className="size-4 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 flex-1 truncate">{shortPath(f, treeId)}</span>
-                    <span className="shrink-0 text-xs text-muted-foreground">{formatBytes(f.size)}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      ))}
+      <section>
+        <h3 className="text-sm font-medium">工作区</h3>
+        <p className="mb-2 text-xs text-muted-foreground">本对话的文件，助手可以读写。</p>
+        {own.length === 0 ? (
+          <p className="rounded-xl border border-dashed px-3 py-4 text-sm text-muted-foreground">还没有文件。让助手"写成文件"，或者发送附件，它们会出现在这里。</p>
+        ) : (
+          <ul className="-mx-2">{own.map((f) => row(f, shortPath(f, treeId)))}</ul>
+        )}
+      </section>
+      <details className="group/skills">
+        <summary className="flex cursor-pointer list-none items-center gap-1.5 text-sm font-medium">
+          <ChevronRight className="size-4 text-muted-foreground transition-transform group-open/skills:rotate-90" />
+          Skills
+          <span className="text-xs font-normal text-muted-foreground">
+            {bySkill.size} 个 · {skills.length} 个文件，只读
+          </span>
+        </summary>
+        {skills.length === 0 ? (
+          <p className="mt-2 rounded-xl border border-dashed px-3 py-4 text-sm text-muted-foreground">没有启用的 Skill。</p>
+        ) : (
+          <div className="mt-2 flex flex-col">
+            {[...bySkill].map(([name, list]) => (
+              <details key={name} className="group/skill">
+                <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-lg px-1 py-1.5 text-sm hover:bg-hover">
+                  <ChevronRight className="size-3.5 text-muted-foreground transition-transform group-open/skill:rotate-90" />
+                  <span className="min-w-0 flex-1 truncate">{name}</span>
+                  <span className="text-xs text-muted-foreground">{list.length}</span>
+                </summary>
+                <ul className="ml-3">{list.map((f) => row(f, shortPath(f, treeId).slice(name.length + 1)))}</ul>
+              </details>
+            ))}
+          </div>
+        )}
+      </details>
     </div>
   )
 }

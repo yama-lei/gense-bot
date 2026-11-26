@@ -215,7 +215,7 @@ export function ChatPage({ treeId }: { treeId: string }) {
           <div className={cn('mx-auto w-full shrink-0 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:px-6', column)}>
             {aside.card}
             <CompactionLine running={compaction.running} failure={compaction.failure} onRetry={() => client.compact(treeId)} />
-            <Composer treeId={treeId} placeholder="回复…" onSend={send} busy={running} onStop={() => client.stop(treeId)} autoFocus={!phone} />
+            <Composer treeId={treeId} placeholder="回复…（/ 命令，@ 提及，可拖入文件）" onSend={send} busy={running} onStop={() => client.stop(treeId)} autoFocus={!phone} />
             {footnote}
           </div>
         </div>

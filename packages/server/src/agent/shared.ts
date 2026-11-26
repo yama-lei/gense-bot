@@ -245,7 +245,18 @@ export const entryText = (e: EntryRecord) =>
     .join('')
     .trim()
 
-export const titleOf = (named: string) => named.replace(/\s+/g, ' ').slice(0, TITLE_CHARS)
+/** A conversation's title from its first message: plain text, without the Markdown a pasted message often starts with. */
+export const titleOf = (named: string) =>
+  named
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^[ \t]*(?:#{1,6}|>+|[-*+]|\d+[.)])[ \t]+/gm, '')
+    .replace(/^[ \t]*\|?[ \t:|-]+\|[ \t:|-]*$/gm, '')
+    .replace(/\*\*|__|`+|\$\$|~~/g, '')
+    .replace(/\s*\|\s*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, TITLE_CHARS)
 
 export type ScheduleRow = Omit<ScheduleInfo, 'rule' | 'enabled'> & { rule: string; enabled: number; taskId: number | null }
 

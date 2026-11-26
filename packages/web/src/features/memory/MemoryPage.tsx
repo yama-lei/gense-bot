@@ -80,10 +80,10 @@ export default function MemoryPage() {
         {on && (
           <div className="flex items-center gap-3 p-4 pl-17 max-sm:pl-4">
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium">只记我明确要求的</div>
+              <div className="text-sm font-medium">主动记住长期有用的事</div>
               <div className="text-sm text-muted-foreground">{writes === 'explicit' ? '只有你说“记住……”时，Gense 才会新增记忆' : '你提到长期有用的事时，Gense 也会主动记下，并在回答里告诉你'}</div>
             </div>
-            <Switch checked={writes === 'explicit'} disabled={!prefs} onCheckedChange={(v) => client.setPrefs({ memoryWrites: v ? 'explicit' : 'auto' })} aria-label="只记我明确要求的" />
+            <Switch checked={writes !== 'explicit'} disabled={!prefs} onCheckedChange={(v) => client.setPrefs({ memoryWrites: v ? 'auto' : 'explicit' })} aria-label="主动记住长期有用的事" />
           </div>
         )}
       </div>

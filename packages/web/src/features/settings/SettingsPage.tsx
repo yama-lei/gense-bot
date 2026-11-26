@@ -41,7 +41,14 @@ export default function SettingsPage({ section = 'personal' }: { section?: Setti
   return (
     <Page title="设置" wide>
       <div className="flex flex-col gap-6 md:flex-row md:gap-10">
-        <nav aria-label="设置" className="-mx-1 flex shrink-0 gap-0.5 overflow-x-auto px-1 md:sticky md:top-0 md:w-44 md:flex-col md:self-start md:overflow-visible">
+        <nav
+          aria-label="设置"
+          // Phones: one scrolling row; the fade says more tabs are off-screen, and the open one is scrolled into view.
+          ref={(el) => {
+            if (el && el.scrollWidth > el.clientWidth) el.querySelector('[aria-current=page]')?.scrollIntoView({ block: 'nearest', inline: 'center' })
+          }}
+          className="-mx-1 flex shrink-0 gap-0.5 overflow-x-auto px-1 [mask-image:linear-gradient(to_right,#000_85%,transparent)] md:sticky md:[mask-image:none] md:top-0 md:w-44 md:flex-col md:self-start md:overflow-visible"
+        >
           {sections.map((s) => (
             <Link
               key={s.id}
